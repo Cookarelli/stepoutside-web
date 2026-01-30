@@ -2,12 +2,12 @@ import { useRouter } from "expo-router";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
-export default function HomeTab() {
+export default function HomeScreen() {
   const router = useRouter();
 
   return (
     <View style={styles.container}>
-      <Image source={require("../../assets/images/icon.png")} style={styles.logo} />
+      <Image source={require("../assets/images/icon.png")} style={styles.logo} />
       <Text style={styles.title}>Step Outside</Text>
       <Text style={styles.sub}>V2 foundation</Text>
 
@@ -15,7 +15,7 @@ export default function HomeTab() {
         onPress={() => router.push("/start")}
         style={({ pressed }) => [styles.btn, pressed ? { opacity: 0.9 } : null]}
       >
-        <Text style={styles.btnText}>START</Text>
+        <Text style={styles.btnText}>ENTER</Text>
       </Pressable>
     </View>
   );
