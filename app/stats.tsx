@@ -1,9 +1,10 @@
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { getProState } from "../src/lib/pro";
 import { dayKeyLocal, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
 
 function fmtTime(ts: number): string {
@@ -41,27 +42,53 @@ export default function StatsScreen() {
   const [summary, setSummary] = useState<SummaryStats | null>(null);
   const [sessions, setSessions] = useState<OutsideSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isPro, setIsPro] = useState(false);
 
   const last7 = useMemo(() => lastNDaysKeys(7), []);
 
   const load = async () => {
     setLoading(true);
-    const s = await getSummary();
-    const sess = await getSessions();
+    const [s, sess, pro] = await Promise.all([getSummary(), getSessions(), getProState()]);
     setSummary(s);
     setSessions(sess);
+    setIsPro(pro.isPro);
     setLoading(false);
   };
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [])
+  );
 
   const totalMinutes = summary?.totalMinutes ?? 0;
   const totalSessions = summary?.totalSessions ?? 0;
   const currentStreak = summary?.currentStreakDays ?? 0;
   const bestStreak = summary?.bestStreakDays ?? 0;
+  const sunriseBonusCount = summary?.sunriseBonusCount ?? 0;
+  const sunsetBonusCount = summary?.sunsetBonusCount ?? 0;
+
+  const avgSessionMinutes = useMemo(() => {
+    if (sessions.length === 0) return 0;
+    const total = sessions.reduce((acc, s) => acc + Math.max(1, Math.round(s.durationSec / 60)), 0);
+    return Math.round(total / sessions.length);
+  }, [sessions]);
+
+  const last30ActiveDays = useMemo(() => {
+    if (!summary) return 0;
+    let count = 0;
+    for (let i = 0; i < 30; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = dayKeyLocal(d);
+      if ((summary.daysCompleted?.[key] ?? 0) > 0) count += 1;
+    }
+    return count;
+  }, [summary]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "left", "right", "bottom"]}>
@@ -138,6 +165,40 @@ export default function StatsScreen() {
               <Text style={[styles.muted, { color: t.sub }]}>
                 {loading ? "Loading…" : "No data yet. Go get one."}
               </Text>
+            )}
+          </View>
+
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Pro insights</Text>
+          <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
+
+          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}> 
+            <View style={styles.row}>
+              <Text style={[styles.rowLeft, { color: t.sub }]}>Sunrise bonuses</Text>
+              <Text style={[styles.rowRight, { color: t.text }]}>{sunriseBonusCount}</Text>
+            </View>
+            <View style={styles.row}>
+              <Text style={[styles.rowLeft, { color: t.sub }]}>Sunset bonuses</Text>
+              <Text style={[styles.rowRight, { color: t.text }]}>{sunsetBonusCount}</Text>
+            </View>
+
+            {isPro ? (
+              <>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Avg session length</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{avgSessionMinutes} min</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Active days (30d)</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{last30ActiveDays} days</Text>
+                </View>
+              </>
+            ) : (
+              <View>
+                <Text style={[styles.muted, { color: t.sub }]}>Unlock Pro for advanced trend insights and coaching metrics.</Text>
+                <Pressable style={styles.unlockBtn} onPress={() => router.push("/pro")}>
+                  <Text style={styles.unlockBtnText}>Unlock Pro</Text>
+                </Pressable>
+              </View>
             )}
           </View>
 
@@ -254,4 +315,16 @@ const styles = StyleSheet.create({
   sessionSub: { marginTop: 4, fontWeight: "700" },
 
   muted: { fontWeight: "700" },
+  unlockBtn: {
+    marginTop: 10,
+    alignSelf: "flex-start",
+    backgroundColor: "#255E36",
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  unlockBtnText: {
+    color: "white",
+    fontWeight: "900",
+  },
 });

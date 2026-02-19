@@ -14,19 +14,38 @@ function fmtNiceMinutes(min: number): string {
   return min === 1 ? "1 minute" : `${min} minutes`;
 }
 
+function fmtClock(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+function fmtDistance(distanceM: number): string {
+  if (!Number.isFinite(distanceM) || distanceM <= 0) return "0.00 km";
+  return `${(distanceM / 1000).toFixed(2)} km`;
+}
+
 export default function CompleteScreen() {
   const router = useRouter();
+
   const params = useLocalSearchParams<{
     startedAt?: string;
     endedAt?: string;
     durationSec?: string;
+    distanceM?: string;
     source?: string;
+    endLat?: string;
+    endLng?: string;
   }>();
 
-  const startedAt = Number(params.startedAt || "");
-  const endedAt = Number(params.endedAt || "");
-  const durationSec = Number(params.durationSec || "");
+  const startedAt = Number(params.startedAt ?? "");
+  const endedAt = Number(params.endedAt ?? "");
+  const durationSec = Number(params.durationSec ?? "");
+  const distanceM = Number(params.distanceM ?? "0");
   const source: SessionSource = params.source === "gps" ? "gps" : "timer";
+  const endLat = Number(params.endLat ?? "");
+  const endLng = Number(params.endLng ?? "");
 
   const valid =
     Number.isFinite(startedAt) &&
@@ -34,12 +53,18 @@ export default function CompleteScreen() {
     Number.isFinite(durationSec) &&
     durationSec > 0;
 
-  const saveKey = `${startedAt}-${endedAt}-${durationSec}-${source}`;
+  const counts = valid && durationSec >= 10;
+
+  const saveKey = `${startedAt}-${endedAt}-${durationSec}-${Math.round(
+    Number.isFinite(distanceM) ? distanceM : 0
+  )}-${source}`;
 
   const [saving, setSaving] = useState(true);
   const [minutes, setMinutes] = useState(0);
-  const [streakLine, setStreakLine] = useState<string>("");
-  const [errorText, setErrorText] = useState<string>("");
+  const [summary, setSummary] = useState<any>(null);
+  const [errorText, setErrorText] = useState("");
+  const [sunriseBonus, setSunriseBonus] = useState(false);
+  const [sunsetBonus, setSunsetBonus] = useState(false);
 
   const lastSaveKeyRef = useRef<string | null>(null);
   const didHapticRef = useRef(false);
@@ -51,7 +76,12 @@ export default function CompleteScreen() {
         return;
       }
 
-      // Prevent double-saves on refresh/navigation
+      if (!counts) {
+        setSaving(false);
+        setErrorText("Walks under 10 seconds don’t count yet.");
+        return;
+      }
+
       if (lastSaveKeyRef.current === saveKey) {
         setSaving(false);
         return;
@@ -66,55 +96,85 @@ export default function CompleteScreen() {
         setMinutes(mins);
 
         const id = `${startedAt}-${endedAt}`;
+
+        let earnedSunriseBonus = false;
+        let earnedSunsetBonus = false;
+
+        if (Number.isFinite(endLat) && Number.isFinite(endLng)) {
+          try {
+            const day = new Date(endedAt).toISOString().slice(0, 10);
+            const wx = await fetch(
+              `https://api.open-meteo.com/v1/forecast?latitude=${endLat}&longitude=${endLng}&daily=sunrise,sunset&timezone=auto&start_date=${day}&end_date=${day}`
+            );
+            if (wx.ok) {
+              const data = await wx.json();
+              const sunriseIso = data?.daily?.sunrise?.[0] as string | undefined;
+              const sunsetIso = data?.daily?.sunset?.[0] as string | undefined;
+
+              const endMs = endedAt;
+              const windowMs = 45 * 60 * 1000;
+
+              if (sunriseIso) {
+                const sr = new Date(sunriseIso).getTime();
+                earnedSunriseBonus = Math.abs(endMs - sr) <= windowMs;
+              }
+              if (sunsetIso) {
+                const ss = new Date(sunsetIso).getTime();
+                earnedSunsetBonus = Math.abs(endMs - ss) <= windowMs;
+              }
+            }
+          } catch {
+            // bonus check best effort only
+          }
+        }
+
+        setSunriseBonus(earnedSunriseBonus);
+        setSunsetBonus(earnedSunsetBonus);
+
         const result = await addCompletedSession({
           id,
           startedAt,
           endedAt,
           durationSec,
           source,
+          distanceM: Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0,
+          sunriseBonus: earnedSunriseBonus,
+          sunsetBonus: earnedSunsetBonus,
         });
 
-        // Some store implementations return `{ summary }` where `summary` can be undefined.
-        const summary = (result as any)?.summary;
-        if (summary && typeof summary.currentStreakDays === "number") {
-          setStreakLine(
-            `Streak: ${summary.currentStreakDays} day${summary.currentStreakDays === 1 ? "" : "s"} • Best: ${summary.bestStreakDays}`
-          );
-        } else {
-          setStreakLine("");
-        }
+        setSummary(result.summary);
 
         if (!didHapticRef.current) {
           didHapticRef.current = true;
-          void Haptics.notificationAsync(
-            Haptics.NotificationFeedbackType.Success
-          );
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-      } catch (_e: any) {
-        // allow retry
+      } catch {
         lastSaveKeyRef.current = null;
         setErrorText("Couldn’t save this session. Try again.");
       } finally {
         setSaving(false);
       }
     })();
-  }, [saveKey, valid, startedAt, endedAt, durationSec, source]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveKey]);
 
   const headline = useMemo(() => {
     if (!valid) return "Go back and start a walk.";
+    if (!counts) return "Almost.";
     return "This counts.";
-  }, [valid]);
+  }, [valid, counts]);
+
+  const streakLine = useMemo(() => {
+    if (!summary) return "";
+    const cs = Number(summary.currentStreakDays ?? 0);
+    const bs = Number(summary.bestStreakDays ?? 0);
+    return `Streak: ${cs} day${cs === 1 ? "" : "s"} • Best: ${bs}`;
+  }, [summary]);
 
   return (
-    <SafeAreaView
-      style={styles.safe}
-      edges={["top", "left", "right", "bottom"]}
-    >
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <View style={styles.container}>
-        <Image
-          source={require("../assets/images/icon.png")}
-          style={styles.logo}
-        />
+        <Image source={require("../assets/images/icon.png")} style={styles.logo} />
         <Text style={styles.title}>Step Outside</Text>
 
         <Text style={styles.headline}>{headline}</Text>
@@ -124,34 +184,44 @@ export default function CompleteScreen() {
             <Text style={styles.big}>
               {fmtNiceMinutes(minutes || minutesFromDuration(durationSec))}
             </Text>
+
+            <View style={styles.metricsRow}>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricK}>Time</Text>
+                <Text style={styles.metricV}>{fmtClock(durationSec)}</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricK}>Distance</Text>
+                <Text style={styles.metricV}>{fmtDistance(distanceM)}</Text>
+              </View>
+            </View>
+
             <Text style={styles.sub}>
-              {saving
-                ? "Updating your streak…"
-                : errorText
-                  ? errorText
-                  : streakLine || "Streak updated."}
+              {saving ? "Saving your walk…" : errorText ? errorText : streakLine || "Streak updated."}
             </Text>
+            {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise bonus earned</Text> : null}
+            {sunsetBonus ? <Text style={styles.bonus}>🌅 Sunset bonus earned</Text> : null}
           </>
         ) : (
           <Text style={styles.sub}>No session found.</Text>
         )}
 
         <Pressable
-          onPress={() => router.push("/stats")}
-          style={({ pressed }) => [
-            styles.btnPrimary,
-            pressed ? { opacity: 0.9 } : null,
-          ]}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.push("/stats");
+          }}
+          style={({ pressed }) => [styles.btnPrimary, pressed ? { opacity: 0.9 } : null]}
         >
           <Text style={styles.btnPrimaryText}>VIEW STATS</Text>
         </Pressable>
 
         <Pressable
-          onPress={() => router.replace("/start")}
-          style={({ pressed }) => [
-            styles.btnSecondary,
-            pressed ? { opacity: 0.9 } : null,
-          ]}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.replace("/start");
+          }}
+          style={({ pressed }) => [styles.btnSecondary, pressed ? { opacity: 0.9 } : null]}
         >
           <Text style={styles.btnSecondaryText}>BACK TO START</Text>
         </Pressable>
@@ -171,20 +241,38 @@ const styles = StyleSheet.create({
   },
   logo: { width: 88, height: 88, borderRadius: 22, marginBottom: 14 },
   title: { fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
-  headline: {
-    marginTop: 14,
-    fontSize: 22,
-    fontWeight: "900",
-    color: "#0B0F0E",
-  },
+  headline: { marginTop: 14, fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
   big: { marginTop: 10, fontSize: 44, fontWeight: "900", color: "#0B0F0E" },
+
+  metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
+  metricCard: {
+    minWidth: 140,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: "rgba(11,15,14,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.12)",
+    alignItems: "center",
+  },
+  metricK: { fontSize: 12, fontWeight: "900", color: "rgba(11,15,14,0.62)" },
+  metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: "#0B0F0E" },
+
   sub: {
-    marginTop: 10,
+    marginTop: 12,
     fontSize: 14,
     fontWeight: "700",
     color: "rgba(11,15,14,0.65)",
     textAlign: "center",
+    paddingHorizontal: 10,
   },
+  bonus: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#255E36",
+  },
+
   btnPrimary: {
     marginTop: 22,
     backgroundColor: "#255E36",
@@ -195,6 +283,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
+
   btnSecondary: {
     marginTop: 12,
     backgroundColor: "rgba(11,15,14,0.06)",

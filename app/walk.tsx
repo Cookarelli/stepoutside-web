@@ -6,6 +6,10 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 type LatLng = { lat: number; lng: number };
 
+type PermissionState = "unknown" | "granted" | "denied";
+
+type SessionSource = "gps" | "timer";
+
 function haversineMeters(a: LatLng, b: LatLng): number {
   const R = 6371000;
   const toRad = (x: number) => (x * Math.PI) / 180;
@@ -22,20 +26,20 @@ function haversineMeters(a: LatLng, b: LatLng): number {
 
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
-  const s = sec % 60;
+  const s = Math.max(0, sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export default function Walk() {
   const router = useRouter();
 
-  const [permission, setPermission] = useState<"unknown" | "granted" | "denied">("unknown");
+  const [permission, setPermission] = useState<PermissionState>("unknown");
   const [running, setRunning] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceM, setDistanceM] = useState(0);
 
   const startedAtRef = useRef<number | null>(null);
-  const tickRef = useRef<NodeJS.Timeout | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lastPointRef = useRef<LatLng | null>(null);
   const subRef = useRef<Location.LocationSubscription | null>(null);
@@ -52,28 +56,12 @@ export default function Walk() {
 
   const requestPerms = async () => {
     const res = await Location.requestForegroundPermissionsAsync();
-    setPermission(res.status === "granted" ? "granted" : "denied");
-    return res.status === "granted";
+    const ok = res.status === "granted";
+    setPermission(ok ? "granted" : "denied");
+    return ok;
   };
 
-  const start = async () => {
-    void Haptics.selectionAsync();
-
-    const ok = permission === "granted" ? true : await requestPerms();
-    if (!ok) return;
-
-    startedAtRef.current = Date.now();
-    setElapsedSec(0);
-    setDistanceM(0);
-    lastPointRef.current = null;
-
-    setRunning(true);
-
-    // timer
-    tickRef.current && clearInterval(tickRef.current);
-    tickRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
-
-    // gps subscription
+  const startGps = async () => {
     subRef.current?.remove();
     subRef.current = await Location.watchPositionAsync(
       {
@@ -92,6 +80,37 @@ export default function Walk() {
         lastPointRef.current = p;
       }
     );
+  };
+
+  const stopGps = () => {
+    subRef.current?.remove();
+    subRef.current = null;
+  };
+
+  const startTimer = () => {
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+  };
+
+  const stopTimer = () => {
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = null;
+  };
+
+  const start = async () => {
+    void Haptics.selectionAsync();
+
+    const ok = permission === "granted" ? true : await requestPerms();
+    if (!ok) return;
+
+    startedAtRef.current = Date.now();
+    setElapsedSec(0);
+    setDistanceM(0);
+    lastPointRef.current = null;
+
+    setRunning(true);
+    startTimer();
+    await startGps();
 
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
@@ -99,70 +118,61 @@ export default function Walk() {
   const pause = async () => {
     void Haptics.selectionAsync();
     setRunning(false);
-    if (tickRef.current) clearInterval(tickRef.current);
-    tickRef.current = null;
-    // keep GPS on pause? for V2 we stop GPS to save battery
-    subRef.current?.remove();
-    subRef.current = null;
+    stopTimer();
+    // stop GPS on pause to save battery
+    stopGps();
   };
 
   const resume = async () => {
     void Haptics.selectionAsync();
-    // resume timer
-    setRunning(true);
-    tickRef.current && clearInterval(tickRef.current);
-    tickRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
 
-    // resume GPS
-    subRef.current?.remove();
-    subRef.current = await Location.watchPositionAsync(
-      {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 2000,
-        distanceInterval: 5,
-      },
-      (pos) => {
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        const last = lastPointRef.current;
-        if (last) {
-          const d = haversineMeters(last, p);
-          if (d < 60) setDistanceM((m) => m + d);
-        }
-        lastPointRef.current = p;
-      }
-    );
+    const ok = permission === "granted" ? true : await requestPerms();
+    if (!ok) return;
+
+    setRunning(true);
+    startTimer();
+    await startGps();
   };
 
   const end = async () => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
-    if (tickRef.current) clearInterval(tickRef.current);
-    tickRef.current = null;
-    subRef.current?.remove();
-    subRef.current = null;
+    stopTimer();
+    stopGps();
 
     const startedAt = startedAtRef.current ?? Date.now();
     const endedAt = Date.now();
 
-    // For now, do NOT write to Firestore.
-    // We’ll save locally next (AsyncStorage store.ts).
+    // Guard: only count sessions >= 10 seconds
+    if (elapsedSec < 10) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      router.replace("/start");
+      return;
+    }
 
-    router.push({
-      pathname: "/modal",
+    const source: SessionSource = "gps";
+
+    // Route to the real complete screen
+    const endLat = lastPointRef.current?.lat;
+    const endLng = lastPointRef.current?.lng;
+
+    router.replace({
+      pathname: "/complete",
       params: {
         startedAt: String(startedAt),
         endedAt: String(endedAt),
         durationSec: String(elapsedSec),
         distanceM: String(Math.round(distanceM)),
-        source: "gps",
+        source,
+        ...(endLat && endLng ? { endLat: String(endLat), endLng: String(endLng) } : {}),
       },
     });
   };
 
   useEffect(() => {
     return () => {
-      if (tickRef.current) clearInterval(tickRef.current);
-      subRef.current?.remove();
+      stopTimer();
+      stopGps();
     };
   }, []);
 
@@ -192,8 +202,8 @@ export default function Walk() {
           <Text style={styles.btnPrimaryText}>{elapsedSec === 0 ? "START" : "RESUME"}</Text>
         </Pressable>
       ) : (
-        <Pressable style={styles.btnSecondary} onPress={pause}>
-          <Text style={styles.btnSecondaryText}>PAUSE</Text>
+        <Pressable style={styles.btnPause} onPress={pause}>
+          <Text style={styles.btnPauseText}>PAUSE</Text>
         </Pressable>
       )}
 
@@ -202,12 +212,30 @@ export default function Walk() {
         onPress={end}
         disabled={elapsedSec < 10}
       >
-        <Text style={styles.btnEndText}>END</Text>
+        <Text style={styles.btnEndText}>STOP</Text>
       </Pressable>
 
-      <Pressable style={styles.back} onPress={() => router.back()}>
-        <Text style={styles.backText}>Back</Text>
-      </Pressable>
+      <View style={styles.bottomRow}>
+        <Pressable
+          style={styles.back}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.back();
+          }}
+        >
+          <Text style={styles.backText}>Back</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.home}
+          onPress={() => {
+            void Haptics.selectionAsync();
+            router.replace("/(tabs)");
+          }}
+        >
+          <Text style={styles.homeText}>Home</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -251,21 +279,8 @@ const styles = StyleSheet.create({
   },
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
 
-  btnSecondary: {
+  btnPause: {
     marginTop: 22,
-    backgroundColor: "rgba(255,255,255,0.10)",
-    paddingVertical: 14,
-    paddingHorizontal: 26,
-    borderRadius: 16,
-    minWidth: 220,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
-  },
-  btnSecondaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
-
-  btnEnd: {
-    marginTop: 12,
     backgroundColor: "#F2B541",
     paddingVertical: 14,
     paddingHorizontal: 26,
@@ -273,8 +288,33 @@ const styles = StyleSheet.create({
     minWidth: 220,
     alignItems: "center",
   },
-  btnEndText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
+  btnPauseText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
 
-  back: { marginTop: 18, paddingVertical: 8, paddingHorizontal: 12 },
+  btnEnd: {
+    marginTop: 12,
+    backgroundColor: "#C83333",
+    paddingVertical: 14,
+    paddingHorizontal: 26,
+    borderRadius: 16,
+    minWidth: 220,
+    alignItems: "center",
+  },
+  btnEndText: { color: "white", fontWeight: "900", letterSpacing: 1 },
+
+  bottomRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
+  back: { paddingVertical: 8, paddingHorizontal: 12 },
   backText: { color: "rgba(255,255,255,0.65)", fontWeight: "800" },
+  home: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  homeText: { color: "white", fontWeight: "900" },
 });
