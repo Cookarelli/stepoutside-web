@@ -46,12 +46,12 @@ export default function Walk() {
 
   const pace = useMemo(() => {
     if (distanceM < 5 || elapsedSec < 5) return "";
-    const km = distanceM / 1000;
+    const miles = distanceM / 1609.344;
     const min = elapsedSec / 60;
-    const minPerKm = min / km;
-    const mm = Math.floor(minPerKm);
-    const ss = Math.round((minPerKm - mm) * 60);
-    return `${mm}:${String(ss).padStart(2, "0")} / km`;
+    const minPerMile = min / miles;
+    const mm = Math.floor(minPerMile);
+    const ss = Math.round((minPerMile - mm) * 60);
+    return `${mm}:${String(ss).padStart(2, "0")} / mi`;
   }, [distanceM, elapsedSec]);
 
   const requestPerms = async () => {
@@ -185,7 +185,7 @@ export default function Walk() {
       <View style={styles.metrics}>
         <View style={styles.metric}>
           <Text style={styles.metricK}>Distance</Text>
-          <Text style={styles.metricV}>{(distanceM / 1000).toFixed(2)} km</Text>
+          <Text style={styles.metricV}>{(distanceM / 1609.344).toFixed(2)} mi</Text>
         </View>
         <View style={styles.metric}>
           <Text style={styles.metricK}>Pace</Text>

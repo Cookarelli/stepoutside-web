@@ -22,8 +22,8 @@ function fmtClock(sec: number): string {
 }
 
 function fmtDistance(distanceM: number): string {
-  if (!Number.isFinite(distanceM) || distanceM <= 0) return "0.00 km";
-  return `${(distanceM / 1000).toFixed(2)} km`;
+  if (!Number.isFinite(distanceM) || distanceM <= 0) return "0.00 mi";
+  return `${(distanceM / 1609.344).toFixed(2)} mi`;
 }
 
 export default function CompleteScreen() {
