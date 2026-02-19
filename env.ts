@@ -24,4 +24,9 @@ export const ENV = {
     // optional
     measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
   },
+  REVENUECAT: {
+    // Public SDK keys (safe for client apps)
+    appleApiKey: process.env.EXPO_PUBLIC_RC_APPLE_API_KEY ?? null,
+    googleApiKey: process.env.EXPO_PUBLIC_RC_GOOGLE_API_KEY ?? null,
+  },
 } as const;

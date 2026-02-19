@@ -8,6 +8,10 @@ export type OutsideSession = {
   endedAt: number;
   durationSec: number;
   source: SessionSource;
+  /** Optional GPS distance (meters) */
+  distanceM?: number;
+  sunriseBonus?: boolean;
+  sunsetBonus?: boolean;
 };
 
 export type SummaryStats = {
@@ -15,6 +19,8 @@ export type SummaryStats = {
   totalSessions: number;
   currentStreakDays: number;
   bestStreakDays: number;
+  sunriseBonusCount: number;
+  sunsetBonusCount: number;
   daysCompleted: Record<string, number>; // YYYY-MM-DD -> minutes
 };
 
@@ -39,16 +45,12 @@ function minutesFromDuration(durationSec: number): number {
 function computeStreaks(daysCompleted: Record<string, number>) {
   const keys = Object.keys(daysCompleted)
     .filter((k) => (daysCompleted[k] ?? 0) > 0)
-    .sort(); // YYYY-MM-DD lexicographic works
+    .sort();
 
-  if (keys.length === 0) {
-    return { current: 0, best: 0 };
-  }
+  if (keys.length === 0) return { current: 0, best: 0 };
 
-  // Build a set for O(1) lookups
   const set = new Set(keys);
 
-  // current streak: walk backwards from today
   const today = new Date();
   let current = 0;
   for (let i = 0; i < 3650; i++) {
@@ -59,7 +61,6 @@ function computeStreaks(daysCompleted: Record<string, number>) {
     else break;
   }
 
-  // best streak: scan runs across sorted keys
   let best = 1;
   let run = 1;
 
@@ -107,6 +108,8 @@ async function readSummary(): Promise<SummaryStats> {
       totalSessions: 0,
       currentStreakDays: 0,
       bestStreakDays: 0,
+      sunriseBonusCount: 0,
+      sunsetBonusCount: 0,
       daysCompleted: {},
     };
   }
@@ -117,6 +120,8 @@ async function readSummary(): Promise<SummaryStats> {
       totalSessions: Number(parsed.totalSessions ?? 0),
       currentStreakDays: Number(parsed.currentStreakDays ?? 0),
       bestStreakDays: Number(parsed.bestStreakDays ?? 0),
+      sunriseBonusCount: Number(parsed.sunriseBonusCount ?? 0),
+      sunsetBonusCount: Number(parsed.sunsetBonusCount ?? 0),
       daysCompleted: (parsed.daysCompleted ?? {}) as Record<string, number>,
     };
   } catch {
@@ -125,6 +130,8 @@ async function readSummary(): Promise<SummaryStats> {
       totalSessions: 0,
       currentStreakDays: 0,
       bestStreakDays: 0,
+      sunriseBonusCount: 0,
+      sunsetBonusCount: 0,
       daysCompleted: {},
     };
   }
@@ -134,13 +141,8 @@ async function writeSummary(summary: SummaryStats) {
   await AsyncStorage.setItem(KEY_SUMMARY, JSON.stringify(summary));
 }
 
-/**
- * Public API
- */
-
 export async function getSessions(): Promise<OutsideSession[]> {
   const sessions = await readSessions();
-  // newest first
   return sessions.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
 }
 
@@ -152,16 +154,17 @@ export async function resetAllData(): Promise<void> {
   await AsyncStorage.multiRemove([KEY_SESSIONS, KEY_SUMMARY]);
 }
 
-export async function addCompletedSession(session: OutsideSession): Promise<void> {
+/** Returns summary so Complete screen can render streak immediately */
+export async function addCompletedSession(
+  session: OutsideSession
+): Promise<{ summary: SummaryStats }> {
   const sessions = await readSessions();
 
-  // de-dupe by id (important for reloads)
   const exists = sessions.some((s) => s.id === session.id);
   if (!exists) sessions.push(session);
 
   await writeSessions(sessions);
 
-  // Update summary
   const summary = await readSummary();
   const mins = minutesFromDuration(session.durationSec);
 
@@ -173,18 +176,27 @@ export async function addCompletedSession(session: OutsideSession): Promise<void
 
   const nextDays = { ...summary.daysCompleted, [dk]: nextDay };
 
-  const totalMinutes = sessions.reduce((acc, s) => acc + minutesFromDuration(s.durationSec), 0);
+  const totalMinutes = sessions.reduce(
+    (acc, s) => acc + minutesFromDuration(s.durationSec),
+    0
+  );
   const totalSessions = sessions.length;
 
   const { current, best } = computeStreaks(nextDays);
+
+  const sunriseBonusCount = sessions.filter((s) => s.sunriseBonus).length;
+  const sunsetBonusCount = sessions.filter((s) => s.sunsetBonus).length;
 
   const nextSummary: SummaryStats = {
     totalMinutes,
     totalSessions,
     currentStreakDays: current,
     bestStreakDays: Math.max(best, summary.bestStreakDays ?? 0),
+    sunriseBonusCount,
+    sunsetBonusCount,
     daysCompleted: nextDays,
   };
 
   await writeSummary(nextSummary);
+  return { summary: nextSummary };
 }
