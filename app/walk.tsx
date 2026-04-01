@@ -40,11 +40,13 @@ export default function Walk() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceM, setDistanceM] = useState(0);
   const [restored, setRestored] = useState(false);
-  const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | null>(null);
+  const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | "stop" | null>(null);
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restoringRef = useRef(false);
+  const elapsedBeforeRunRef = useRef(0);
+  const runStartedAtRef = useRef<number | null>(null);
 
   const lastPointRef = useRef<LatLng | null>(null);
   const subRef = useRef<Location.LocationSubscription | null>(null);
@@ -93,9 +95,23 @@ export default function Walk() {
     subRef.current = null;
   };
 
+  const getElapsedNow = useCallback(() => {
+    if (!runStartedAtRef.current) return elapsedBeforeRunRef.current;
+    return elapsedBeforeRunRef.current + Math.max(0, Math.floor((Date.now() - runStartedAtRef.current) / 1000));
+  }, []);
+
+  const syncElapsedFromClock = useCallback(() => {
+    const nextElapsed = getElapsedNow();
+    setElapsedSec((current) => (current === nextElapsed ? current : nextElapsed));
+    return nextElapsed;
+  }, [getElapsedNow]);
+
   const startTimer = () => {
     if (tickRef.current) clearInterval(tickRef.current);
-    tickRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    syncElapsedFromClock();
+    tickRef.current = setInterval(() => {
+      syncElapsedFromClock();
+    }, 1000);
   };
 
   const stopTimer = () => {
@@ -110,13 +126,13 @@ export default function Walk() {
 
       await setActiveWalkSnapshot({
         startedAt,
-        elapsedSec: overrides?.elapsedSec ?? elapsedSec,
+        elapsedSec: overrides?.elapsedSec ?? getElapsedNow(),
         distanceM: overrides?.distanceM ?? distanceM,
         running: overrides?.running ?? running,
         updatedAt: Date.now(),
       });
     },
-    [distanceM, elapsedSec, running]
+    [distanceM, getElapsedNow, running]
   );
 
   const start = async () => {
@@ -131,6 +147,8 @@ export default function Walk() {
       await clearActiveWalkSnapshot();
 
       startedAtRef.current = Date.now();
+      elapsedBeforeRunRef.current = 0;
+      runStartedAtRef.current = Date.now();
       setElapsedSec(0);
       setDistanceM(0);
       lastPointRef.current = null;
@@ -154,10 +172,14 @@ export default function Walk() {
     setBusyAction("pause");
     void Haptics.selectionAsync();
     try {
+      const nextElapsed = syncElapsedFromClock();
+      elapsedBeforeRunRef.current = nextElapsed;
+      runStartedAtRef.current = null;
+      setElapsedSec(nextElapsed);
       setRunning(false);
       stopTimer();
       stopGps();
-      await persistActiveWalk({ running: false });
+      await persistActiveWalk({ elapsedSec: nextElapsed, running: false });
     } finally {
       setBusyAction(null);
     }
@@ -170,8 +192,10 @@ export default function Walk() {
     try {
       const ok = permission === "granted" ? true : await requestPerms();
 
+      elapsedBeforeRunRef.current = getElapsedNow();
+      runStartedAtRef.current = Date.now();
       setRunning(true);
-      await persistActiveWalk({ running: true });
+      await persistActiveWalk({ elapsedSec: elapsedBeforeRunRef.current, running: true });
       startTimer();
 
       if (ok) {
@@ -183,11 +207,16 @@ export default function Walk() {
   };
 
   const end = async () => {
+    if (busyAction) return;
+    setBusyAction("stop");
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
     const source: SessionSource = subRef.current ? "gps" : "timer";
     const endLat = lastPointRef.current?.lat;
     const endLng = lastPointRef.current?.lng;
+    const finalElapsed = syncElapsedFromClock();
+    elapsedBeforeRunRef.current = finalElapsed;
+    runStartedAtRef.current = null;
 
     stopTimer();
     stopGps();
@@ -199,9 +228,11 @@ export default function Walk() {
     setRunning(false);
 
     // Guard: only count sessions >= 10 seconds
-    if (elapsedSec < 10) {
+    if (finalElapsed < 10) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert("Walk too short", "Walks need to be at least 10 seconds to count.");
       router.replace("/walk");
+      setBusyAction(null);
       return;
     }
 
@@ -210,7 +241,7 @@ export default function Walk() {
       params: {
         startedAt: String(startedAt),
         endedAt: String(endedAt),
-        durationSec: String(elapsedSec),
+        durationSec: String(finalElapsed),
         distanceM: String(Math.round(distanceM)),
         source,
         ...(Number.isFinite(endLat) && Number.isFinite(endLng)
@@ -261,6 +292,8 @@ export default function Walk() {
       restoringRef.current = true;
       const snapshot = await getActiveWalkSnapshot();
       if (!snapshot) {
+        elapsedBeforeRunRef.current = 0;
+        runStartedAtRef.current = null;
         restoringRef.current = false;
         setRestored(true);
         return;
@@ -272,6 +305,8 @@ export default function Walk() {
           ? snapshot.elapsedSec + Math.max(0, Math.round((Date.now() - snapshot.updatedAt) / 1000))
           : snapshot.elapsedSec;
 
+      elapsedBeforeRunRef.current = snapshot.running ? snapshot.elapsedSec : recoveredElapsed;
+      runStartedAtRef.current = snapshot.running ? snapshot.updatedAt : null;
       setElapsedSec(recoveredElapsed);
       setDistanceM(snapshot.distanceM);
       setRunning(snapshot.running);
@@ -312,6 +347,14 @@ export default function Walk() {
     void persistActiveWalk();
   }, [distanceM, elapsedSec, persistActiveWalk, running]);
 
+  const hasActiveSession = Boolean(startedAtRef.current) || elapsedSec > 0 || distanceM > 0;
+  const primaryAction = hasActiveSession ? resume : start;
+  const primaryLabel =
+    busyAction === "start" ? "STARTING…" : busyAction === "resume" ? "RESUMING…" : hasActiveSession ? "RESUME" : "START";
+  const canUsePrimary = restored && !running && busyAction !== "pause" && busyAction !== "stop";
+  const canPause = restored && running && busyAction !== "start" && busyAction !== "resume" && busyAction !== "stop";
+  const canStop = hasActiveSession && busyAction === null;
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Walk</Text>
@@ -344,24 +387,22 @@ export default function Walk() {
             style={[
               styles.btnPrimary,
               styles.controlBtn,
-              running || busyAction === "pause" ? styles.btnDisabled : null,
+              !canUsePrimary ? styles.btnDisabled : null,
             ]}
-            onPress={elapsedSec === 0 ? start : resume}
-            disabled={running || busyAction === "pause"}
+            onPress={primaryAction}
+            disabled={!canUsePrimary}
           >
-            <Text style={styles.btnPrimaryText}>
-              {busyAction === "start" ? "STARTING…" : busyAction === "resume" ? "RESUMING…" : elapsedSec === 0 ? "START" : "RESUME"}
-            </Text>
+            <Text style={styles.btnPrimaryText}>{primaryLabel}</Text>
           </Pressable>
 
           <Pressable
             style={[
               styles.btnPause,
               styles.controlBtn,
-              !running || busyAction === "start" || busyAction === "resume" ? styles.btnDisabled : null,
+              !canPause ? styles.btnDisabled : null,
             ]}
             onPress={pause}
-            disabled={!running || busyAction === "start" || busyAction === "resume"}
+            disabled={!canPause}
           >
             <Text style={styles.btnPauseText}>{busyAction === "pause" ? "PAUSING…" : "PAUSE"}</Text>
           </Pressable>
@@ -369,11 +410,11 @@ export default function Walk() {
       )}
 
       <Pressable
-        style={[styles.btnEnd, elapsedSec < 10 ? { opacity: 0.5 } : null]}
+        style={[styles.btnEnd, !canStop ? { opacity: 0.5 } : null]}
         onPress={end}
-        disabled={elapsedSec < 10}
+        disabled={!canStop}
       >
-        <Text style={styles.btnEndText}>STOP</Text>
+        <Text style={styles.btnEndText}>{busyAction === "stop" ? "STOPPING…" : "STOP"}</Text>
       </Pressable>
 
       <View style={styles.bottomRow}>
