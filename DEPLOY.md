@@ -26,8 +26,9 @@ Most hosts auto-provision SSL. Ensure both `https://stepoutside.app` and `https:
 ## App Store fields
 
 Use these URLs in App Store Connect:
-- Privacy Policy URL: `https://stepoutside.app/privacy.html`
+- Privacy Policy URL: `https://stepoutside.app/privacy-policy`
 - Support URL: `https://stepoutside.app/contact.html`
+- Terms of Use URL: `https://stepoutside.app/terms`
 - Marketing URL (optional): `https://stepoutside.app/`
 
 ## Local preview
