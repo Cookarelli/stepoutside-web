@@ -2,7 +2,7 @@
   "expo": {
     "name": "Step Outside",
     "slug": "step-outside-v2",
-    "version": "2.0.1",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "stepoutsidev2",
@@ -10,10 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.stevencook.stepoutside",
+      "bundleIdentifier": "com.cookarell.stepoutside",
       "buildNumber": "3",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Step Outside uses your location only while you track a walk so distance and pace can be calculated.",
+        "NSLocationWhenInUseUsageDescription": "Step Outside uses your location while you track a walk and when you look for nearby reset routes or local sunrise and sunset timing.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },

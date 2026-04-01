@@ -1,14 +1,16 @@
 {
   "name": "step-outside-v2",
   "main": "expo-router/entry",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "seed:routes": "node ./scripts/build-route-catalog.mjs",
+    "import:routes": "node ./scripts/import-route-catalog.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -47,6 +49,8 @@
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "firebase-tools": "^15.12.0",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.2"
   },
   "private": true

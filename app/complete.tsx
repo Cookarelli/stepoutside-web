@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { addCompletedSession, type SessionSource } from "../src/lib/store";
+import { addCompletedSession, type SessionSource, type SummaryStats } from "../src/lib/store";
 
 function minutesFromDuration(durationSec: number): number {
   return Math.max(1, Math.round(durationSec / 60));
@@ -61,7 +61,7 @@ export default function CompleteScreen() {
 
   const [saving, setSaving] = useState(true);
   const [minutes, setMinutes] = useState(0);
-  const [summary, setSummary] = useState<any>(null);
+  const [summary, setSummary] = useState<SummaryStats | null>(null);
   const [errorText, setErrorText] = useState("");
   const [sunriseBonus, setSunriseBonus] = useState(false);
   const [sunsetBonus, setSunsetBonus] = useState(false);
@@ -171,6 +171,32 @@ export default function CompleteScreen() {
     return `Streak: ${cs} day${cs === 1 ? "" : "s"} • Best: ${bs}`;
   }, [summary]);
 
+  const continueLabel = useMemo(() => {
+    if (!valid) return "BACK HOME";
+    return saving ? "SAVING…" : "CONTINUE";
+  }, [saving, valid]);
+
+  const goNext = () => {
+    if (!valid) {
+      router.replace("/(tabs)");
+      return;
+    }
+
+    router.push({
+      pathname: "/reflection" as never,
+      params: {
+        walkId: `${startedAt}-${endedAt}`,
+        startedAt: String(startedAt),
+        endedAt: String(endedAt),
+        durationSec: String(durationSec),
+        distanceM: String(Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0),
+        source,
+        sunriseBonus: String(sunriseBonus),
+        sunsetBonus: String(sunsetBonus),
+      },
+    } as never);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <View style={styles.container}>
@@ -209,21 +235,26 @@ export default function CompleteScreen() {
         <Pressable
           onPress={() => {
             void Haptics.selectionAsync();
-            router.push("/stats");
+            goNext();
           }}
-          style={({ pressed }) => [styles.btnPrimary, pressed ? { opacity: 0.9 } : null]}
+          disabled={saving && valid}
+          style={({ pressed }) => [
+            styles.btnPrimary,
+            saving && valid ? styles.btnDisabled : null,
+            pressed ? { opacity: 0.9 } : null,
+          ]}
         >
-          <Text style={styles.btnPrimaryText}>VIEW STATS</Text>
+          <Text style={styles.btnPrimaryText}>{continueLabel}</Text>
         </Pressable>
 
         <Pressable
           onPress={() => {
             void Haptics.selectionAsync();
-            router.replace("/start");
+            router.replace("/(tabs)");
           }}
           style={({ pressed }) => [styles.btnSecondary, pressed ? { opacity: 0.9 } : null]}
         >
-          <Text style={styles.btnSecondaryText}>BACK TO START</Text>
+          <Text style={styles.btnSecondaryText}>BACK HOME</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -283,6 +314,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
+  btnDisabled: {
+    opacity: 0.6,
+  },
 
   btnSecondary: {
     marginTop: 12,

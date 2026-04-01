@@ -1,9 +1,26 @@
 import { useRouter } from "expo-router";
-import React from "react";
+import React, { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+
+import { hasActiveWalkSnapshot } from "../src/lib/activeWalk";
 
 export default function StartScreen() {
   const router = useRouter();
+
+  useEffect(() => {
+    let alive = true;
+
+    void (async () => {
+      const hasActiveWalk = await hasActiveWalkSnapshot();
+      if (alive && hasActiveWalk) {
+        router.replace("/walk");
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [router]);
 
   return (
     <View style={styles.container}>
