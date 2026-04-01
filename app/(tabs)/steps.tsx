@@ -2,19 +2,24 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as Linking from "expo-linking";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getProState } from "../../src/lib/pro";
+import { getRouteCatalogZipHint, getRouteSuggestionsByZip, getRouteSuggestionsNearCoords, normalizeZip, type RouteSuggestion } from "../../src/lib/routeCatalog";
 
 type TrailSuggestion = {
   id: string;
   name: string;
+  kind: "park_loop" | "trail" | "indoor_walk";
   distanceMeters: number;
+  estMinutes: number;
   lat: number;
   lng: number;
-  source: "nearby" | "fallback";
+  tags: string[];
+  isIndoor: boolean;
+  source: "catalog" | "nearby" | "fallback" | "zip";
 };
 
 type PermissionState = "unknown" | "granted" | "denied";
@@ -42,6 +47,7 @@ const BRAND = {
 const MIN_M = 804.67; // 0.5 mi
 const MAX_M = 1609.34; // 1.0 mi
 const SAVED_WALKS_KEY = "@stepoutside/savedWalks";
+const ZIP_CODE_KEY = "@stepoutside/routeZipCode";
 
 function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371000;
@@ -88,6 +94,21 @@ function estMinutes(m: number): number {
   return Math.max(8, Math.round(miles * 20));
 }
 
+function fromCatalogRoute(route: RouteSuggestion): TrailSuggestion {
+  return {
+    id: route.id,
+    name: route.name,
+    kind: route.kind,
+    distanceMeters: route.distanceMeters,
+    estMinutes: route.estMinutes,
+    lat: route.lat,
+    lng: route.lng,
+    tags: route.tags,
+    isIndoor: route.isIndoor,
+    source: route.source,
+  };
+}
+
 async function openInMaps(item: TrailSuggestion) {
   const label = encodeURIComponent(item.name);
   const url = `http://maps.apple.com/?ll=${item.lat},${item.lng}&q=${label}`;
@@ -99,25 +120,37 @@ function fallbackSuggestions(lat: number, lng: number): TrailSuggestion[] {
     {
       id: "fallback-1",
       name: "Neighborhood 10-Min Loop",
+      kind: "park_loop",
       distanceMeters: 900,
+      estMinutes: 12,
       lat,
       lng,
+      tags: ["easy", "quick"],
+      isIndoor: false,
       source: "fallback",
     },
     {
       id: "fallback-2",
       name: "Fresh Air Out-and-Back",
+      kind: "trail",
       distanceMeters: 1200,
+      estMinutes: 15,
       lat,
       lng,
+      tags: ["reset", "easy"],
+      isIndoor: false,
       source: "fallback",
     },
     {
       id: "fallback-3",
       name: "Streak Saver Walk",
+      kind: "indoor_walk",
       distanceMeters: 1600,
+      estMinutes: 18,
       lat,
       lng,
+      tags: ["indoor", "backup"],
+      isIndoor: true,
       source: "fallback",
     },
   ];
@@ -133,6 +166,8 @@ export default function StepsTab() {
   const [showAllSaved, setShowAllSaved] = useState(false);
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [isPro, setIsPro] = useState(false);
+  const [zipCode, setZipCode] = useState("");
+  const [zipHint, setZipHint] = useState("Enter a ZIP code to browse short park loops and indoor backup walks.");
 
   const hasResults = useMemo(() => suggestions.length > 0, [suggestions]);
   const savedIds = useMemo(() => new Set(savedWalks.map((w) => w.id)), [savedWalks]);
@@ -165,6 +200,20 @@ export default function StepsTab() {
     await AsyncStorage.setItem(SAVED_WALKS_KEY, JSON.stringify(walks));
   }, []);
 
+  const loadSavedZip = useCallback(async () => {
+    const saved = await AsyncStorage.getItem(ZIP_CODE_KEY);
+    if (!saved) return;
+    const normalized = normalizeZip(saved);
+    if (normalized.length === 5) {
+      setZipCode(normalized);
+      setZipHint(getRouteCatalogZipHint(normalized));
+    }
+  }, []);
+
+  const persistZip = useCallback(async (zip: string) => {
+    await AsyncStorage.setItem(ZIP_CODE_KEY, zip);
+  }, []);
+
   const toggleSaveWalk = useCallback(
     async (walk: TrailSuggestion) => {
       setSavedWalks((prev) => {
@@ -191,12 +240,46 @@ export default function StepsTab() {
     [persistSavedWalks]
   );
 
-  const loadNearby = useCallback(async () => {
+  const loadByZip = useCallback(
+    async (zipInput: string) => {
+      const normalized = normalizeZip(zipInput);
+      setZipHint(getRouteCatalogZipHint(normalized));
+
+      if (normalized.length !== 5) {
+        setError("");
+        setSuggestions([]);
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+
+      try {
+        await persistZip(normalized);
+        const catalogRoutes = await getRouteSuggestionsByZip(normalized);
+        setSuggestions(catalogRoutes.map(fromCatalogRoute));
+        if (catalogRoutes.length === 0) {
+          setError("We have not seeded that ZIP yet. Try another nearby ZIP or enable location for live route discovery.");
+        }
+      } catch {
+        setError("Couldn’t load route suggestions for that ZIP right now.");
+        setSuggestions([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [persistZip]
+  );
+
+  const loadNearby = useCallback(async (promptForPermission = false) => {
     setLoading(true);
     setError("");
+    let fallbackCoords = userCoords;
 
     try {
-      const perm = await Location.requestForegroundPermissionsAsync();
+      const perm = promptForPermission
+        ? await Location.requestForegroundPermissionsAsync()
+        : await Location.getForegroundPermissionsAsync();
       const granted = perm.status === "granted";
       setPermission(granted ? "granted" : "denied");
 
@@ -208,7 +291,16 @@ export default function StepsTab() {
 
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const { latitude, longitude } = pos.coords;
-      setUserCoords({ lat: latitude, lng: longitude });
+      const currentCoords = { lat: latitude, lng: longitude };
+      fallbackCoords = currentCoords;
+      setUserCoords(currentCoords);
+
+       const catalogRoutes = await getRouteSuggestionsNearCoords(currentCoords);
+       if (catalogRoutes.length > 0) {
+         setSuggestions(catalogRoutes.map(fromCatalogRoute));
+         setLoading(false);
+         return;
+       }
 
       const query = `
 [out:json][timeout:25];
@@ -237,9 +329,13 @@ out tags geom 120;
           return {
             id: String(w.id),
             name: w.tags?.name?.trim() || "Local Trail",
+            kind: "trail" as const,
             distanceMeters,
+            estMinutes: estMinutes(distanceMeters),
             lat: c.lat,
             lng: c.lng,
+            tags: ["live-nearby"],
+            isIndoor: false,
             source: "nearby" as const,
           };
         })
@@ -254,17 +350,31 @@ out tags geom 120;
         setSuggestions(mapped);
       }
     } catch {
-      setError("Couldn’t fetch nearby trails right now.");
-      setSuggestions([]);
+      if (fallbackCoords) {
+        setSuggestions(fallbackSuggestions(fallbackCoords.lat, fallbackCoords.lng));
+        setError("Live nearby trails are unavailable right now. Showing a few easy reset ideas instead.");
+      } else {
+        setError("Couldn’t fetch nearby trails right now.");
+        setSuggestions([]);
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userCoords]);
 
   useEffect(() => {
     void loadSavedWalks();
-    void loadNearby();
-  }, [loadNearby, loadSavedWalks]);
+    void loadSavedZip();
+    void loadNearby(false);
+  }, [loadNearby, loadSavedWalks, loadSavedZip]);
+
+  useEffect(() => {
+    if (permission !== "denied" || suggestions.length > 0 || normalizeZip(zipCode).length !== 5) {
+      return;
+    }
+
+    void loadByZip(zipCode);
+  }, [loadByZip, permission, suggestions.length, zipCode]);
 
   useFocusEffect(
     useCallback(() => {
@@ -279,9 +389,9 @@ out tags geom 120;
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Suggested Walks</Text>
-        <Text style={styles.sub}>Short nearby trails and walks (0.5–1.0 mi).</Text>
+        <Text style={styles.sub}>Short nearby park loops, trail resets, and indoor backup walks.</Text>
 
-        <Pressable style={styles.refreshBtn} onPress={() => void loadNearby()}>
+        <Pressable style={styles.refreshBtn} onPress={() => void loadNearby(true)}>
           <Text style={styles.refreshText}>Refresh Nearby</Text>
         </Pressable>
 
@@ -334,7 +444,26 @@ out tags geom 120;
 
         {!loading && permission === "denied" ? (
           <View style={styles.centerState}>
-            <Text style={styles.stateText}>Location permission is needed to suggest walks in your area.</Text>
+            <Text style={styles.stateText}>Location is off. Use a ZIP code to browse our route catalog instead.</Text>
+            <View style={styles.zipRow}>
+              <TextInput
+                value={zipCode}
+                onChangeText={(value) => {
+                  const normalized = normalizeZip(value);
+                  setZipCode(normalized);
+                  setZipHint(getRouteCatalogZipHint(normalized));
+                }}
+                keyboardType="number-pad"
+                placeholder="ZIP code"
+                placeholderTextColor="rgba(11,15,14,0.35)"
+                maxLength={5}
+                style={styles.zipInput}
+              />
+              <Pressable style={styles.zipBtn} onPress={() => void loadByZip(zipCode)}>
+                <Text style={styles.zipBtnText}>Use ZIP</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.zipHint}>{zipHint}</Text>
           </View>
         ) : null}
 
@@ -355,7 +484,15 @@ out tags geom 120;
               <View key={item.id} style={styles.card}>
                 <View style={styles.cardTop}>
                   <Text style={styles.cardTitle}>{item.name}</Text>
-                  {item.source === "fallback" ? <Text style={styles.fallbackTag}>Quick pick</Text> : null}
+                  <Text style={styles.fallbackTag}>
+                    {item.source === "catalog"
+                      ? "Route DB"
+                      : item.source === "zip"
+                        ? "ZIP match"
+                        : item.source === "nearby"
+                          ? "Live nearby"
+                          : "Quick pick"}
+                  </Text>
                 </View>
 
                 <View style={styles.chips}>
@@ -363,9 +500,16 @@ out tags geom 120;
                     <Text style={styles.chipText}>{metersToMiles(item.distanceMeters)} mi</Text>
                   </View>
                   <View style={styles.chip}>
-                    <Text style={styles.chipText}>~{estMinutes(item.distanceMeters)} min</Text>
+                    <Text style={styles.chipText}>~{item.estMinutes} min</Text>
                   </View>
+                  {item.isIndoor ? (
+                    <View style={styles.chip}>
+                      <Text style={styles.chipText}>Indoor</Text>
+                    </View>
+                  ) : null}
                 </View>
+
+                {item.tags.length > 0 ? <Text style={styles.cardNote}>{item.tags.slice(0, 3).join(" • ")}</Text> : null}
 
                 <View style={styles.actions}>
                   <Pressable style={styles.mapBtn} onPress={() => void openInMaps(item)}>
@@ -430,6 +574,40 @@ const styles = StyleSheet.create({
   refreshText: {
     color: "white",
     fontWeight: "900",
+  },
+  zipRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+  },
+  zipInput: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.12)",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    color: BRAND.charcoal,
+    fontWeight: "800",
+  },
+  zipBtn: {
+    backgroundColor: BRAND.forest,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  zipBtnText: {
+    color: "white",
+    fontWeight: "900",
+  },
+  zipHint: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.62)",
+    fontWeight: "700",
+    lineHeight: 19,
   },
   centerState: {
     marginTop: 20,
@@ -569,6 +747,12 @@ const styles = StyleSheet.create({
   chipText: {
     fontWeight: "800",
     color: "rgba(11,15,14,0.75)",
+  },
+  cardNote: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.62)",
+    fontWeight: "700",
+    lineHeight: 18,
   },
   actions: {
     marginTop: 12,

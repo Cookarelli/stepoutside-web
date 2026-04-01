@@ -2,6 +2,8 @@ import { useRouter } from "expo-router";
 import React, { useEffect, useMemo } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
 
+import { hasActiveWalkSnapshot } from "../src/lib/activeWalk";
+import { refreshScheduledReminders } from "../src/lib/notifications";
 import { hasCompletedOnboarding } from "../src/lib/onboarding";
 
 const QUOTES = [
@@ -28,11 +30,14 @@ export default function SplashScreen() {
   useEffect(() => {
     let alive = true;
 
+    void refreshScheduledReminders();
+
     const t = setTimeout(() => {
       void (async () => {
         const completed = await hasCompletedOnboarding();
+        const hasActiveWalk = completed ? await hasActiveWalkSnapshot() : false;
         if (!alive) return;
-        router.replace(completed ? "/(tabs)" : "/(onboarding)/welcome-1");
+        router.replace(completed ? (hasActiveWalk ? "/walk" : "/(tabs)") : "/(onboarding)/welcome-1");
       })();
     }, 2500); // 2–3 seconds hold
 
@@ -58,7 +63,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 26,
   },
-  logo: { width: 96, height: 96, borderRadius: 24, marginBottom: 18 },
+  logo: { width: 144, height: 144, borderRadius: 32, marginBottom: 22 },
   quote: {
     color: "rgba(11,15,14,0.86)",
     fontSize: 20,

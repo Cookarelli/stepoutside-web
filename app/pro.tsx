@@ -1,15 +1,17 @@
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchases";
 
 import {
   clearProState,
   getProState,
-  initRevenueCat,
+  getPaywallCatalog,
   purchaseProPlan,
+  refreshProState,
   restorePurchasesScaffold,
-  type ProPlan,
+  type ProPaywallPackage,
   type ProState,
 } from "../src/lib/pro";
 
@@ -24,68 +26,174 @@ const BRAND = {
 export default function ProScreen() {
   const router = useRouter();
   const [proState, setProStateLocal] = useState<ProState | null>(null);
+  const [packages, setPackages] = useState<ProPaywallPackage[]>([]);
+  const [billingReady, setBillingReady] = useState(false);
+  const [catalogSource, setCatalogSource] = useState<"live" | "fallback">("fallback");
+  const [offeringId, setOfferingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
 
-  const load = async () => {
-    const s = await getProState();
-    setProStateLocal(s);
-  };
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const catalog = await getPaywallCatalog();
+      const state = await refreshProState();
+
+      setPackages(catalog.packages);
+      setBillingReady(catalog.billingReady);
+      setCatalogSource(catalog.source);
+      setOfferingId(catalog.offeringId);
+      setProStateLocal(state);
+    } catch {
+      const state = await getProState();
+      setPackages([]);
+      setBillingReady(false);
+      setCatalogSource("fallback");
+      setOfferingId(null);
+      setProStateLocal(state);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void (async () => {
-      await initRevenueCat();
       await load();
     })();
-  }, []);
+  }, [load]);
 
-  const activatePlan = async (plan: ProPlan) => {
-    await purchaseProPlan(plan);
-    await load();
-    Alert.alert("Purchase flow complete", "If billing is configured, this was a real purchase. Otherwise scaffold mode was used.");
+  const isRevenueCatError = (error: unknown): error is PurchasesError => {
+    return typeof error === "object" && error !== null && "code" in error && "message" in error;
+  };
+
+  const activatePlan = async (pkg: ProPaywallPackage) => {
+    setBusyAction(pkg.plan);
+    try {
+      const next = await purchaseProPlan(pkg.plan, pkg.rcPackage);
+      setProStateLocal(next);
+      Alert.alert(
+        next.isPro ? "Pro unlocked" : "Purchase complete",
+        billingReady
+          ? "Your Step Outside Pro status is now synced with RevenueCat."
+          : "Preview mode used local Pro unlock. Test purchases in an iOS dev build or TestFlight."
+      );
+    } catch (error) {
+      if (
+        isRevenueCatError(error) &&
+        (error.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR || error.userCancelled)
+      ) {
+        return;
+      }
+
+      if (isRevenueCatError(error) && error.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
+        Alert.alert("Purchase pending", "Apple is still processing this purchase. We’ll unlock Pro as soon as it clears.");
+        return;
+      }
+
+      Alert.alert("Purchase couldn’t start", isRevenueCatError(error) ? error.message : "Please try again in a moment.");
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const restore = async () => {
-    await restorePurchasesScaffold();
-    await load();
-    Alert.alert("Restore complete", "If you had Pro entitlements, they would appear here once billing is wired.");
+    setBusyAction("restore");
+    try {
+      const next = await restorePurchasesScaffold();
+      setProStateLocal(next);
+      Alert.alert(
+        next.isPro ? "Purchases restored" : "No Pro purchases found",
+        billingReady
+          ? next.isPro
+            ? "Your previous Pro access is active again."
+            : "This Apple account doesn’t currently have an active Step Outside Pro entitlement."
+          : "Restore is live on native builds. In preview mode this screen only shows your saved local Pro state."
+      );
+    } catch (error) {
+      Alert.alert("Restore failed", isRevenueCatError(error) ? error.message : "Please try again in a moment.");
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const clear = async () => {
+    setBusyAction("clear");
     await clearProState();
-    await load();
+    setProStateLocal({
+      isPro: false,
+      plan: null,
+      productId: null,
+      updatedAt: Date.now(),
+    });
+    setBusyAction(null);
   };
 
   const isPro = proState?.isPro ?? false;
+  const statusNote =
+    catalogSource === "live" && offeringId
+      ? `Live pricing loaded from RevenueCat offering "${offeringId}".`
+      : billingReady
+        ? "Purchases are available, but live pricing could not be loaded right now."
+        : "Purchases are only active in a native dev build or TestFlight with RevenueCat configured.";
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
-        <Text style={styles.title}>StepOutside Pro</Text>
-        <Text style={styles.sub}>7-day trial + premium insights, planning, and streak protection.</Text>
+        <Text style={styles.title}>Step Outside Pro</Text>
+        <Text style={styles.sub}>Golden Hour insights, unlimited saved walks, and a steadier daily rhythm.</Text>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Current status</Text>
           <Text style={styles.cardBody}>{isPro ? `Pro active (${proState?.plan ?? "plan"})` : "Free plan"}</Text>
+          <Text style={styles.cardCaption}>{statusNote}</Text>
         </View>
 
-        <Pressable style={styles.primary} onPress={() => void activatePlan("yearly")}>
-          <Text style={styles.primaryText}>Start Yearly — $49.99</Text>
-        </Pressable>
-
-        <Pressable style={styles.primaryAlt} onPress={() => void activatePlan("monthly")}>
-          <Text style={styles.primaryAltText}>Start Monthly — $4.99</Text>
-        </Pressable>
-
-        <Pressable style={styles.secondary} onPress={() => void activatePlan("lifetime")}>
-          <Text style={styles.secondaryText}>Lifetime Launch — $89</Text>
-        </Pressable>
+        {loading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator color={BRAND.forest} />
+            <Text style={styles.loadingText}>Loading plans…</Text>
+          </View>
+        ) : (
+          packages.map((pkg, index) => {
+            const featured = index === 0;
+            const active = proState?.productId === pkg.productId || proState?.plan === pkg.plan;
+            return (
+              <Pressable
+                key={pkg.plan}
+                style={[
+                  featured ? styles.primary : index === 1 ? styles.primaryAlt : styles.secondary,
+                  active ? styles.activePlan : null,
+                ]}
+                onPress={() => void activatePlan(pkg)}
+                disabled={busyAction !== null}
+              >
+                <View style={styles.planHeader}>
+                  <Text style={featured ? styles.primaryText : index === 1 ? styles.primaryAltText : styles.secondaryText}>
+                    {pkg.title} {pkg.badge ? `· ${pkg.badge}` : ""}
+                  </Text>
+                  <Text style={featured ? styles.primaryText : index === 1 ? styles.primaryAltText : styles.secondaryText}>
+                    {pkg.priceLabel}
+                  </Text>
+                </View>
+                <Text style={featured ? styles.primarySubtext : index === 1 ? styles.primaryAltSubtext : styles.secondarySubtext}>
+                  {busyAction === pkg.plan ? "Working…" : active ? "Current plan" : pkg.detail}
+                </Text>
+              </Pressable>
+            );
+          })
+        )}
 
         <View style={styles.row}>
-          <Pressable style={styles.linkBtn} onPress={() => void restore()}>
-            <Text style={styles.linkText}>Restore purchases</Text>
+          <Pressable style={styles.linkBtn} onPress={() => void restore()} disabled={busyAction !== null}>
+            <Text style={styles.linkText}>{busyAction === "restore" ? "Restoring…" : "Restore purchases"}</Text>
           </Pressable>
-          <Pressable style={styles.linkBtn} onPress={() => void clear()}>
-            <Text style={[styles.linkText, { color: BRAND.red }]}>Clear Pro (test)</Text>
-          </Pressable>
+          {__DEV__ ? (
+            <Pressable style={styles.linkBtn} onPress={() => void clear()} disabled={busyAction !== null}>
+              <Text style={[styles.linkText, { color: BRAND.red }]}>
+                {busyAction === "clear" ? "Clearing…" : "Clear Pro (test)"}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <Pressable style={styles.done} onPress={() => router.back()}>
@@ -111,6 +219,17 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontWeight: "900", color: BRAND.charcoal },
   cardBody: { marginTop: 4, fontWeight: "700", color: "rgba(11,15,14,0.72)" },
+  cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: "rgba(11,15,14,0.58)" },
+  loadingWrap: {
+    marginTop: 16,
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: "center",
+    backgroundColor: "rgba(11,15,14,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+  },
+  loadingText: { marginTop: 8, color: "rgba(11,15,14,0.62)", fontWeight: "700" },
   primary: {
     marginTop: 16,
     backgroundColor: BRAND.forest,
@@ -119,6 +238,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   primaryText: { color: "white", fontWeight: "900" },
+  primarySubtext: { marginTop: 4, color: "rgba(255,255,255,0.8)", fontWeight: "700" },
   primaryAlt: {
     marginTop: 10,
     backgroundColor: "rgba(37,94,54,0.14)",
@@ -127,6 +247,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   primaryAltText: { color: BRAND.forest, fontWeight: "900" },
+  primaryAltSubtext: { marginTop: 4, color: "rgba(37,94,54,0.86)", fontWeight: "700" },
   secondary: {
     marginTop: 10,
     backgroundColor: BRAND.sunrise,
@@ -135,6 +256,17 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   secondaryText: { color: BRAND.charcoal, fontWeight: "900" },
+  secondarySubtext: { marginTop: 4, color: "rgba(11,15,14,0.72)", fontWeight: "700" },
+  activePlan: {
+    borderWidth: 2,
+    borderColor: "rgba(11,15,14,0.22)",
+  },
+  planHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
   row: { marginTop: 16, flexDirection: "row", gap: 16 },
   linkBtn: { paddingVertical: 8, paddingHorizontal: 4 },
   linkText: { fontWeight: "900", color: BRAND.forest },

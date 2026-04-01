@@ -1,9 +1,9 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 
 import { resetOnboarding } from "../../src/lib/onboarding";
-import { getNotificationPrefs, requestNotificationPermission, scheduleDailyStreakRiskReminder, sendTestNotification, setNotificationPrefs, type NotificationPrefs } from "../../src/lib/notifications";
+import { getNotificationPrefs, requestNotificationPermission, scheduleSmartReminders, sendTestNotification, setNotificationPrefs, type NotificationPrefs } from "../../src/lib/notifications";
 import { getProState } from "../../src/lib/pro";
 
 export default function ProfileTab() {
@@ -44,16 +44,30 @@ export default function ProfileTab() {
   };
 
   const updatePrefs = async (next: NotificationPrefs) => {
-    setPrefs(next);
-    await setNotificationPrefs(next);
-    const ok = await requestNotificationPermission();
-    if (ok) await scheduleDailyStreakRiskReminder(next);
+    const wantsNotifications =
+      next.sunriseQuotes || next.sunsetReminders || next.streakRiskReminders;
+
+    if (wantsNotifications) {
+      const ok = await requestNotificationPermission();
+      if (!ok) {
+        Alert.alert("Notifications are off", "Allow notifications to receive sunrise quotes and sunset nudges.");
+        return;
+      }
+    }
+
+    try {
+      setPrefs(next);
+      await setNotificationPrefs(next);
+      await scheduleSmartReminders(next);
+    } catch {
+      Alert.alert("Couldn’t update reminders", "Please try again in a moment.");
+    }
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Profile</Text>
-      <Text style={styles.sub}>Anonymous now. Profile later.</Text>
+      <Text style={styles.sub}>Your preferences, reminders, and plan settings.</Text>
       <Text style={styles.proStatus}>{isPro ? "Pro Active" : "Free Plan"}</Text>
 
       <Pressable onPress={() => router.push("/pro")} style={({ pressed }) => [styles.btn, pressed ? { opacity: 0.9 } : null]}>
@@ -62,20 +76,41 @@ export default function ProfileTab() {
 
       <View style={styles.notificationsCard}>
         <Text style={styles.notificationsTitle}>Smart reminders</Text>
+        <Text style={styles.notificationsBody}>Give people a reason to come back: a sunrise quote, a golden-hour nudge, and a streak-save ping.</Text>
 
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>Weather reminders</Text>
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowLabel}>Sunrise quotes</Text>
+            <Text style={styles.rowHint}>A short daily line scheduled just after local sunrise.</Text>
+          </View>
           <Switch
-            value={prefs?.weatherReminders ?? false}
+            value={prefs?.sunriseQuotes ?? false}
             onValueChange={(v) => {
               if (!prefs) return;
-              void updatePrefs({ ...prefs, weatherReminders: v });
+              void updatePrefs({ ...prefs, sunriseQuotes: v });
             }}
           />
         </View>
 
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>Streak-risk reminders</Text>
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowLabel}>Sunset nudges</Text>
+            <Text style={styles.rowHint}>A gentle golden-hour reminder before the day closes.</Text>
+          </View>
+          <Switch
+            value={prefs?.sunsetReminders ?? false}
+            onValueChange={(v) => {
+              if (!prefs) return;
+              void updatePrefs({ ...prefs, sunsetReminders: v });
+            }}
+          />
+        </View>
+
+        <View style={styles.row}>
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowLabel}>Streak-save reminders</Text>
+            <Text style={styles.rowHint}>A backup nudge in the evening if the day is slipping away.</Text>
+          </View>
           <Switch
             value={prefs?.streakRiskReminders ?? false}
             onValueChange={(v) => {
@@ -85,20 +120,22 @@ export default function ProfileTab() {
           />
         </View>
 
-        <Pressable style={styles.testBtn} onPress={() => void sendTestNotification()}>
-          <Text style={styles.testBtnText}>Send test reminder</Text>
-        </Pressable>
+        {__DEV__ ? (
+          <Pressable style={styles.testBtn} onPress={() => void sendTestNotification()}>
+            <Text style={styles.testBtnText}>Send test notification</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.btnAlt, pressed ? { opacity: 0.9 } : null]}>
         <Text style={styles.btnAltText}>Replay Welcome Screens</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F8F4EE", alignItems: "center", justifyContent: "center", padding: 20 },
+  container: { padding: 20, backgroundColor: "#F8F4EE", flexGrow: 1, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 28, fontWeight: "900", color: "#0B0F0E" },
   sub: { marginTop: 10, fontSize: 14, fontWeight: "700", color: "rgba(11,15,14,0.65)", textAlign: "center" },
   proStatus: {
@@ -125,8 +162,11 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   notificationsTitle: { fontWeight: "900", color: "#0B0F0E", marginBottom: 8 },
-  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 4 },
+  notificationsBody: { marginBottom: 8, color: "rgba(11,15,14,0.62)", fontWeight: "700", lineHeight: 19 },
+  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingVertical: 8 },
+  rowCopy: { flex: 1 },
   rowLabel: { fontWeight: "700", color: "rgba(11,15,14,0.75)" },
+  rowHint: { marginTop: 3, color: "rgba(11,15,14,0.55)", fontWeight: "600", fontSize: 12, lineHeight: 17 },
   testBtn: {
     marginTop: 8,
     alignSelf: "flex-start",

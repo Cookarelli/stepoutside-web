@@ -5,7 +5,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getProState } from "../src/lib/pro";
-import { dayKeyLocal, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
+import { dayKeyLocal, EMPTY_SUMMARY, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
 
 function fmtTime(ts: number): string {
   try {
@@ -47,12 +47,19 @@ export default function StatsScreen() {
   const last7 = useMemo(() => lastNDaysKeys(7), []);
 
   const load = async () => {
-    setLoading(true);
-    const [s, sess, pro] = await Promise.all([getSummary(), getSessions(), getProState()]);
-    setSummary(s);
-    setSessions(sess);
-    setIsPro(pro.isPro);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const [s, sess, pro] = await Promise.all([getSummary(), getSessions(), getProState()]);
+      setSummary(s);
+      setSessions(sess);
+      setIsPro(pro.isPro);
+    } catch {
+      setSummary(EMPTY_SUMMARY);
+      setSessions([]);
+      setIsPro(false);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -71,12 +78,21 @@ export default function StatsScreen() {
   const bestStreak = summary?.bestStreakDays ?? 0;
   const sunriseBonusCount = summary?.sunriseBonusCount ?? 0;
   const sunsetBonusCount = summary?.sunsetBonusCount ?? 0;
+  const goldenHourStreakCurrent = summary?.goldenHourStreakCurrent ?? 0;
+  const goldenHourStreakBest = summary?.goldenHourStreakBest ?? 0;
+  const dualResetDaysCount = summary?.dualResetDaysCount ?? 0;
+  const goldenHourSessionCount = sunriseBonusCount + sunsetBonusCount;
 
   const avgSessionMinutes = useMemo(() => {
     if (sessions.length === 0) return 0;
     const total = sessions.reduce((acc, s) => acc + Math.max(1, Math.round(s.durationSec / 60)), 0);
     return Math.round(total / sessions.length);
   }, [sessions]);
+
+  const goldenHourRate = useMemo(() => {
+    if (totalSessions === 0) return 0;
+    return Math.round((goldenHourSessionCount / totalSessions) * 100);
+  }, [goldenHourSessionCount, totalSessions]);
 
   const last30ActiveDays = useMemo(() => {
     if (!summary) return 0;
@@ -89,6 +105,19 @@ export default function StatsScreen() {
     }
     return count;
   }, [summary]);
+
+  const goldenHourInsight = useMemo(() => {
+    if (goldenHourSessionCount === 0) {
+      return "Your first sunrise or sunset walk starts this rhythm.";
+    }
+    if (dualResetDaysCount > 0) {
+      return `${dualResetDaysCount} dual reset day${dualResetDaysCount === 1 ? "" : "s"} so far. Morning and evening both count.`;
+    }
+    if (goldenHourStreakCurrent > 0) {
+      return `${goldenHourStreakCurrent}-day Golden Hour streak in motion.`;
+    }
+    return `Best Golden Hour run so far: ${goldenHourStreakBest} day${goldenHourStreakBest === 1 ? "" : "s"}.`;
+  }, [dualResetDaysCount, goldenHourSessionCount, goldenHourStreakBest, goldenHourStreakCurrent]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "left", "right", "bottom"]}>
@@ -168,10 +197,10 @@ export default function StatsScreen() {
             )}
           </View>
 
-          <Text style={[styles.sectionTitle, { color: t.text }]}>Pro insights</Text>
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Golden Hours</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
-          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}> 
+          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
             <View style={styles.row}>
               <Text style={[styles.rowLeft, { color: t.sub }]}>Sunrise bonuses</Text>
               <Text style={[styles.rowRight, { color: t.text }]}>{sunriseBonusCount}</Text>
@@ -184,6 +213,22 @@ export default function StatsScreen() {
             {isPro ? (
               <>
                 <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Golden Hour streak</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{goldenHourStreakCurrent} days</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Best Golden Hour run</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{goldenHourStreakBest} days</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Dual reset days</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{dualResetDaysCount}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Golden Hour hit rate</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{goldenHourRate}%</Text>
+                </View>
+                <View style={styles.row}>
                   <Text style={[styles.rowLeft, { color: t.sub }]}>Avg session length</Text>
                   <Text style={[styles.rowRight, { color: t.text }]}>{avgSessionMinutes} min</Text>
                 </View>
@@ -191,10 +236,13 @@ export default function StatsScreen() {
                   <Text style={[styles.rowLeft, { color: t.sub }]}>Active days (30d)</Text>
                   <Text style={[styles.rowRight, { color: t.text }]}>{last30ActiveDays} days</Text>
                 </View>
+                <Text style={[styles.insightText, { color: t.sub }]}>{goldenHourInsight}</Text>
               </>
             ) : (
               <View>
-                <Text style={[styles.muted, { color: t.sub }]}>Unlock Pro for advanced trend insights and coaching metrics.</Text>
+                <Text style={[styles.muted, { color: t.sub }]}>
+                  Unlock Pro for Golden Hour streaks, dual reset tracking, and deeper rhythm insights.
+                </Text>
                 <Pressable style={styles.unlockBtn} onPress={() => router.push("/pro")}>
                   <Text style={styles.unlockBtnText}>Unlock Pro</Text>
                 </Pressable>
@@ -315,6 +363,11 @@ const styles = StyleSheet.create({
   sessionSub: { marginTop: 4, fontWeight: "700" },
 
   muted: { fontWeight: "700" },
+  insightText: {
+    marginTop: 10,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
   unlockBtn: {
     marginTop: 10,
     alignSelf: "flex-start",

@@ -1,8 +1,10 @@
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, AppState, type AppStateStatus, Pressable, StyleSheet, Text, View } from "react-native";
+
+import { clearActiveWalkSnapshot, getActiveWalkSnapshot, setActiveWalkSnapshot } from "../src/lib/activeWalk";
 
 type LatLng = { lat: number; lng: number };
 
@@ -37,12 +39,16 @@ export default function Walk() {
   const [running, setRunning] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceM, setDistanceM] = useState(0);
+  const [restored, setRestored] = useState(false);
+  const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | null>(null);
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const restoringRef = useRef(false);
 
   const lastPointRef = useRef<LatLng | null>(null);
   const subRef = useRef<Location.LocationSubscription | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const pace = useMemo(() => {
     if (distanceM < 5 || elapsedSec < 5) return "";
@@ -97,64 +103,107 @@ export default function Walk() {
     tickRef.current = null;
   };
 
+  const persistActiveWalk = useCallback(
+    async (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean }>) => {
+      const startedAt = startedAtRef.current;
+      if (!startedAt) return;
+
+      await setActiveWalkSnapshot({
+        startedAt,
+        elapsedSec: overrides?.elapsedSec ?? elapsedSec,
+        distanceM: overrides?.distanceM ?? distanceM,
+        running: overrides?.running ?? running,
+        updatedAt: Date.now(),
+      });
+    },
+    [distanceM, elapsedSec, running]
+  );
+
   const start = async () => {
+    if (!restored || running || busyAction) return;
+    setBusyAction("start");
     void Haptics.selectionAsync();
+    try {
+      const ok = permission === "granted" ? true : await requestPerms();
 
-    const ok = permission === "granted" ? true : await requestPerms();
-    if (!ok) return;
+      stopTimer();
+      stopGps();
+      await clearActiveWalkSnapshot();
 
-    startedAtRef.current = Date.now();
-    setElapsedSec(0);
-    setDistanceM(0);
-    lastPointRef.current = null;
+      startedAtRef.current = Date.now();
+      setElapsedSec(0);
+      setDistanceM(0);
+      lastPointRef.current = null;
 
-    setRunning(true);
-    startTimer();
-    await startGps();
+      setRunning(true);
+      await persistActiveWalk({ elapsedSec: 0, distanceM: 0, running: true });
+      startTimer();
 
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (ok) {
+        await startGps();
+      }
+
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const pause = async () => {
+    if (!restored || !running || busyAction) return;
+    setBusyAction("pause");
     void Haptics.selectionAsync();
-    setRunning(false);
-    stopTimer();
-    // stop GPS on pause to save battery
-    stopGps();
+    try {
+      setRunning(false);
+      stopTimer();
+      stopGps();
+      await persistActiveWalk({ running: false });
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const resume = async () => {
+    if (!restored || running || busyAction) return;
+    setBusyAction("resume");
     void Haptics.selectionAsync();
+    try {
+      const ok = permission === "granted" ? true : await requestPerms();
 
-    const ok = permission === "granted" ? true : await requestPerms();
-    if (!ok) return;
+      setRunning(true);
+      await persistActiveWalk({ running: true });
+      startTimer();
 
-    setRunning(true);
-    startTimer();
-    await startGps();
+      if (ok) {
+        await startGps();
+      }
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const end = async () => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
+    const source: SessionSource = subRef.current ? "gps" : "timer";
+    const endLat = lastPointRef.current?.lat;
+    const endLng = lastPointRef.current?.lng;
+
     stopTimer();
     stopGps();
+    await clearActiveWalkSnapshot();
 
     const startedAt = startedAtRef.current ?? Date.now();
     const endedAt = Date.now();
+    startedAtRef.current = null;
+    setRunning(false);
 
     // Guard: only count sessions >= 10 seconds
     if (elapsedSec < 10) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      router.replace("/start");
+      router.replace("/walk");
       return;
     }
-
-    const source: SessionSource = "gps";
-
-    // Route to the real complete screen
-    const endLat = lastPointRef.current?.lat;
-    const endLng = lastPointRef.current?.lng;
 
     router.replace({
       pathname: "/complete",
@@ -164,17 +213,104 @@ export default function Walk() {
         durationSec: String(elapsedSec),
         distanceM: String(Math.round(distanceM)),
         source,
-        ...(endLat && endLng ? { endLat: String(endLat), endLng: String(endLng) } : {}),
+        ...(Number.isFinite(endLat) && Number.isFinite(endLng)
+          ? { endLat: String(endLat), endLng: String(endLng) }
+          : {}),
       },
     });
   };
 
+  const leaveWalkScreen = useCallback(
+    (destination: "back" | "home") => {
+      const go = () => {
+        if (destination === "home") {
+          router.replace("/(tabs)");
+          return;
+        }
+        router.back();
+      };
+
+      if (!startedAtRef.current || elapsedSec === 0) {
+        void Haptics.selectionAsync();
+        go();
+        return;
+      }
+
+      Alert.alert(
+        "Keep this walk going?",
+        running
+          ? "You can leave this screen and keep the walk active in the background."
+          : "You can leave now and come back to resume this walk later.",
+        [
+          { text: "Stay", style: "cancel" },
+          {
+            text: running ? "Leave Running" : "Leave Walk",
+            onPress: () => {
+              void Haptics.selectionAsync();
+              go();
+            },
+          },
+        ]
+      );
+    },
+    [elapsedSec, router, running]
+  );
+
   useEffect(() => {
+    void (async () => {
+      restoringRef.current = true;
+      const snapshot = await getActiveWalkSnapshot();
+      if (!snapshot) {
+        restoringRef.current = false;
+        setRestored(true);
+        return;
+      }
+
+      startedAtRef.current = snapshot.startedAt;
+      const recoveredElapsed =
+        snapshot.running
+          ? snapshot.elapsedSec + Math.max(0, Math.round((Date.now() - snapshot.updatedAt) / 1000))
+          : snapshot.elapsedSec;
+
+      setElapsedSec(recoveredElapsed);
+      setDistanceM(snapshot.distanceM);
+      setRunning(snapshot.running);
+
+      if (snapshot.running) {
+        startTimer();
+        const ok = await requestPerms();
+        if (ok) {
+          await startGps();
+        }
+      }
+
+      restoringRef.current = false;
+      setRestored(true);
+    })();
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if (startedAtRef.current && previousState === "active" && nextState.match(/inactive|background/)) {
+        void persistActiveWalk();
+      }
+    });
+
     return () => {
+      subscription.remove();
+      if (startedAtRef.current) {
+        void persistActiveWalk();
+      }
       stopTimer();
       stopGps();
     };
-  }, []);
+  }, [persistActiveWalk]);
+
+  useEffect(() => {
+    if (restoringRef.current || !startedAtRef.current) return;
+    void persistActiveWalk();
+  }, [distanceM, elapsedSec, persistActiveWalk, running]);
 
   return (
     <View style={styles.container}>
@@ -197,14 +333,39 @@ export default function Walk() {
         <Text style={styles.warn}>Location permission denied. Enable it in Settings.</Text>
       ) : null}
 
-      {!running ? (
-        <Pressable style={styles.btnPrimary} onPress={elapsedSec === 0 ? start : resume}>
-          <Text style={styles.btnPrimaryText}>{elapsedSec === 0 ? "START" : "RESUME"}</Text>
-        </Pressable>
+      {!restored ? (
+        <View style={styles.loadingState}>
+          <ActivityIndicator color="#F2B541" />
+          <Text style={styles.loadingText}>Loading walk…</Text>
+        </View>
       ) : (
-        <Pressable style={styles.btnPause} onPress={pause}>
-          <Text style={styles.btnPauseText}>PAUSE</Text>
-        </Pressable>
+        <View style={styles.controlsRow}>
+          <Pressable
+            style={[
+              styles.btnPrimary,
+              styles.controlBtn,
+              running || busyAction === "pause" ? styles.btnDisabled : null,
+            ]}
+            onPress={elapsedSec === 0 ? start : resume}
+            disabled={running || busyAction === "pause"}
+          >
+            <Text style={styles.btnPrimaryText}>
+              {busyAction === "start" ? "STARTING…" : busyAction === "resume" ? "RESUMING…" : elapsedSec === 0 ? "START" : "RESUME"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.btnPause,
+              styles.controlBtn,
+              !running || busyAction === "start" || busyAction === "resume" ? styles.btnDisabled : null,
+            ]}
+            onPress={pause}
+            disabled={!running || busyAction === "start" || busyAction === "resume"}
+          >
+            <Text style={styles.btnPauseText}>{busyAction === "pause" ? "PAUSING…" : "PAUSE"}</Text>
+          </Pressable>
+        </View>
       )}
 
       <Pressable
@@ -218,20 +379,14 @@ export default function Walk() {
       <View style={styles.bottomRow}>
         <Pressable
           style={styles.back}
-          onPress={() => {
-            void Haptics.selectionAsync();
-            router.back();
-          }}
+          onPress={() => leaveWalkScreen("back")}
         >
           <Text style={styles.backText}>Back</Text>
         </Pressable>
 
         <Pressable
           style={styles.home}
-          onPress={() => {
-            void Haptics.selectionAsync();
-            router.replace("/(tabs)");
-          }}
+          onPress={() => leaveWalkScreen("home")}
         >
           <Text style={styles.homeText}>Home</Text>
         </Pressable>
@@ -267,28 +422,45 @@ const styles = StyleSheet.create({
   metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: "rgba(255,255,255,0.92)" },
 
   warn: { marginTop: 14, color: "#F2B541", fontWeight: "800" },
+  loadingState: {
+    marginTop: 22,
+    alignItems: "center",
+    gap: 10,
+  },
+  loadingText: {
+    color: "rgba(255,255,255,0.7)",
+    fontWeight: "800",
+  },
+  controlsRow: {
+    marginTop: 22,
+    width: "100%",
+    maxWidth: 460,
+    flexDirection: "row",
+    gap: 12,
+  },
+  controlBtn: {
+    flex: 1,
+    minWidth: 0,
+  },
 
   btnPrimary: {
-    marginTop: 22,
     backgroundColor: "#255E36",
     paddingVertical: 14,
-    paddingHorizontal: 26,
     borderRadius: 16,
-    minWidth: 220,
     alignItems: "center",
   },
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
 
   btnPause: {
-    marginTop: 22,
     backgroundColor: "#F2B541",
     paddingVertical: 14,
-    paddingHorizontal: 26,
     borderRadius: 16,
-    minWidth: 220,
     alignItems: "center",
   },
   btnPauseText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
+  btnDisabled: {
+    opacity: 0.45,
+  },
 
   btnEnd: {
     marginTop: 12,
