@@ -59,11 +59,11 @@ const styles = StyleSheet.create({
   },
   bgLogo: {
     position: "absolute",
-    width: 351,
-    height: 351,
-    top: -20,
+    width: 260,
+    height: 260,
+    top: 28,
     alignSelf: "center",
-    opacity: 0.35,
+    opacity: 0.22,
   },
   eyebrow: {
     fontSize: 12,

@@ -1,7 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { pickReflectionPrompt, saveReflection } from "../src/lib/reflections";
@@ -100,26 +100,38 @@ export default function ReflectionScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View style={styles.card}>
-          <Text style={styles.eyebrow}>After your walk</Text>
-          <Text style={styles.title}>Pause for a second</Text>
-          <Text style={styles.prompt}>{prompt}</Text>
+      <KeyboardAvoidingView
+        style={styles.keyboardWrap}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 18 : 0}
+      >
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
+          <View style={styles.card}>
+            <Text style={styles.eyebrow}>After your walk</Text>
+            <Text style={styles.title}>Pause for a second</Text>
+            <Text style={styles.prompt}>{prompt}</Text>
 
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            multiline
-            textAlignVertical="top"
-            placeholder="A few words is enough."
-            placeholderTextColor="rgba(11,15,14,0.35)"
-            style={styles.input}
-            maxLength={500}
-          />
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              multiline
+              textAlignVertical="top"
+              placeholder="A few words is enough."
+              placeholderTextColor="rgba(11,15,14,0.35)"
+              style={styles.input}
+              maxLength={500}
+            />
 
-          <Text style={styles.helper}>Keep it simple. This is for you, not for a performance.</Text>
-          {statusText ? <Text style={styles.status}>{statusText}</Text> : null}
+            <Text style={styles.helper}>Keep it simple. This is for you, not for a performance.</Text>
+            {statusText ? <Text style={styles.status}>{statusText}</Text> : null}
+          </View>
+        </ScrollView>
 
+        <View style={styles.footerActions}>
           <Pressable
             onPress={() => void onContinue()}
             disabled={saving || text.trim().length === 0}
@@ -139,17 +151,19 @@ export default function ReflectionScreen() {
             <Text style={styles.secondaryBtnText}>SKIP</Text>
           </Pressable>
         </View>
-      </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F8F4EE" },
+  keyboardWrap: { flex: 1 },
   container: {
     flexGrow: 1,
     padding: 20,
     justifyContent: "center",
+    paddingBottom: 180,
   },
   card: {
     borderRadius: 28,
@@ -205,8 +219,16 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: "700",
   },
+  footerActions: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 18,
+    gap: 10,
+    backgroundColor: "rgba(248,244,238,0.96)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(11,15,14,0.08)",
+  },
   primaryBtn: {
-    marginTop: 20,
     minHeight: 54,
     borderRadius: 16,
     backgroundColor: "#255E36",
@@ -222,7 +244,6 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   secondaryBtn: {
-    marginTop: 10,
     minHeight: 50,
     borderRadius: 16,
     backgroundColor: "rgba(11,15,14,0.06)",

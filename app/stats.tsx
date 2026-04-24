@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { BrandBadge } from "../src/components/BrandBadge";
 import { getProState } from "../src/lib/pro";
 import { dayKeyLocal, EMPTY_SUMMARY, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
 
@@ -36,6 +37,10 @@ export default function StatsScreen() {
     card: "rgba(11,15,14,0.06)",
     cardBorder: "rgba(11,15,14,0.12)",
     highlight: "#F2B541",
+    greenTint: "rgba(37,94,54,0.10)",
+    greenBorder: "rgba(37,94,54,0.16)",
+    yellowTint: "rgba(242,181,65,0.16)",
+    yellowBorder: "rgba(242,181,65,0.34)",
     watermark: 0.08,
   } as const;
 
@@ -124,7 +129,7 @@ export default function StatsScreen() {
       <View style={[styles.container, { backgroundColor: t.bg }]}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Image source={require("../assets/images/icon.png")} style={styles.logo} />
+            <BrandBadge size={30} />
             <Text style={[styles.headerTitle, { color: t.text }]}>Stats</Text>
           </View>
 
@@ -150,14 +155,37 @@ export default function StatsScreen() {
         />
 
         <ScrollView contentContainerStyle={styles.scrollPad}>
+          <View style={[styles.summaryHero, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
+            <Text style={[styles.summaryEyebrow, { color: t.sub }]}>Your rhythm</Text>
+            <Text style={[styles.summaryTitle, { color: t.text }]}>
+              {totalSessions === 0 ? "Your first walk starts the story." : `${totalSessions} walks creating steadier momentum.`}
+            </Text>
+            <Text style={[styles.summaryBody, { color: t.sub }]}>
+              {totalSessions === 0
+                ? "Stats will fill in gently as soon as you log a first outside reset."
+                : `You’ve logged ${totalMinutes} minutes outside with a best streak of ${bestStreak} day${bestStreak === 1 ? "" : "s"}.`}
+            </Text>
+
+            <View style={styles.summaryRow}>
+              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
+                <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Current streak</Text>
+                <Text style={[styles.summaryMetricValue, { color: t.text }]}>{currentStreak}</Text>
+              </View>
+              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
+                <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Outside</Text>
+                <Text style={[styles.summaryMetricValue, { color: t.text }]}>{totalMinutes}</Text>
+              </View>
+            </View>
+          </View>
+
           <View style={styles.grid}>
-            <View style={[styles.card, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
+            <View style={[styles.card, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
               <Text style={[styles.cardLabel, { color: t.sub }]}>Current streak</Text>
               <Text style={[styles.cardValue, { color: t.text }]}>{currentStreak}</Text>
               <Text style={[styles.cardSub, { color: t.sub }]}>days</Text>
             </View>
 
-            <View style={[styles.card, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
+            <View style={[styles.card, { backgroundColor: t.yellowTint, borderColor: t.yellowBorder }]}>
               <Text style={[styles.cardLabel, { color: t.sub }]}>Total outside</Text>
               <Text style={[styles.cardValue, { color: t.text }]}>{totalMinutes}</Text>
               <Text style={[styles.cardSub, { color: t.sub }]}>minutes</Text>
@@ -179,7 +207,7 @@ export default function StatsScreen() {
           <Text style={[styles.sectionTitle, { color: t.text }]}>Last 7 days</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
-          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
+          <View style={[styles.panel, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
             {summary ? (
               last7.map((dk) => {
                 const mins = summary.daysCompleted?.[dk] ?? 0;
@@ -200,7 +228,7 @@ export default function StatsScreen() {
           <Text style={[styles.sectionTitle, { color: t.text }]}>Golden Hours</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
-          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
+          <View style={[styles.panel, { backgroundColor: t.yellowTint, borderColor: t.yellowBorder }]}>
             <View style={styles.row}>
               <Text style={[styles.rowLeft, { color: t.sub }]}>Sunrise bonuses</Text>
               <Text style={[styles.rowRight, { color: t.text }]}>{sunriseBonusCount}</Text>
@@ -292,7 +320,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   headerLeft: { flexDirection: "row", alignItems: "center" },
-  logo: { width: 30, height: 30, borderRadius: 10 },
   headerTitle: { marginLeft: 10, fontSize: 22, fontWeight: "900" },
 
   backBtn: {
@@ -312,12 +339,57 @@ const styles = StyleSheet.create({
   },
 
   scrollPad: { paddingBottom: 28 },
+  summaryHero: {
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  summaryEyebrow: {
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  summaryTitle: {
+    marginTop: 10,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: "900",
+  },
+  summaryBody: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "700",
+  },
+  summaryRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
+  summaryMetric: {
+    flex: 1,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  summaryMetricLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  summaryMetricValue: {
+    marginTop: 6,
+    fontSize: 24,
+    fontWeight: "900",
+  },
 
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    marginTop: 10,
   },
   card: {
     width: "48%",
@@ -326,17 +398,17 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1,
   },
-  cardLabel: { fontWeight: "800" },
+  cardLabel: { fontWeight: "800", fontSize: 13 },
   cardValue: {
     fontSize: 46,
     fontWeight: "900",
     marginTop: 8,
     letterSpacing: -0.3,
   },
-  cardSub: { fontWeight: "800", marginTop: 2 },
+  cardSub: { fontWeight: "800", marginTop: 2, fontSize: 13 },
 
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "900",
     marginTop: 8,
     marginBottom: 10,
@@ -355,12 +427,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 9 },
-  rowLeft: { fontWeight: "800" },
-  rowRight: { fontWeight: "900" },
+  rowLeft: { fontWeight: "800", fontSize: 15 },
+  rowRight: { fontWeight: "900", fontSize: 15 },
 
   sessionRow: { paddingVertical: 10 },
   sessionTitle: { fontWeight: "900", fontSize: 18 },
-  sessionSub: { marginTop: 4, fontWeight: "700" },
+  sessionSub: { marginTop: 4, fontWeight: "700", fontSize: 14 },
 
   muted: { fontWeight: "700" },
   insightText: {

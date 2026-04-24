@@ -1,8 +1,11 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, Share, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+import { RoutePreview } from "../src/components/RoutePreview";
+import { getSessionById, saveSessionRouteForLater, type OutsideSession } from "../src/lib/store";
 
 function toBool(value: string | undefined): boolean {
   return value === "true";
@@ -26,6 +29,7 @@ function fmtDistance(distanceM: number): string {
 export default function ShareScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
+    walkId?: string;
     durationSec?: string;
     distanceM?: string;
     sunriseBonus?: string;
@@ -34,6 +38,7 @@ export default function ShareScreen() {
     saveWarning?: string;
   }>();
 
+  const walkId = (params.walkId ?? "").trim();
   const durationSec = toNumber(params.durationSec);
   const distanceM = toNumber(params.distanceM);
   const sunriseBonus = toBool(params.sunriseBonus);
@@ -41,6 +46,29 @@ export default function ShareScreen() {
   const reflectionText = (params.reflectionText ?? "").trim();
   const saveWarning = (params.saveWarning ?? "").trim();
   const [sharing, setSharing] = useState(false);
+  const [savingRoute, setSavingRoute] = useState(false);
+  const [saveRouteMessage, setSaveRouteMessage] = useState("");
+  const [session, setSession] = useState<OutsideSession | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      if (!walkId) {
+        if (active) setSession(null);
+        return;
+      }
+
+      const nextSession = await getSessionById(walkId);
+      if (active) {
+        setSession(nextSession);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [walkId]);
 
   const summaryLine = useMemo(() => {
     const distancePart = fmtDistance(distanceM);
@@ -53,9 +81,10 @@ export default function ShareScreen() {
     const lines = [`I just took ${summaryLine} with Step Outside.`];
     if (sunriseBonus) lines.push("Caught a sunrise Golden Hour reset.");
     if (sunsetBonus) lines.push("Caught a sunset Golden Hour reset.");
+    if ((session?.routePoints?.length ?? 0) > 1) lines.push("Saved the route from this walk.");
     if (reflectionText) lines.push(`Reflection: "${reflectionText}"`);
     return lines.join("\n");
-  }, [reflectionText, summaryLine, sunriseBonus, sunsetBonus]);
+  }, [reflectionText, session?.routePoints?.length, summaryLine, sunriseBonus, sunsetBonus]);
 
   const onShare = async () => {
     setSharing(true);
@@ -64,6 +93,22 @@ export default function ShareScreen() {
       void Haptics.selectionAsync();
     } finally {
       setSharing(false);
+    }
+  };
+
+  const onSaveRoute = async () => {
+    if (!walkId || !session?.routePoints || session.routePoints.length < 2 || savingRoute) return;
+
+    setSavingRoute(true);
+    try {
+      const nextSession = await saveSessionRouteForLater(walkId);
+      if (nextSession) {
+        setSession(nextSession);
+        setSaveRouteMessage("Saved for future sharing and route ideas.");
+        void Haptics.selectionAsync();
+      }
+    } finally {
+      setSavingRoute(false);
     }
   };
 
@@ -98,6 +143,45 @@ export default function ShareScreen() {
         )}
 
         {saveWarning ? <Text style={styles.warning}>{saveWarning}</Text> : null}
+
+        {session?.routePoints && session.routePoints.length > 1 ? (
+          <View style={styles.routeWrap}>
+            <RoutePreview points={session.routePoints} title="Walk route" subtitle="Captured from this reset" />
+          </View>
+        ) : null}
+
+        {session?.routePoints && session.routePoints.length > 1 ? (
+          <>
+            <Pressable
+              onPress={() => void onSaveRoute()}
+              disabled={savingRoute || Boolean(session.savedRouteAt)}
+              style={({ pressed }) => [
+                styles.saveRouteBtn,
+                Boolean(session.savedRouteAt) ? styles.saveRouteBtnSaved : null,
+                pressed ? { opacity: 0.94 } : null,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.saveRouteBtnText,
+                  Boolean(session.savedRouteAt) ? styles.saveRouteBtnTextSaved : null,
+                ]}
+              >
+                {Boolean(session.savedRouteAt)
+                  ? "SAVED FOR LATER"
+                  : savingRoute
+                    ? "SAVING ROUTE…"
+                    : "SAVE THIS WALK"}
+              </Text>
+            </Pressable>
+            <Text style={styles.saveRouteHint}>
+              {saveRouteMessage ||
+                (Boolean(session.savedRouteAt)
+                  ? "This route is saved locally and ready for future community sharing."
+                  : "Keep this route now so we can build future sharing and curated Step Outside spots from it.")}
+            </Text>
+          </>
+        ) : null}
 
         <Pressable
           onPress={() => void onShare()}
@@ -219,6 +303,43 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: "700",
     textAlign: "center",
+  },
+  routeWrap: {
+    marginTop: 18,
+    width: "100%",
+    maxWidth: 540,
+  },
+  saveRouteBtn: {
+    marginTop: 14,
+    minWidth: 240,
+    minHeight: 50,
+    borderRadius: 16,
+    backgroundColor: "rgba(37,94,54,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveRouteBtnSaved: {
+    backgroundColor: "rgba(242,181,65,0.16)",
+    borderColor: "rgba(242,181,65,0.36)",
+  },
+  saveRouteBtnText: {
+    color: "#255E36",
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  saveRouteBtnTextSaved: {
+    color: "#8A5D09",
+  },
+  saveRouteHint: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.58)",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    maxWidth: 320,
   },
   primaryBtn: {
     marginTop: 22,
