@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
-import React, { useEffect, useMemo } from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useRef } from "react";
+import { Animated, Easing, Image, StyleSheet, View } from "react-native";
 
 import { hasActiveWalkSnapshot } from "../src/lib/activeWalk";
 import { refreshScheduledReminders } from "../src/lib/notifications";
@@ -26,11 +26,44 @@ function getRandomQuote(): string {
 export default function SplashScreen() {
   const router = useRouter();
   const quote = useMemo(() => getRandomQuote(), []);
+  const logoScale = useRef(new Animated.Value(0.82)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const quoteOpacity = useRef(new Animated.Value(0)).current;
+  const quoteShift = useRef(new Animated.Value(10)).current;
 
   useEffect(() => {
     let alive = true;
 
     void refreshScheduledReminders();
+
+    Animated.parallel([
+      Animated.timing(logoScale, {
+        toValue: 1,
+        duration: 920,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(logoOpacity, {
+        toValue: 1,
+        duration: 560,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(quoteOpacity, {
+        toValue: 1,
+        duration: 520,
+        delay: 260,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(quoteShift, {
+        toValue: 0,
+        duration: 520,
+        delay: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
 
     const t = setTimeout(() => {
       void (async () => {
@@ -45,12 +78,41 @@ export default function SplashScreen() {
       alive = false;
       clearTimeout(t);
     };
-  }, [router]);
+  }, [logoOpacity, logoScale, quoteOpacity, quoteShift, router]);
 
   return (
     <View style={styles.container}>
-      <Image source={require("../assets/images/icon.png")} style={styles.logo} />
-      <Text style={styles.quote}>{quote}</Text>
+      <View style={styles.glowOne} />
+      <View style={styles.glowTwo} />
+
+      <Animated.View
+        style={[
+          styles.logoShell,
+          {
+            opacity: logoOpacity,
+            transform: [{ scale: logoScale }],
+          },
+        ]}
+      >
+        <View style={styles.logoHalo} />
+        <Image
+          source={require("../assets/images/splash-icon.png")}
+          resizeMode="contain"
+          style={styles.logo}
+        />
+      </Animated.View>
+
+      <Animated.Text
+        style={[
+          styles.quote,
+          {
+            opacity: quoteOpacity,
+            transform: [{ translateY: quoteShift }],
+          },
+        ]}
+      >
+        {quote}
+      </Animated.Text>
     </View>
   );
 }
@@ -62,13 +124,50 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 26,
+    overflow: "hidden",
   },
-  logo: { width: 144, height: 144, borderRadius: 32, marginBottom: 22 },
+  glowOne: {
+    position: "absolute",
+    top: "17%",
+    right: -40,
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+    backgroundColor: "rgba(37,94,54,0.08)",
+  },
+  glowTwo: {
+    position: "absolute",
+    bottom: "20%",
+    left: -54,
+    width: 160,
+    height: 160,
+    borderRadius: 999,
+    backgroundColor: "rgba(242,181,65,0.10)",
+  },
+  logoShell: {
+    width: 248,
+    height: 248,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 26,
+  },
+  logoHalo: {
+    position: "absolute",
+    width: 210,
+    height: 210,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.64)",
+  },
+  logo: {
+    width: 228,
+    height: 228,
+  },
   quote: {
     color: "rgba(11,15,14,0.86)",
-    fontSize: 20,
-    lineHeight: 28,
+    fontSize: 22,
+    lineHeight: 30,
     textAlign: "center",
     fontWeight: "800",
+    maxWidth: 310,
   },
 });

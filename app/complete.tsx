@@ -4,7 +4,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { addCompletedSession, type SessionSource, type SummaryStats } from "../src/lib/store";
+import { RoutePreview } from "../src/components/RoutePreview";
+import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
+import { addCompletedSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
 
 function minutesFromDuration(durationSec: number): number {
   return Math.max(1, Math.round(durationSec / 60));
@@ -65,6 +67,7 @@ export default function CompleteScreen() {
   const [errorText, setErrorText] = useState("");
   const [sunriseBonus, setSunriseBonus] = useState(false);
   const [sunsetBonus, setSunsetBonus] = useState(false);
+  const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
 
   const lastSaveKeyRef = useRef<string | null>(null);
   const didHapticRef = useRef(false);
@@ -72,11 +75,13 @@ export default function CompleteScreen() {
   useEffect(() => {
     (async () => {
       if (!valid) {
+        await clearCompletedWalkDraft();
         setSaving(false);
         return;
       }
 
       if (!counts) {
+        await clearCompletedWalkDraft();
         setSaving(false);
         setErrorText("Walks under 10 seconds don’t count yet.");
         return;
@@ -96,6 +101,7 @@ export default function CompleteScreen() {
         setMinutes(mins);
 
         const id = `${startedAt}-${endedAt}`;
+        const walkDraft = await getCompletedWalkDraft();
 
         let earnedSunriseBonus = false;
         let earnedSunsetBonus = false;
@@ -130,6 +136,7 @@ export default function CompleteScreen() {
 
         setSunriseBonus(earnedSunriseBonus);
         setSunsetBonus(earnedSunsetBonus);
+        setRoutePoints(walkDraft?.routePoints ?? []);
 
         const result = await addCompletedSession({
           id,
@@ -138,9 +145,12 @@ export default function CompleteScreen() {
           durationSec,
           source,
           distanceM: Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0,
+          routePoints: walkDraft?.routePoints ?? [],
           sunriseBonus: earnedSunriseBonus,
           sunsetBonus: earnedSunsetBonus,
         });
+
+        await clearCompletedWalkDraft();
 
         setSummary(result.summary);
 
@@ -193,6 +203,7 @@ export default function CompleteScreen() {
         source,
         sunriseBonus: String(sunriseBonus),
         sunsetBonus: String(sunsetBonus),
+        routePointCount: String(routePoints.length),
       },
     } as never);
   };
@@ -222,9 +233,18 @@ export default function CompleteScreen() {
               </View>
             </View>
 
+            {routePoints.length > 1 ? (
+              <View style={styles.routeWrap}>
+                <RoutePreview points={routePoints} title="Captured route" subtitle="Saved from this walk" />
+              </View>
+            ) : null}
+
             <Text style={styles.sub}>
               {saving ? "Saving your walk…" : errorText ? errorText : streakLine || "Streak updated."}
             </Text>
+            {!saving && routePoints.length > 1 ? (
+              <Text style={styles.routeNote}>Route captured for this walk.</Text>
+            ) : null}
             {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise bonus earned</Text> : null}
             {sunsetBonus ? <Text style={styles.bonus}>🌅 Sunset bonus earned</Text> : null}
           </>
@@ -288,6 +308,11 @@ const styles = StyleSheet.create({
   },
   metricK: { fontSize: 12, fontWeight: "900", color: "rgba(11,15,14,0.62)" },
   metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: "#0B0F0E" },
+  routeWrap: {
+    marginTop: 18,
+    width: "100%",
+    maxWidth: 540,
+  },
 
   sub: {
     marginTop: 12,
@@ -302,6 +327,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     color: "#255E36",
+  },
+  routeNote: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "800",
+    color: "rgba(37,94,54,0.86)",
   },
 
   btnPrimary: {

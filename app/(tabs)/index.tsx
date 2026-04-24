@@ -5,7 +5,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +16,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
 import { getProState } from "../../src/lib/pro";
 import {
+  cacheRouteSuggestions,
   getRouteSuggestionsByZip,
   getRouteSuggestionsNearCoords,
   normalizeZip,
@@ -69,6 +69,14 @@ function getGreeting(date: Date): string {
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
   return "Good evening";
+}
+
+function formatDayLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function weatherCodeLabel(code: number): string {
@@ -198,6 +206,9 @@ async function loadFeaturedResetFromZip(): Promise<FeaturedReset> {
 
   try {
     const routes = await getRouteSuggestionsByZip(savedZip);
+    if (routes.length > 0) {
+      void cacheRouteSuggestions(routes);
+    }
     return {
       route: routes[0] ?? null,
       sourceLine:
@@ -232,6 +243,7 @@ export default function HomeTab() {
   const todayMinutes = summary.daysCompleted?.[todayKey] ?? 0;
 
   const greeting = getGreeting(now);
+  const dayLabel = formatDayLabel(now);
   const microcopy = pickMicrocopy(now);
   const statusLine = buildStatusLine(todayMinutes, weather, now);
 
@@ -271,6 +283,7 @@ export default function HomeTab() {
 
         const nearbyRoutes = routeResult.status === "fulfilled" ? routeResult.value : [];
         if (nearbyRoutes.length > 0) {
+          void cacheRouteSuggestions(nearbyRoutes);
           nextReset = {
             route: nearbyRoutes[0] ?? null,
             sourceLine: "Close enough to make today easy.",
@@ -303,17 +316,23 @@ export default function HomeTab() {
     >
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.heroCard}>
+          <View style={styles.heroGlowOne} />
+          <View style={styles.heroGlowTwo} />
+
           <View style={styles.heroTopRow}>
-            <View style={styles.logoWrap}>
-              <Image source={require("../../assets/images/icon.png")} style={styles.logo} />
+            <View style={styles.heroEyebrowPill}>
+              <Text style={styles.heroEyebrowText}>{dayLabel}</Text>
             </View>
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{statusLine}</Text>
             </View>
           </View>
 
-          <Text style={styles.greeting}>{greeting}</Text>
+          <View style={styles.heroBrandBlock}>
+            <Text style={styles.greeting}>{greeting}</Text>
+          </View>
           <Text style={styles.microcopy}>{microcopy}</Text>
+          <Text style={styles.heroSupportLine}>A calm ritual for clearing your head and keeping momentum close.</Text>
 
           <Pressable
             onPress={() => router.push("/walk")}
@@ -325,51 +344,57 @@ export default function HomeTab() {
             <Text style={styles.primaryCtaText}>START WALK</Text>
           </Pressable>
 
-          <Text style={styles.heroSupport}>
-            {todayMinutes > 0
-              ? `${formatMinutes(todayMinutes)} outside today.`
-              : "Ten calm minutes can change the tone of a day."}
-          </Text>
+          <View style={styles.heroMetricsRow}>
+            <View style={styles.heroMetricChip}>
+              <Text style={styles.heroMetricLabel}>Today</Text>
+              <Text style={styles.heroMetricValue}>
+                {todayMinutes > 0 ? formatMinutes(todayMinutes) : "Not started"}
+              </Text>
+            </View>
 
-          {weather?.nowTempF ? (
-            <Text style={styles.weatherSupport}>
-              {weather.nowTempF}°F • {weather.nowLabel ?? "Current conditions"}
-            </Text>
-          ) : null}
+            <View style={styles.heroMetricChip}>
+              <Text style={styles.heroMetricLabel}>Weather</Text>
+              <Text style={styles.heroMetricValue}>
+                {weather?.nowTempF ? `${weather.nowTempF}°F • ${weather.nowLabel ?? "Now"}` : "Set by the day"}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Consistency</Text>
-          <Pressable onPress={() => router.push("/(tabs)/stats")}>
-            <Text style={styles.sectionLink}>View stats</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.progressGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Streak</Text>
-            <Text style={styles.statValue}>{summary.currentStreakDays}</Text>
-            <Text style={styles.statMeta}>
-              day{summary.currentStreakDays === 1 ? "" : "s"}
-            </Text>
+        <View style={styles.momentumPanel}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitleOnGreen}>Consistency</Text>
+            <Pressable onPress={() => router.push("/(tabs)/stats")}>
+              <Text style={styles.sectionLinkOnGreen}>View stats</Text>
+            </Pressable>
           </View>
 
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Outside</Text>
-            <Text style={styles.statValue}>{formatMinutes(summary.totalMinutes)}</Text>
-            <Text style={styles.statMeta}>total</Text>
-          </View>
+          <View style={styles.progressGrid}>
+            <View style={styles.statCardOnGreen}>
+              <Text style={styles.statLabelOnGreen}>Streak</Text>
+              <Text style={styles.statValueOnGreen}>{summary.currentStreakDays}</Text>
+              <Text style={styles.statMetaOnGreen}>
+                day{summary.currentStreakDays === 1 ? "" : "s"}
+              </Text>
+            </View>
 
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Sunrise</Text>
-            <Text style={styles.statValue}>{summary.sunriseBonusCount}</Text>
-            <Text style={styles.statMeta}>golden starts</Text>
-          </View>
+            <View style={styles.statCardOnGreen}>
+              <Text style={styles.statLabelOnGreen}>Outside</Text>
+              <Text style={styles.statValueOnGreen}>{formatMinutes(summary.totalMinutes)}</Text>
+              <Text style={styles.statMetaOnGreen}>total</Text>
+            </View>
 
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Sunset</Text>
-            <Text style={styles.statValue}>{summary.sunsetBonusCount}</Text>
-            <Text style={styles.statMeta}>golden resets</Text>
+            <View style={styles.statCardOnGreen}>
+              <Text style={styles.statLabelOnGreen}>Sunrise</Text>
+              <Text style={styles.statValueOnGreen}>{summary.sunriseBonusCount}</Text>
+              <Text style={styles.statMetaOnGreen}>golden starts</Text>
+            </View>
+
+            <View style={styles.statCardOnGreen}>
+              <Text style={styles.statLabelOnGreen}>Sunset</Text>
+              <Text style={styles.statValueOnGreen}>{summary.sunsetBonusCount}</Text>
+              <Text style={styles.statMetaOnGreen}>golden resets</Text>
+            </View>
           </View>
         </View>
 
@@ -459,6 +484,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   heroCard: {
+    position: "relative",
     borderRadius: 28,
     padding: 22,
     backgroundColor: BRAND.forest,
@@ -466,6 +492,25 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
+    overflow: "hidden",
+  },
+  heroGlowOne: {
+    position: "absolute",
+    top: -42,
+    right: -24,
+    width: 156,
+    height: 156,
+    borderRadius: 999,
+    backgroundColor: "rgba(242,181,65,0.16)",
+  },
+  heroGlowTwo: {
+    position: "absolute",
+    bottom: -54,
+    left: -34,
+    width: 138,
+    height: 138,
+    borderRadius: 999,
+    backgroundColor: "rgba(248,244,238,0.08)",
   },
   heroTopRow: {
     flexDirection: "row",
@@ -473,18 +518,23 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
-  logoWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: "rgba(248,244,238,0.16)",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
+  heroBrandBlock: {
+    marginTop: 32,
+    alignSelf: "flex-start",
   },
-  logo: {
-    width: 56,
-    height: 56,
+  heroEyebrowPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "rgba(248,244,238,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.12)",
+  },
+  heroEyebrowText: {
+    color: "rgba(248,244,238,0.78)",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
   },
   statusPill: {
     paddingVertical: 8,
@@ -501,17 +551,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   greeting: {
-    marginTop: 22,
-    color: "rgba(248,244,238,0.78)",
-    fontSize: 15,
-    fontWeight: "700",
+    color: "rgba(248,244,238,0.82)",
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "900",
+    letterSpacing: -0.2,
   },
   microcopy: {
     marginTop: 8,
     color: "#FFFFFF",
-    fontSize: 34,
-    lineHeight: 40,
+    fontSize: 32,
+    lineHeight: 38,
     fontWeight: "900",
+    maxWidth: 320,
+  },
+  heroSupportLine: {
+    marginTop: 10,
+    color: "rgba(248,244,238,0.68)",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
     maxWidth: 320,
   },
   primaryCta: {
@@ -540,14 +599,53 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+  heroMetricsRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
+  heroMetricChip: {
+    flex: 1,
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: "rgba(248,244,238,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.12)",
+  },
+  heroMetricLabel: {
+    color: "rgba(248,244,238,0.62)",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  heroMetricValue: {
+    marginTop: 6,
+    color: "#FFFFFF",
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "800",
+  },
   sectionHeader: {
-    marginTop: 4,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
+  momentumPanel: {
+    borderRadius: 28,
+    padding: 18,
+    backgroundColor: "rgba(37,94,54,0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.98)",
+  },
   sectionTitle: {
     color: BRAND.charcoal,
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  sectionTitleOnGreen: {
+    color: "#F8F4EE",
     fontSize: 18,
     fontWeight: "900",
   },
@@ -557,7 +655,14 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0.4,
   },
+  sectionLinkOnGreen: {
+    color: BRAND.sunrise,
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+  },
   progressGrid: {
+    marginTop: 14,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
@@ -571,8 +676,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.08)",
   },
+  statCardOnGreen: {
+    width: "47%",
+    borderRadius: 22,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    backgroundColor: "rgba(248,244,238,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.16)",
+  },
   statLabel: {
     color: "rgba(11,15,14,0.56)",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  statLabelOnGreen: {
+    color: "rgba(248,244,238,0.72)",
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.3,
@@ -584,9 +704,22 @@ const styles = StyleSheet.create({
     lineHeight: 27,
     fontWeight: "900",
   },
+  statValueOnGreen: {
+    marginTop: 8,
+    color: "#FFFFFF",
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: "900",
+  },
   statMeta: {
     marginTop: 4,
     color: "rgba(11,15,14,0.58)",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  statMetaOnGreen: {
+    marginTop: 4,
+    color: "rgba(248,244,238,0.72)",
     fontSize: 12,
     fontWeight: "700",
   },

@@ -6,8 +6,21 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { RoutePreview } from "../../src/components/RoutePreview";
 import { getProState } from "../../src/lib/pro";
-import { getRouteCatalogZipHint, getRouteSuggestionsByZip, getRouteSuggestionsNearCoords, normalizeZip, type RouteSuggestion } from "../../src/lib/routeCatalog";
+import { getSavedRouteSessions, type OutsideSession } from "../../src/lib/store";
+import {
+  cacheRouteSuggestions,
+  getFallbackRouteSuggestions,
+  getRouteCatalogZipHint,
+  getGymResetByZip,
+  getGymResetNearCoords,
+  getRouteSuggestionsByZip,
+  getRouteSuggestionsNearCoords,
+  normalizeZip,
+  readCachedRouteSuggestions,
+  type RouteSuggestion,
+} from "../../src/lib/routeCatalog";
 
 type TrailSuggestion = {
   id: string;
@@ -19,23 +32,10 @@ type TrailSuggestion = {
   lng: number;
   tags: string[];
   isIndoor: boolean;
-  source: "catalog" | "nearby" | "fallback" | "zip";
+  source: "catalog" | "nearby" | "fallback" | "zip" | "gym";
 };
 
 type PermissionState = "unknown" | "granted" | "denied";
-
-type OverpassWay = {
-  id: number;
-  tags?: {
-    name?: string;
-    highway?: string;
-  };
-  geometry?: { lat: number; lon: number }[];
-};
-
-type OverpassResponse = {
-  elements?: OverpassWay[];
-};
 
 const BRAND = {
   forest: "#255E36",
@@ -44,10 +44,9 @@ const BRAND = {
   charcoal: "#0B0F0E",
 } as const;
 
-const MIN_M = 804.67; // 0.5 mi
-const MAX_M = 1609.34; // 1.0 mi
 const SAVED_WALKS_KEY = "@stepoutside/savedWalks";
 const ZIP_CODE_KEY = "@stepoutside/routeZipCode";
+const GYM_LOOKUP_TIMEOUT_MS = 2200;
 
 function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371000;
@@ -63,35 +62,20 @@ function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng:
   return R * c;
 }
 
-function wayLengthMeters(points: { lat: number; lon: number }[]): number {
-  if (!points || points.length < 2) return 0;
-  let total = 0;
-  for (let i = 1; i < points.length; i += 1) {
-    total += haversineMeters(
-      { lat: points[i - 1].lat, lng: points[i - 1].lon },
-      { lat: points[i].lat, lng: points[i].lon }
-    );
-  }
-  return total;
-}
-
-function centroid(points: { lat: number; lon: number }[]): { lat: number; lng: number } {
-  if (!points || points.length === 0) return { lat: 0, lng: 0 };
-  const sum = points.reduce(
-    (acc, p) => ({ lat: acc.lat + p.lat, lng: acc.lng + p.lon }),
-    { lat: 0, lng: 0 }
-  );
-  return { lat: sum.lat / points.length, lng: sum.lng / points.length };
-}
-
 function metersToMiles(m: number): string {
   return (m / 1609.34).toFixed(2);
 }
 
-function estMinutes(m: number): number {
-  // ~20 min/mi default easy pace
-  const miles = m / 1609.34;
-  return Math.max(8, Math.round(miles * 20));
+function fmtSavedRouteDate(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function fmtSavedRouteMinutes(durationSec: number): string {
+  const minutes = Math.max(1, Math.round(durationSec / 60));
+  return `${minutes} min`;
 }
 
 function fromCatalogRoute(route: RouteSuggestion): TrailSuggestion {
@@ -115,7 +99,7 @@ async function openInMaps(item: TrailSuggestion) {
   await Linking.openURL(url);
 }
 
-function fallbackSuggestions(lat: number, lng: number): TrailSuggestion[] {
+function fallbackSuggestions(lat: number, lng: number, gymSuggestion?: TrailSuggestion | null): TrailSuggestion[] {
   return [
     {
       id: "fallback-1",
@@ -141,33 +125,76 @@ function fallbackSuggestions(lat: number, lng: number): TrailSuggestion[] {
       isIndoor: false,
       source: "fallback",
     },
-    {
-      id: "fallback-3",
-      name: "Streak Saver Walk",
-      kind: "indoor_walk",
-      distanceMeters: 1600,
-      estMinutes: 18,
-      lat,
-      lng,
-      tags: ["indoor", "backup"],
-      isIndoor: true,
-      source: "fallback",
-    },
+    ...(gymSuggestion ? [gymSuggestion] : []),
   ];
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => {
+      setTimeout(() => resolve(fallback), timeoutMs);
+    }),
+  ]);
+}
+
+function mergeGymSuggestion(base: TrailSuggestion[], gymSuggestion: TrailSuggestion | null): TrailSuggestion[] {
+  const withoutGyms = base.filter((item) => item.source !== "gym");
+  return gymSuggestion ? [...withoutGyms, gymSuggestion] : withoutGyms;
+}
+
+async function resolveNearbyCoords(existingCoords: { lat: number; lng: number } | null) {
+  const lastKnown = await Location.getLastKnownPositionAsync({
+    maxAge: 1000 * 60 * 20,
+    requiredAccuracy: 120,
+  });
+
+  if (lastKnown) {
+    return {
+      lat: lastKnown.coords.latitude,
+      lng: lastKnown.coords.longitude,
+    };
+  }
+
+  if (existingCoords) return existingCoords;
+
+  const currentPromise = Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
+  });
+
+  const timeoutPromise = new Promise<null>((resolve) => {
+    setTimeout(() => resolve(null), 3500);
+  });
+
+  const current = await Promise.race([currentPromise, timeoutPromise]);
+  if (!current) return null;
+
+  return {
+    lat: current.coords.latitude,
+    lng: current.coords.longitude,
+  };
 }
 
 export default function StepsTab() {
   const router = useRouter();
+  const requestIdRef = React.useRef(0);
+  const userCoordsRef = React.useRef<{ lat: number; lng: number } | null>(null);
   const [permission, setPermission] = useState<PermissionState>("unknown");
+  const [bootstrapped, setBootstrapped] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [suggestions, setSuggestions] = useState<TrailSuggestion[]>([]);
   const [savedWalks, setSavedWalks] = useState<TrailSuggestion[]>([]);
+  const [savedRouteSessions, setSavedRouteSessions] = useState<OutsideSession[]>([]);
   const [showAllSaved, setShowAllSaved] = useState(false);
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [isPro, setIsPro] = useState(false);
   const [zipCode, setZipCode] = useState("");
   const [zipHint, setZipHint] = useState("Enter a ZIP code to browse short park loops and indoor backup walks.");
+
+  useEffect(() => {
+    userCoordsRef.current = userCoords;
+  }, [userCoords]);
 
   const hasResults = useMemo(() => suggestions.length > 0, [suggestions]);
   const savedIds = useMemo(() => new Set(savedWalks.map((w) => w.id)), [savedWalks]);
@@ -196,6 +223,31 @@ export default function StepsTab() {
     }
   }, []);
 
+  const applySuggestions = useCallback((next: TrailSuggestion[]) => {
+    setSuggestions(next);
+    void cacheRouteSuggestions(next);
+  }, []);
+
+  const loadCachedSuggestions = useCallback(async () => {
+    try {
+      const cached = await readCachedRouteSuggestions();
+      if (cached.length > 0) {
+        setSuggestions(cached.map(fromCatalogRoute));
+      }
+    } catch {
+      // ignore cache parse issues
+    }
+  }, []);
+
+  const loadSavedRouteSessions = useCallback(async () => {
+    try {
+      const sessions = await getSavedRouteSessions();
+      setSavedRouteSessions(sessions.slice(0, 3));
+    } catch {
+      setSavedRouteSessions([]);
+    }
+  }, []);
+
   const persistSavedWalks = useCallback(async (walks: TrailSuggestion[]) => {
     await AsyncStorage.setItem(SAVED_WALKS_KEY, JSON.stringify(walks));
   }, []);
@@ -212,6 +264,11 @@ export default function StepsTab() {
 
   const persistZip = useCallback(async (zip: string) => {
     await AsyncStorage.setItem(ZIP_CODE_KEY, zip);
+  }, []);
+
+  const loadSettings = useCallback(async () => {
+    const pro = await getProState();
+    setIsPro(pro.isPro);
   }, []);
 
   const toggleSaveWalk = useCallback(
@@ -242,12 +299,16 @@ export default function StepsTab() {
 
   const loadByZip = useCallback(
     async (zipInput: string) => {
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
       const normalized = normalizeZip(zipInput);
       setZipHint(getRouteCatalogZipHint(normalized));
 
       if (normalized.length !== 5) {
-        setError("");
-        setSuggestions([]);
+        if (requestIdRef.current === requestId) {
+          setError("");
+          applySuggestions([]);
+        }
         return;
       }
 
@@ -257,138 +318,200 @@ export default function StepsTab() {
       try {
         await persistZip(normalized);
         const catalogRoutes = await getRouteSuggestionsByZip(normalized);
-        setSuggestions(catalogRoutes.map(fromCatalogRoute));
-        if (catalogRoutes.length === 0) {
-          setError("We have not seeded that ZIP yet. Try another nearby ZIP or enable location for live route discovery.");
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+
+        if (catalogRoutes.length > 0) {
+          applySuggestions(catalogRoutes.map(fromCatalogRoute));
+          setError("");
+        } else {
+          setLoading(false);
+          setError("Looking for a nearby gym...");
+
+          const gymSuggestion = await withTimeout(getGymResetByZip(normalized), GYM_LOOKUP_TIMEOUT_MS, null);
+          if (requestIdRef.current !== requestId) {
+            return;
+          }
+
+          applySuggestions(gymSuggestion ? [fromCatalogRoute(gymSuggestion)] : []);
+          setError(gymSuggestion ? "" : "Nothing found. Add your local gym.");
+          return;
         }
       } catch {
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+
         setError("Couldn’t load route suggestions for that ZIP right now.");
-        setSuggestions([]);
+        applySuggestions([]);
       } finally {
-        setLoading(false);
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
-    [persistZip]
+    [applySuggestions, persistZip]
   );
 
   const loadNearby = useCallback(async (promptForPermission = false) => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setLoading(true);
     setError("");
-    let fallbackCoords = userCoords;
+    let fallbackCoords = userCoordsRef.current;
 
     try {
       const perm = promptForPermission
         ? await Location.requestForegroundPermissionsAsync()
         : await Location.getForegroundPermissionsAsync();
       const granted = perm.status === "granted";
-      setPermission(granted ? "granted" : "denied");
 
-      if (!granted) {
-        setSuggestions([]);
-        setLoading(false);
+      if (requestIdRef.current !== requestId) {
         return;
       }
 
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const { latitude, longitude } = pos.coords;
-      const currentCoords = { lat: latitude, lng: longitude };
+      setPermission(granted ? "granted" : "denied");
+
+      if (!granted) {
+        applySuggestions([]);
+        return;
+      }
+
+      const currentCoords = await resolveNearbyCoords(userCoordsRef.current);
+      if (requestIdRef.current !== requestId) {
+        return;
+      }
+
+      if (!currentCoords) {
+        const seededFallback = getFallbackRouteSuggestions(null).map(fromCatalogRoute);
+        applySuggestions(seededFallback);
+        setError("Nearby location was slow to load. Showing a few trusted reset ideas instead.");
+        return;
+      }
+
+      const { lat: latitude, lng: longitude } = currentCoords;
       fallbackCoords = currentCoords;
       setUserCoords(currentCoords);
 
-       const catalogRoutes = await getRouteSuggestionsNearCoords(currentCoords);
-       if (catalogRoutes.length > 0) {
-         setSuggestions(catalogRoutes.map(fromCatalogRoute));
-         setLoading(false);
-         return;
-       }
+      const catalogRoutes = await getRouteSuggestionsNearCoords(currentCoords);
+      if (requestIdRef.current !== requestId) {
+        return;
+      }
 
-      const query = `
-[out:json][timeout:25];
-(
-  way["highway"~"path|footway|track"]["name"](around:3500,${latitude},${longitude});
-);
-out tags geom 120;
-`;
-
-      const res = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: query,
-      });
-
-      if (!res.ok) throw new Error("Trail service unavailable");
-
-      const json = (await res.json()) as OverpassResponse;
-      const ways = json.elements ?? [];
-
-      const mapped: TrailSuggestion[] = ways
-        .map((w) => {
-          const points = w.geometry ?? [];
-          const distanceMeters = wayLengthMeters(points);
-          const c = centroid(points);
-          return {
-            id: String(w.id),
-            name: w.tags?.name?.trim() || "Local Trail",
-            kind: "trail" as const,
-            distanceMeters,
-            estMinutes: estMinutes(distanceMeters),
-            lat: c.lat,
-            lng: c.lng,
-            tags: ["live-nearby"],
-            isIndoor: false,
-            source: "nearby" as const,
-          };
-        })
-        .filter((t) => t.distanceMeters >= MIN_M && t.distanceMeters <= MAX_M && t.lat && t.lng)
-        .sort((a, b) => a.distanceMeters - b.distanceMeters)
-        .filter((item, index, arr) => arr.findIndex((x) => x.name === item.name) === index)
-        .slice(0, 6);
-
-      if (mapped.length === 0) {
-        setSuggestions(fallbackSuggestions(latitude, longitude));
+      if (catalogRoutes.length > 0) {
+        applySuggestions(catalogRoutes.map(fromCatalogRoute));
+        setError("");
       } else {
-        setSuggestions(mapped);
+        const seededFallback = getFallbackRouteSuggestions(currentCoords).map(fromCatalogRoute);
+        const fastFallbackList =
+          seededFallback.length > 0
+            ? seededFallback
+            : fallbackSuggestions(latitude, longitude, null);
+
+        applySuggestions(fastFallbackList);
+        setError(seededFallback.length > 0 ? "" : "Looking for a nearby gym...");
+        setLoading(false);
+
+        void (async () => {
+          const gymReset = await withTimeout(getGymResetNearCoords(currentCoords), GYM_LOOKUP_TIMEOUT_MS, null);
+          if (requestIdRef.current !== requestId) {
+            return;
+          }
+
+          const merged = mergeGymSuggestion(
+            fastFallbackList,
+            gymReset ? fromCatalogRoute(gymReset) : null
+          );
+          applySuggestions(merged);
+          setError(gymReset || seededFallback.length > 0 ? "" : "Nothing found. Add your local gym.");
+        })();
+        return;
       }
     } catch {
+      if (requestIdRef.current !== requestId) {
+        return;
+      }
+
       if (fallbackCoords) {
-        setSuggestions(fallbackSuggestions(fallbackCoords.lat, fallbackCoords.lng));
-        setError("Live nearby trails are unavailable right now. Showing a few easy reset ideas instead.");
+        const seededFallback = getFallbackRouteSuggestions(fallbackCoords).map(fromCatalogRoute);
+        const fastFallbackList =
+          seededFallback.length > 0
+            ? seededFallback
+            : fallbackSuggestions(
+                fallbackCoords.lat,
+                fallbackCoords.lng,
+                null
+              );
+
+        applySuggestions(fastFallbackList);
+        setError(seededFallback.length > 0 ? "Nearby lookup was flaky, so we switched to fallback reset ideas." : "Looking for a nearby gym...");
+        setLoading(false);
+
+        void (async () => {
+          const gymReset = await withTimeout(getGymResetNearCoords(fallbackCoords), GYM_LOOKUP_TIMEOUT_MS, null);
+          if (requestIdRef.current !== requestId) {
+            return;
+          }
+
+          const merged = mergeGymSuggestion(
+            fastFallbackList,
+            gymReset ? fromCatalogRoute(gymReset) : null
+          );
+          applySuggestions(merged);
+          setError(
+            gymReset
+              ? "Nearby lookup was flaky, so we switched to fallback reset ideas."
+              : seededFallback.length > 0
+                ? "Nearby lookup was flaky, so we switched to fallback reset ideas."
+                : "Nothing found. Add your local gym."
+          );
+        })();
+        return;
       } else {
-        setError("Couldn’t fetch nearby trails right now.");
-        setSuggestions([]);
+        const seededFallback = getFallbackRouteSuggestions(null).map(fromCatalogRoute);
+        applySuggestions(seededFallback);
+        setError("Couldn’t load nearby routes right now. Showing trusted reset ideas instead.");
       }
     } finally {
-      setLoading(false);
+      if (requestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
-  }, [userCoords]);
+  }, [applySuggestions]);
 
   useEffect(() => {
-    void loadSavedWalks();
-    void loadSavedZip();
-    void loadNearby(false);
-  }, [loadNearby, loadSavedWalks, loadSavedZip]);
+    let cancelled = false;
 
-  useEffect(() => {
-    if (permission !== "denied" || suggestions.length > 0 || normalizeZip(zipCode).length !== 5) {
-      return;
-    }
+    void (async () => {
+      try {
+        await Promise.all([loadSavedWalks(), loadSavedZip(), loadSavedRouteSessions(), loadSettings(), loadCachedSuggestions()]);
+        if (!cancelled) {
+          setBootstrapped(true);
+          void loadNearby(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setBootstrapped(true);
+        }
+      }
+    })();
 
-    void loadByZip(zipCode);
-  }, [loadByZip, permission, suggestions.length, zipCode]);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadCachedSuggestions, loadNearby, loadSavedRouteSessions, loadSavedWalks, loadSavedZip, loadSettings]);
 
   useFocusEffect(
     useCallback(() => {
-      void (async () => {
-        const pro = await getProState();
-        setIsPro(pro.isPro);
-      })();
-    }, [])
+      void Promise.all([loadSettings(), loadSavedRouteSessions()]);
+    }, [loadSavedRouteSessions, loadSettings])
   );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Suggested Walks</Text>
+        <Text style={styles.title}>Resets & Suggestions</Text>
         <Text style={styles.sub}>Short nearby park loops, trail resets, and indoor backup walks.</Text>
 
         <Pressable style={styles.refreshBtn} onPress={() => void loadNearby(true)}>
@@ -426,6 +549,51 @@ out tags geom 120;
           </View>
         ) : null}
 
+        {savedRouteSessions.length > 0 ? (
+          <View style={styles.savedRoutesWrap}>
+            <View style={styles.savedHeaderRow}>
+              <Text style={styles.savedRoutesTitle}>Your Saved Routes</Text>
+              <Text style={styles.savedRoutesMeta}>For future sharing</Text>
+            </View>
+
+            {savedRouteSessions.map((session) => (
+              <Pressable
+                key={`saved-route-${session.id}`}
+                style={({ pressed }) => [styles.savedRouteCard, pressed ? styles.savedRouteCardPressed : null]}
+                onPress={() =>
+                  router.push({
+                    pathname: "/saved-route" as never,
+                    params: { sessionId: session.id },
+                  } as never)
+                }
+              >
+                <View style={styles.savedRouteHeader}>
+                  <Text style={styles.savedRouteName}>{fmtSavedRouteDate(session.endedAt)}</Text>
+                  <Text style={styles.savedRouteBadge}>Your walk</Text>
+                </View>
+
+                <Text style={styles.savedRouteStats}>
+                  {fmtSavedRouteMinutes(session.durationSec)}
+                  {typeof session.distanceM === "number" && session.distanceM > 0
+                    ? ` • ${metersToMiles(session.distanceM)} mi`
+                    : ""}
+                  {session.savedRouteAt ? ` • saved ${fmtSavedRouteDate(session.savedRouteAt)}` : ""}
+                </Text>
+
+                {session.routePoints && session.routePoints.length > 1 ? (
+                  <View style={styles.savedRoutePreviewWrap}>
+                    <RoutePreview
+                      points={session.routePoints}
+                      title="Saved route"
+                      subtitle="Ready for future community sharing"
+                    />
+                  </View>
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         {freeSaveLimitReached ? (
           <View style={styles.proNudge}>
             <Text style={styles.proNudgeText}>Free plan saves up to 3 walks. Upgrade to Pro for unlimited saved walks.</Text>
@@ -435,10 +603,10 @@ out tags geom 120;
           </View>
         ) : null}
 
-        {loading ? (
+        {!bootstrapped || loading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={BRAND.forest} />
-            <Text style={styles.stateText}>Finding walks near you…</Text>
+            <Text style={styles.stateText}>Finding trusted resets near you…</Text>
           </View>
         ) : null}
 
@@ -489,8 +657,10 @@ out tags geom 120;
                       ? "Route DB"
                       : item.source === "zip"
                         ? "ZIP match"
+                        : item.source === "gym"
+                          ? "Nearby gym"
                         : item.source === "nearby"
-                          ? "Live nearby"
+                          ? "Nearby"
                           : "Quick pick"}
                   </Text>
                 </View>
@@ -650,6 +820,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(37,94,54,0.16)",
   },
+  savedRoutesWrap: {
+    marginTop: 14,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: "rgba(242,181,65,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(242,181,65,0.28)",
+  },
   savedHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -665,6 +843,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
     color: BRAND.forest,
+  },
+  savedRoutesTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: BRAND.charcoal,
+  },
+  savedRoutesMeta: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "rgba(11,15,14,0.56)",
   },
   savedRow: {
     flexDirection: "row",
@@ -697,6 +885,46 @@ const styles = StyleSheet.create({
     color: "#C83333",
     fontWeight: "900",
     fontSize: 12,
+  },
+  savedRouteCard: {
+    marginTop: 10,
+    borderRadius: 16,
+    padding: 12,
+    backgroundColor: "rgba(255,255,255,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+  },
+  savedRouteCardPressed: {
+    opacity: 0.92,
+  },
+  savedRouteHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  savedRouteName: {
+    color: BRAND.charcoal,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  savedRouteBadge: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#8A5D09",
+    backgroundColor: "rgba(242,181,65,0.18)",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+  },
+  savedRouteStats: {
+    marginTop: 6,
+    color: "rgba(11,15,14,0.66)",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  savedRoutePreviewWrap: {
+    marginTop: 12,
   },
   stateText: {
     marginTop: 6,

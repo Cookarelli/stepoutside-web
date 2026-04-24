@@ -4,7 +4,14 @@ import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, type AppStateStatus, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { clearActiveWalkSnapshot, getActiveWalkSnapshot, setActiveWalkSnapshot } from "../src/lib/activeWalk";
+import {
+  clearCompletedWalkDraft,
+  clearActiveWalkSnapshot,
+  getActiveWalkSnapshot,
+  setActiveWalkSnapshot,
+  setCompletedWalkDraft,
+} from "../src/lib/activeWalk";
+import type { RoutePoint } from "../src/lib/store";
 
 type LatLng = { lat: number; lng: number };
 
@@ -32,8 +39,23 @@ function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function formatPace(distanceM: number, elapsedSec: number): string {
+  if (distanceM < 25 || elapsedSec < 15) return "";
+
+  const miles = distanceM / 1609.344;
+  if (!Number.isFinite(miles) || miles <= 0) return "";
+
+  const totalSecondsPerMile = Math.round(elapsedSec / miles);
+  if (!Number.isFinite(totalSecondsPerMile) || totalSecondsPerMile <= 0) return "";
+
+  const mm = Math.floor(totalSecondsPerMile / 60);
+  const ss = totalSecondsPerMile % 60;
+  return `${mm}:${String(ss).padStart(2, "0")} / mi`;
+}
+
 export default function Walk() {
   const router = useRouter();
+  const SNAPSHOT_PERSIST_DEBOUNCE_MS = 4000;
 
   const [permission, setPermission] = useState<PermissionState>("unknown");
   const [running, setRunning] = useState(false);
@@ -44,56 +66,98 @@ export default function Walk() {
 
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoringRef = useRef(false);
   const elapsedBeforeRunRef = useRef(0);
   const runStartedAtRef = useRef<number | null>(null);
+  const runningRef = useRef(false);
+  const distanceRef = useRef(0);
+  const routePointsRef = useRef<RoutePoint[]>([]);
+  const hadGpsPointsRef = useRef(false);
 
   const lastPointRef = useRef<LatLng | null>(null);
   const subRef = useRef<Location.LocationSubscription | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const pace = useMemo(() => {
-    if (distanceM < 5 || elapsedSec < 5) return "";
-    const miles = distanceM / 1609.344;
-    const min = elapsedSec / 60;
-    const minPerMile = min / miles;
-    const mm = Math.floor(minPerMile);
-    const ss = Math.round((minPerMile - mm) * 60);
-    return `${mm}:${String(ss).padStart(2, "0")} / mi`;
+    return formatPace(distanceM, elapsedSec);
   }, [distanceM, elapsedSec]);
 
-  const requestPerms = async () => {
-    const res = await Location.requestForegroundPermissionsAsync();
-    const ok = res.status === "granted";
-    setPermission(ok ? "granted" : "denied");
-    return ok;
-  };
+  const refreshPermission = useCallback(async () => {
+    try {
+      const res = await Location.getForegroundPermissionsAsync();
+      const nextPermission: PermissionState = res.status === "granted" ? "granted" : "denied";
+      setPermission(nextPermission);
+      return nextPermission === "granted";
+    } catch {
+      setPermission("denied");
+      return false;
+    }
+  }, []);
 
-  const startGps = async () => {
+  const requestPerms = useCallback(async () => {
+    try {
+      const res = await Location.requestForegroundPermissionsAsync();
+      const ok = res.status === "granted";
+      setPermission(ok ? "granted" : "denied");
+      return ok;
+    } catch {
+      setPermission("denied");
+      return false;
+    }
+  }, []);
+
+  const ensureLocationPermission = useCallback(async () => {
+    if (permission === "granted") return true;
+    if (permission === "denied") return false;
+
+    const hasExistingPermission = await refreshPermission();
+    if (hasExistingPermission) return true;
+
+    return await requestPerms();
+  }, [permission, refreshPermission, requestPerms]);
+
+  const startGps = useCallback(async () => {
     subRef.current?.remove();
     subRef.current = await Location.watchPositionAsync(
       {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 2000,
-        distanceInterval: 5,
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: 1000,
+        distanceInterval: 3,
       },
       (pos) => {
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        const accuracy = pos.coords.accuracy ?? Number.POSITIVE_INFINITY;
+        if (accuracy > 35) return;
+
+        const point: RoutePoint = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          t: pos.timestamp || Date.now(),
+          ...(Number.isFinite(accuracy) ? { accuracy } : {}),
+        };
+        const p = { lat: point.lat, lng: point.lng };
         const last = lastPointRef.current;
         if (last) {
           const d = haversineMeters(last, p);
-          // ignore crazy jumps (GPS spikes)
-          if (d < 60) setDistanceM((m) => m + d);
+          // Ignore jitter smaller than a few steps and large GPS spikes.
+          if (d >= 2 && d < 80) {
+            setDistanceM((m) => m + d);
+            routePointsRef.current = [...routePointsRef.current, point];
+            hadGpsPointsRef.current = routePointsRef.current.length > 1;
+          }
+        } else {
+          routePointsRef.current = [...routePointsRef.current, point];
         }
         lastPointRef.current = p;
       }
     );
-  };
+  }, []);
 
-  const stopGps = () => {
+  const stopGps = useCallback(() => {
     subRef.current?.remove();
     subRef.current = null;
-  };
+    lastPointRef.current = null;
+  }, []);
 
   const getElapsedNow = useCallback(() => {
     if (!runStartedAtRef.current) return elapsedBeforeRunRef.current;
@@ -106,45 +170,89 @@ export default function Walk() {
     return nextElapsed;
   }, [getElapsedNow]);
 
-  const startTimer = () => {
+  const startTimer = useCallback(() => {
     if (tickRef.current) clearInterval(tickRef.current);
     syncElapsedFromClock();
     tickRef.current = setInterval(() => {
       syncElapsedFromClock();
     }, 1000);
-  };
+  }, [syncElapsedFromClock]);
 
-  const stopTimer = () => {
+  const stopTimer = useCallback(() => {
     if (tickRef.current) clearInterval(tickRef.current);
     tickRef.current = null;
-  };
+  }, []);
 
   const persistActiveWalk = useCallback(
-    async (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean }>) => {
+    async (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean; routePoints: RoutePoint[] }>) => {
       const startedAt = startedAtRef.current;
       if (!startedAt) return;
 
       await setActiveWalkSnapshot({
         startedAt,
         elapsedSec: overrides?.elapsedSec ?? getElapsedNow(),
-        distanceM: overrides?.distanceM ?? distanceM,
-        running: overrides?.running ?? running,
+        distanceM: overrides?.distanceM ?? distanceRef.current,
+        routePoints: overrides?.routePoints ?? routePointsRef.current,
+        running: overrides?.running ?? runningRef.current,
         updatedAt: Date.now(),
       });
     },
-    [distanceM, getElapsedNow, running]
+    [getElapsedNow]
   );
+
+  const clearScheduledPersist = useCallback(() => {
+    if (persistTimeoutRef.current) {
+      clearTimeout(persistTimeoutRef.current);
+      persistTimeoutRef.current = null;
+    }
+  }, []);
+
+  const schedulePersist = useCallback(
+    (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean; routePoints: RoutePoint[] }>) => {
+      if (restoringRef.current || !startedAtRef.current) return;
+      clearScheduledPersist();
+      persistTimeoutRef.current = setTimeout(() => {
+        void persistActiveWalk(overrides);
+        persistTimeoutRef.current = null;
+      }, SNAPSHOT_PERSIST_DEBOUNCE_MS);
+    },
+    [clearScheduledPersist, persistActiveWalk]
+  );
+
+  useEffect(() => {
+    runningRef.current = running;
+  }, [running]);
+
+  useEffect(() => {
+    distanceRef.current = distanceM;
+  }, [distanceM]);
+
+  const resetWalkState = useCallback(async () => {
+    clearScheduledPersist();
+    stopTimer();
+    stopGps();
+    startedAtRef.current = null;
+    elapsedBeforeRunRef.current = 0;
+    runStartedAtRef.current = null;
+    runningRef.current = false;
+    distanceRef.current = 0;
+    routePointsRef.current = [];
+    hadGpsPointsRef.current = false;
+    lastPointRef.current = null;
+    setElapsedSec(0);
+    setDistanceM(0);
+    setRunning(false);
+    await clearActiveWalkSnapshot();
+  }, [clearScheduledPersist, stopGps, stopTimer]);
 
   const start = async () => {
     if (!restored || running || busyAction) return;
     setBusyAction("start");
     void Haptics.selectionAsync();
     try {
-      const ok = permission === "granted" ? true : await requestPerms();
-
-      stopTimer();
-      stopGps();
-      await clearActiveWalkSnapshot();
+      const ok = await ensureLocationPermission();
+      await clearCompletedWalkDraft();
+      await resetWalkState();
 
       startedAtRef.current = Date.now();
       elapsedBeforeRunRef.current = 0;
@@ -152,9 +260,13 @@ export default function Walk() {
       setElapsedSec(0);
       setDistanceM(0);
       lastPointRef.current = null;
+      routePointsRef.current = [];
+      hadGpsPointsRef.current = false;
 
       setRunning(true);
-      await persistActiveWalk({ elapsedSec: 0, distanceM: 0, running: true });
+      runningRef.current = true;
+      distanceRef.current = 0;
+      await persistActiveWalk({ elapsedSec: 0, distanceM: 0, routePoints: [], running: true });
       startTimer();
 
       if (ok) {
@@ -177,6 +289,7 @@ export default function Walk() {
       runStartedAtRef.current = null;
       setElapsedSec(nextElapsed);
       setRunning(false);
+      runningRef.current = false;
       stopTimer();
       stopGps();
       await persistActiveWalk({ elapsedSec: nextElapsed, running: false });
@@ -190,11 +303,12 @@ export default function Walk() {
     setBusyAction("resume");
     void Haptics.selectionAsync();
     try {
-      const ok = permission === "granted" ? true : await requestPerms();
+      const ok = await ensureLocationPermission();
 
       elapsedBeforeRunRef.current = getElapsedNow();
       runStartedAtRef.current = Date.now();
       setRunning(true);
+      runningRef.current = true;
       await persistActiveWalk({ elapsedSec: elapsedBeforeRunRef.current, running: true });
       startTimer();
 
@@ -211,9 +325,10 @@ export default function Walk() {
     setBusyAction("stop");
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
-    const source: SessionSource = subRef.current ? "gps" : "timer";
+    const source: SessionSource = hadGpsPointsRef.current || routePointsRef.current.length > 1 ? "gps" : "timer";
     const endLat = lastPointRef.current?.lat;
     const endLng = lastPointRef.current?.lng;
+    const routePoints = routePointsRef.current;
     const finalElapsed = syncElapsedFromClock();
     elapsedBeforeRunRef.current = finalElapsed;
     runStartedAtRef.current = null;
@@ -226,15 +341,19 @@ export default function Walk() {
     const endedAt = Date.now();
     startedAtRef.current = null;
     setRunning(false);
+    runningRef.current = false;
+    clearScheduledPersist();
 
     // Guard: only count sessions >= 10 seconds
     if (finalElapsed < 10) {
+      await resetWalkState();
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Walk too short", "Walks need to be at least 10 seconds to count.");
-      router.replace("/walk");
       setBusyAction(null);
       return;
     }
+
+    await setCompletedWalkDraft({ routePoints });
 
     router.replace({
       pathname: "/complete",
@@ -244,6 +363,7 @@ export default function Walk() {
         durationSec: String(finalElapsed),
         distanceM: String(Math.round(distanceM)),
         source,
+        routePointCount: String(routePoints.length),
         ...(Number.isFinite(endLat) && Number.isFinite(endLng)
           ? { endLat: String(endLat), endLng: String(endLng) }
           : {}),
@@ -288,6 +408,32 @@ export default function Walk() {
   );
 
   useEffect(() => {
+    void refreshPermission();
+  }, [refreshPermission]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if (startedAtRef.current && previousState === "active" && nextState.match(/inactive|background/)) {
+        clearScheduledPersist();
+        void persistActiveWalk();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      clearScheduledPersist();
+      if (startedAtRef.current) {
+        void persistActiveWalk();
+      }
+      stopTimer();
+      stopGps();
+    };
+  }, [clearScheduledPersist, persistActiveWalk, stopGps, stopTimer]);
+
+  useEffect(() => {
     void (async () => {
       restoringRef.current = true;
       const snapshot = await getActiveWalkSnapshot();
@@ -307,13 +453,23 @@ export default function Walk() {
 
       elapsedBeforeRunRef.current = snapshot.running ? snapshot.elapsedSec : recoveredElapsed;
       runStartedAtRef.current = snapshot.running ? snapshot.updatedAt : null;
+      runningRef.current = snapshot.running;
+      distanceRef.current = snapshot.distanceM;
+      routePointsRef.current = snapshot.routePoints ?? [];
+      hadGpsPointsRef.current = routePointsRef.current.length > 1;
       setElapsedSec(recoveredElapsed);
       setDistanceM(snapshot.distanceM);
       setRunning(snapshot.running);
+      if (routePointsRef.current.length > 0) {
+        const last = routePointsRef.current[routePointsRef.current.length - 1];
+        if (last) {
+          lastPointRef.current = { lat: last.lat, lng: last.lng };
+        }
+      }
 
       if (snapshot.running) {
         startTimer();
-        const ok = await requestPerms();
+        const ok = await refreshPermission();
         if (ok) {
           await startGps();
         }
@@ -322,58 +478,66 @@ export default function Walk() {
       restoringRef.current = false;
       setRestored(true);
     })();
-
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      const previousState = appStateRef.current;
-      appStateRef.current = nextState;
-
-      if (startedAtRef.current && previousState === "active" && nextState.match(/inactive|background/)) {
-        void persistActiveWalk();
-      }
-    });
-
-    return () => {
-      subscription.remove();
-      if (startedAtRef.current) {
-        void persistActiveWalk();
-      }
-      stopTimer();
-      stopGps();
-    };
-  }, [persistActiveWalk]);
+  }, [refreshPermission, startGps, startTimer]);
 
   useEffect(() => {
     if (restoringRef.current || !startedAtRef.current) return;
-    void persistActiveWalk();
-  }, [distanceM, elapsedSec, persistActiveWalk, running]);
+    schedulePersist();
+  }, [distanceM, elapsedSec, running, schedulePersist]);
 
   const hasActiveSession = Boolean(startedAtRef.current) || elapsedSec > 0 || distanceM > 0;
-  const primaryAction = hasActiveSession ? resume : start;
-  const primaryLabel =
-    busyAction === "start" ? "STARTING…" : busyAction === "resume" ? "RESUMING…" : hasActiveSession ? "RESUME" : "START";
-  const canUsePrimary = restored && !running && busyAction !== "pause" && busyAction !== "stop";
-  const canPause = restored && running && busyAction !== "start" && busyAction !== "resume" && busyAction !== "stop";
+  const startResumeLabel =
+    busyAction === "start"
+      ? "STARTING…"
+      : busyAction === "resume"
+        ? "RESUMING…"
+        : hasActiveSession
+          ? running
+            ? "ACTIVE"
+            : "RESUME"
+          : "START";
+  const canStartOrResume = restored && busyAction !== "stop" && !running;
+  const canPause = restored && running && busyAction === null;
   const canStop = hasActiveSession && busyAction === null;
+  const statusText = running
+    ? "Walk in progress. Pause when you want a breather."
+    : hasActiveSession
+      ? "Your walk is paused. Resume when you're ready."
+      : permission === "denied"
+        ? "Timer-only mode is ready. Turn location back on anytime for route and distance."
+        : "Start when you're ready. Distance and pace appear automatically when location is on.";
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Walk</Text>
-      <Text style={styles.sub}>Elapsed</Text>
-      <Text style={styles.big}>{fmtTime(elapsedSec)}</Text>
+      <View style={styles.bgGlowTop} />
+      <View style={styles.bgGlowBottom} />
 
-      <View style={styles.metrics}>
-        <View style={styles.metric}>
-          <Text style={styles.metricK}>Distance</Text>
-          <Text style={styles.metricV}>{(distanceM / 1609.344).toFixed(2)} mi</Text>
+      <View style={styles.sessionCard}>
+        <View style={styles.sessionHeader}>
+          <View style={styles.sessionPill}>
+            <Text style={styles.sessionPillText}>{running ? "Walk live" : hasActiveSession ? "Paused" : "Ready"}</Text>
+          </View>
+          <Text style={styles.sessionHint}>{permission === "denied" ? "Timer mode" : "GPS mode"}</Text>
         </View>
-        <View style={styles.metric}>
-          <Text style={styles.metricK}>Pace</Text>
-          <Text style={styles.metricV}>{pace || "—"}</Text>
+
+        <Text style={styles.title}>Walk</Text>
+        <Text style={styles.sub}>Elapsed</Text>
+        <Text style={styles.big}>{fmtTime(elapsedSec)}</Text>
+
+        <View style={styles.metrics}>
+          <View style={styles.metric}>
+            <Text style={styles.metricK}>Distance</Text>
+            <Text style={styles.metricV}>{(distanceM / 1609.344).toFixed(2)} mi</Text>
+          </View>
+          <View style={styles.metric}>
+            <Text style={styles.metricK}>Pace</Text>
+            <Text style={styles.metricV}>{pace || "—"}</Text>
+          </View>
         </View>
       </View>
 
       {permission === "denied" ? (
-        <Text style={styles.warn}>Location permission denied. Enable it in Settings.</Text>
+        <Text style={styles.warn}>Location is off, so this walk will track time only.</Text>
       ) : null}
 
       {!restored ? (
@@ -382,36 +546,44 @@ export default function Walk() {
           <Text style={styles.loadingText}>Loading walk…</Text>
         </View>
       ) : (
-        <View style={styles.controlsRow}>
-          <Pressable
-            style={[
-              styles.btnPrimary,
-              styles.controlBtn,
-              !canUsePrimary ? styles.btnDisabled : null,
-            ]}
-            onPress={primaryAction}
-            disabled={!canUsePrimary}
-          >
-            <Text style={styles.btnPrimaryText}>{primaryLabel}</Text>
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.btnPause,
-              styles.controlBtn,
-              !canPause ? styles.btnDisabled : null,
-            ]}
-            onPress={pause}
-            disabled={!canPause}
-          >
-            <Text style={styles.btnPauseText}>{busyAction === "pause" ? "PAUSING…" : "PAUSE"}</Text>
-          </Pressable>
+        <View style={styles.controlsStack}>
+          <View style={styles.actionRow}>
+            <Pressable
+              style={[
+                styles.btnPrimary,
+                styles.splitBtn,
+                !canStartOrResume ? styles.btnDisabled : null,
+              ]}
+              onPress={hasActiveSession ? resume : start}
+              disabled={!canStartOrResume}
+            >
+              <Text style={styles.btnPrimaryText}>{startResumeLabel}</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.btnPause,
+                styles.splitBtn,
+                !canPause ? styles.btnDisabled : null,
+              ]}
+              onPress={pause}
+              disabled={!canPause}
+            >
+              <Text style={styles.btnPauseText}>{busyAction === "pause" ? "PAUSING…" : "PAUSE"}</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.controlHint}>{statusText}</Text>
         </View>
       )}
 
       <Pressable
         style={[styles.btnEnd, !canStop ? { opacity: 0.5 } : null]}
-        onPress={end}
+        onPress={() => {
+          if (!canStop) return;
+          Alert.alert("End this walk?", "This will save the walk and move you into reflection.", [
+            { text: "Keep walking", style: "cancel" },
+            { text: "End walk", style: "destructive", onPress: () => void end() },
+          ]);
+        }}
         disabled={!canStop}
       >
         <Text style={styles.btnEndText}>{busyAction === "stop" ? "STOPPING…" : "STOP"}</Text>
@@ -439,63 +611,143 @@ export default function Walk() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0B0F0E",
+    backgroundColor: "#F8F4EE",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
+    overflow: "hidden",
   },
-  title: { fontSize: 26, fontWeight: "900", color: "rgba(255,255,255,0.92)" },
-  sub: { marginTop: 10, fontSize: 13, fontWeight: "800", color: "rgba(255,255,255,0.65)" },
-  big: { marginTop: 8, fontSize: 56, fontWeight: "900", color: "rgba(255,255,255,0.92)" },
+  bgGlowTop: {
+    position: "absolute",
+    top: -90,
+    right: -44,
+    width: 220,
+    height: 220,
+    borderRadius: 999,
+    backgroundColor: "rgba(37,94,54,0.08)",
+  },
+  bgGlowBottom: {
+    position: "absolute",
+    bottom: -80,
+    left: -60,
+    width: 210,
+    height: 210,
+    borderRadius: 999,
+    backgroundColor: "rgba(242,181,65,0.12)",
+  },
+  sessionCard: {
+    width: "100%",
+    maxWidth: 380,
+    borderRadius: 30,
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 22,
+    backgroundColor: "rgba(255,255,255,0.88)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.12)",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  sessionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sessionPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "rgba(37,94,54,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.16)",
+  },
+  sessionPillText: {
+    color: "#255E36",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  sessionHint: {
+    color: "rgba(11,15,14,0.46)",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  title: { fontSize: 26, fontWeight: "900", color: "#0B0F0E" },
+  sub: { marginTop: 10, fontSize: 14, fontWeight: "800", color: "rgba(11,15,14,0.65)" },
+  big: { marginTop: 8, fontSize: 60, fontWeight: "900", color: "#255E36", letterSpacing: -1.2 },
 
-  metrics: { flexDirection: "row", gap: 14, marginTop: 18 },
+  metrics: { flexDirection: "row", gap: 14, marginTop: 22 },
   metric: {
+    flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(248,244,238,0.9)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    minWidth: 140,
+    borderColor: "rgba(37,94,54,0.14)",
     alignItems: "center",
   },
-  metricK: { fontSize: 12, fontWeight: "800", color: "rgba(255,255,255,0.65)" },
-  metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: "rgba(255,255,255,0.92)" },
+  metricK: { fontSize: 13, fontWeight: "800", color: "rgba(11,15,14,0.58)" },
+  metricV: { marginTop: 6, fontSize: 17, fontWeight: "900", color: "#0B0F0E" },
 
-  warn: { marginTop: 14, color: "#F2B541", fontWeight: "800" },
+  warn: {
+    marginTop: 14,
+    color: "#8C6412",
+    fontWeight: "800",
+    backgroundColor: "rgba(242,181,65,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(242,181,65,0.24)",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+  },
   loadingState: {
     marginTop: 22,
     alignItems: "center",
     gap: 10,
   },
   loadingText: {
-    color: "rgba(255,255,255,0.7)",
+    color: "rgba(11,15,14,0.7)",
     fontWeight: "800",
   },
-  controlsRow: {
+  controlsStack: {
     marginTop: 22,
     width: "100%",
-    maxWidth: 460,
+    maxWidth: 360,
+    alignItems: "center",
+  },
+  actionRow: {
+    width: "100%",
     flexDirection: "row",
     gap: 12,
   },
-  controlBtn: {
+  splitBtn: {
     flex: 1,
-    minWidth: 0,
+  },
+  controlHint: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.58)",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+    textAlign: "center",
+    maxWidth: 280,
   },
 
   btnPrimary: {
     backgroundColor: "#255E36",
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 16,
+    borderRadius: 18,
     alignItems: "center",
   },
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
 
   btnPause: {
     backgroundColor: "#F2B541",
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 16,
+    borderRadius: 18,
     alignItems: "center",
   },
   btnPauseText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
@@ -504,12 +756,12 @@ const styles = StyleSheet.create({
   },
 
   btnEnd: {
-    marginTop: 12,
+    marginTop: 14,
     backgroundColor: "#C83333",
     paddingVertical: 14,
     paddingHorizontal: 26,
     borderRadius: 16,
-    minWidth: 220,
+    minWidth: 240,
     alignItems: "center",
   },
   btnEndText: { color: "white", fontWeight: "900", letterSpacing: 1 },
@@ -520,14 +772,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   back: { paddingVertical: 8, paddingHorizontal: 12 },
-  backText: { color: "rgba(255,255,255,0.65)", fontWeight: "800" },
+  backText: { color: "rgba(11,15,14,0.65)", fontWeight: "800" },
   home: {
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(37,94,54,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(37,94,54,0.18)",
   },
-  homeText: { color: "white", fontWeight: "900" },
+  homeText: { color: "#255E36", fontWeight: "900" },
 });

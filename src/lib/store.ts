@@ -2,6 +2,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type SessionSource = "timer" | "gps";
 
+export type RoutePoint = {
+  lat: number;
+  lng: number;
+  t: number;
+  accuracy?: number;
+};
+
 export type OutsideSession = {
   id: string;
   startedAt: number;
@@ -10,6 +17,9 @@ export type OutsideSession = {
   source: SessionSource;
   /** Optional GPS distance (meters) */
   distanceM?: number;
+  routePoints?: RoutePoint[];
+  savedRouteAt?: number;
+  shareIntentAt?: number;
   sunriseBonus?: boolean;
   sunsetBonus?: boolean;
 };
@@ -48,6 +58,10 @@ export const EMPTY_SUMMARY: SummaryStats = {
   daysCompleted: {},
 };
 
+function finiteNumberOr(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 function clampMin1(n: number): number {
   return Math.max(1, Math.round(n));
 }
@@ -61,6 +75,31 @@ export function dayKeyLocal(d: Date): string {
 
 function minutesFromDuration(durationSec: number): number {
   return clampMin1(durationSec / 60);
+}
+
+function normalizeRoutePoint(value: unknown): RoutePoint | null {
+  if (!value || typeof value !== "object") return null;
+
+  const candidate = value as Partial<RoutePoint>;
+  if (
+    typeof candidate.lat !== "number" ||
+    !Number.isFinite(candidate.lat) ||
+    typeof candidate.lng !== "number" ||
+    !Number.isFinite(candidate.lng) ||
+    typeof candidate.t !== "number" ||
+    !Number.isFinite(candidate.t)
+  ) {
+    return null;
+  }
+
+  return {
+    lat: candidate.lat,
+    lng: candidate.lng,
+    t: candidate.t,
+    ...(typeof candidate.accuracy === "number" && Number.isFinite(candidate.accuracy)
+      ? { accuracy: candidate.accuracy }
+      : {}),
+  };
 }
 
 export function isGoldenHourSession(session: Pick<OutsideSession, "sunriseBonus" | "sunsetBonus">): boolean {
@@ -127,14 +166,45 @@ async function readSessions(): Promise<OutsideSession[]> {
   try {
     const parsed = JSON.parse(raw) as OutsideSession[];
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (session) =>
-        typeof session?.id === "string" &&
-        typeof session?.startedAt === "number" &&
-        typeof session?.endedAt === "number" &&
-        typeof session?.durationSec === "number" &&
-        (session?.source === "timer" || session?.source === "gps")
-    );
+    return parsed
+      .map((session) => {
+        const routePoints = Array.isArray(session?.routePoints)
+          ? session.routePoints
+              .map((point) => normalizeRoutePoint(point))
+              .filter((point): point is RoutePoint => point !== null)
+          : undefined;
+
+        if (
+          typeof session?.id !== "string" ||
+          !Number.isFinite(session?.startedAt) ||
+          !Number.isFinite(session?.endedAt) ||
+          !Number.isFinite(session?.durationSec) ||
+          (session?.source !== "timer" && session?.source !== "gps")
+        ) {
+          return null;
+        }
+
+        return {
+          id: session.id,
+          startedAt: finiteNumberOr(session.startedAt),
+          endedAt: finiteNumberOr(session.endedAt),
+          durationSec: Math.max(0, finiteNumberOr(session.durationSec)),
+          source: session.source,
+          ...(typeof session.distanceM === "number" && Number.isFinite(session.distanceM)
+            ? { distanceM: Math.max(0, session.distanceM) }
+            : {}),
+          ...(typeof session.sunriseBonus === "boolean" ? { sunriseBonus: session.sunriseBonus } : {}),
+          ...(typeof session.sunsetBonus === "boolean" ? { sunsetBonus: session.sunsetBonus } : {}),
+          ...(routePoints && routePoints.length > 0 ? { routePoints } : {}),
+          ...(typeof session.savedRouteAt === "number" && Number.isFinite(session.savedRouteAt)
+            ? { savedRouteAt: session.savedRouteAt }
+            : {}),
+          ...(typeof session.shareIntentAt === "number" && Number.isFinite(session.shareIntentAt)
+            ? { shareIntentAt: session.shareIntentAt }
+            : {}),
+        };
+      })
+      .filter((session): session is OutsideSession => session !== null);
   } catch {
     return [];
   }
@@ -149,20 +219,27 @@ async function readSummary(): Promise<{ summary: SummaryStats; version: number }
   if (!raw) return { summary: EMPTY_SUMMARY, version: 0 };
   try {
     const parsed = JSON.parse(raw) as PersistedSummaryStats;
+    const parsedDaysCompleted =
+      parsed?.daysCompleted && typeof parsed.daysCompleted === "object" && !Array.isArray(parsed.daysCompleted)
+        ? parsed.daysCompleted
+        : {};
+
     return {
-      version: Number(parsed?.version ?? 0),
+      version: finiteNumberOr(parsed?.version, 0),
       summary: {
-        totalMinutes: Number(parsed?.totalMinutes ?? 0),
-        totalSessions: Number(parsed?.totalSessions ?? 0),
-        currentStreakDays: Number(parsed?.currentStreakDays ?? 0),
-        bestStreakDays: Number(parsed?.bestStreakDays ?? 0),
-        sunriseBonusCount: Number(parsed?.sunriseBonusCount ?? 0),
-        sunsetBonusCount: Number(parsed?.sunsetBonusCount ?? 0),
-        goldenHourStreakCurrent: Number(parsed?.goldenHourStreakCurrent ?? 0),
-        goldenHourStreakBest: Number(parsed?.goldenHourStreakBest ?? 0),
-        dualResetDaysCount: Number(parsed?.dualResetDaysCount ?? 0),
+        totalMinutes: Math.max(0, finiteNumberOr(parsed?.totalMinutes, 0)),
+        totalSessions: Math.max(0, finiteNumberOr(parsed?.totalSessions, 0)),
+        currentStreakDays: Math.max(0, finiteNumberOr(parsed?.currentStreakDays, 0)),
+        bestStreakDays: Math.max(0, finiteNumberOr(parsed?.bestStreakDays, 0)),
+        sunriseBonusCount: Math.max(0, finiteNumberOr(parsed?.sunriseBonusCount, 0)),
+        sunsetBonusCount: Math.max(0, finiteNumberOr(parsed?.sunsetBonusCount, 0)),
+        goldenHourStreakCurrent: Math.max(0, finiteNumberOr(parsed?.goldenHourStreakCurrent, 0)),
+        goldenHourStreakBest: Math.max(0, finiteNumberOr(parsed?.goldenHourStreakBest, 0)),
+        dualResetDaysCount: Math.max(0, finiteNumberOr(parsed?.dualResetDaysCount, 0)),
         daysCompleted: Object.fromEntries(
-          Object.entries(parsed?.daysCompleted ?? {}).filter(([, minutes]) => Number(minutes) > 0)
+          Object.entries(parsedDaysCompleted)
+            .map(([key, minutes]) => [key, finiteNumberOr(minutes, 0)] as const)
+            .filter(([, minutes]) => minutes > 0)
         ) as Record<string, number>,
       },
     };
@@ -182,6 +259,44 @@ async function writeSummary(summary: SummaryStats) {
 export async function getSessions(): Promise<OutsideSession[]> {
   const sessions = await readSessions();
   return sessions.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+}
+
+export async function getSessionById(id: string): Promise<OutsideSession | null> {
+  if (!id) return null;
+  const sessions = await readSessions();
+  return sessions.find((session) => session.id === id) ?? null;
+}
+
+export async function saveSessionRouteForLater(id: string): Promise<OutsideSession | null> {
+  if (!id) return null;
+
+  const sessions = await readSessions();
+  const nextSavedAt = Date.now();
+  let nextSession: OutsideSession | null = null;
+
+  const nextSessions = sessions.map((session) => {
+    if (session.id !== id) return session;
+
+    nextSession = {
+      ...session,
+      savedRouteAt: session.savedRouteAt ?? nextSavedAt,
+      shareIntentAt: session.shareIntentAt ?? nextSavedAt,
+    };
+
+    return nextSession;
+  });
+
+  if (!nextSession) return null;
+
+  await writeSessions(nextSessions);
+  return nextSession;
+}
+
+export async function getSavedRouteSessions(): Promise<OutsideSession[]> {
+  const sessions = await readSessions();
+  return sessions
+    .filter((session) => Boolean(session.savedRouteAt) && (session.routePoints?.length ?? 0) > 1)
+    .sort((a, b) => (b.savedRouteAt ?? 0) - (a.savedRouteAt ?? 0));
 }
 
 function summarizeSessions(sessions: OutsideSession[]): SummaryStats {

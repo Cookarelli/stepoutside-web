@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import Purchases, { LOG_LEVEL, type CustomerInfo, type PurchasesOffering, type PurchasesPackage } from "react-native-purchases";
 
 import { ENV } from "../../env";
+import { auth } from "./firebase";
 
 export type ProPlan = "monthly" | "yearly" | "lifetime";
 
@@ -104,11 +105,30 @@ export async function initRevenueCat(): Promise<boolean> {
   const apiKey = getRevenueCatApiKey();
   if (!apiKey) return false;
 
-  Purchases.setLogLevel(LOG_LEVEL.INFO);
-  Purchases.configure({ apiKey });
-  attachCustomerInfoListener();
-  rcConfigured = true;
-  return true;
+  try {
+    Purchases.setLogLevel(LOG_LEVEL.INFO);
+    Purchases.configure({ apiKey, appUserID: auth.currentUser?.uid ?? undefined });
+    attachCustomerInfoListener();
+    rcConfigured = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function syncRevenueCatIdentity(appUserID: string | null): Promise<ProState> {
+  try {
+    const ready = await initRevenueCat();
+    if (!ready) return await getProState();
+
+    const info = appUserID
+      ? (await Purchases.logIn(appUserID)).customerInfo
+      : await Purchases.logOut();
+
+    return await persist(mapCustomerInfoToPro(info));
+  } catch {
+    return await getProState();
+  }
 }
 
 export async function getProState(): Promise<ProState> {
@@ -128,12 +148,16 @@ export async function getProState(): Promise<ProState> {
 }
 
 export async function refreshProState(): Promise<ProState> {
-  const ready = await initRevenueCat();
-  if (!ready) return await getProState();
+  try {
+    const ready = await initRevenueCat();
+    if (!ready) return await getProState();
 
-  const info = await Purchases.getCustomerInfo();
-  const next = mapCustomerInfoToPro(info);
-  return await persist(next);
+    const info = await Purchases.getCustomerInfo();
+    const next = mapCustomerInfoToPro(info);
+    return await persist(next);
+  } catch {
+    return await getProState();
+  }
 }
 
 export async function setProState(next: ProState): Promise<void> {
