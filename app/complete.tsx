@@ -158,7 +158,8 @@ export default function CompleteScreen() {
           didHapticRef.current = true;
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-      } catch {
+      } catch (error) {
+        console.error("[complete] failed to save walk", error);
         lastSaveKeyRef.current = null;
         setErrorText("Couldn’t save this session. Try again.");
       } finally {

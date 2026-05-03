@@ -2,7 +2,7 @@ import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, type AppStateStatus, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, type AppStateStatus, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import {
   clearCompletedWalkDraft,
@@ -387,11 +387,26 @@ export default function Walk() {
         return;
       }
 
+      const confirmMessage = running
+        ? "You can leave this screen and keep the walk active in the background."
+        : "You can leave now and come back to resume this walk later.";
+
+      if (Platform.OS === "web") {
+        const confirmed =
+          typeof globalThis.confirm === "function"
+            ? globalThis.confirm(`Keep this walk going?\n\n${confirmMessage}`)
+            : true;
+
+        if (confirmed) {
+          void Haptics.selectionAsync();
+          go();
+        }
+        return;
+      }
+
       Alert.alert(
         "Keep this walk going?",
-        running
-          ? "You can leave this screen and keep the walk active in the background."
-          : "You can leave now and come back to resume this walk later.",
+        confirmMessage,
         [
           { text: "Stay", style: "cancel" },
           {
@@ -579,6 +594,19 @@ export default function Walk() {
         style={[styles.btnEnd, !canStop ? { opacity: 0.5 } : null]}
         onPress={() => {
           if (!canStop) return;
+
+          if (Platform.OS === "web") {
+            const confirmed =
+              typeof globalThis.confirm === "function"
+                ? globalThis.confirm("End this walk?\n\nThis will save the walk and move you into reflection.")
+                : true;
+
+            if (confirmed) {
+              void end();
+            }
+            return;
+          }
+
           Alert.alert("End this walk?", "This will save the walk and move you into reflection.", [
             { text: "Keep walking", style: "cancel" },
             { text: "End walk", style: "destructive", onPress: () => void end() },
