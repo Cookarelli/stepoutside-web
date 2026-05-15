@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchases";
 
@@ -172,106 +172,116 @@ export default function ProScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.container}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>Step Outside Pro</Text>
-          <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
-          <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Current status</Text>
-          <Text style={styles.cardBody}>{isPro ? `Pro active (${activePlanLabel})` : "Free plan"}</Text>
-          <Text style={styles.cardCaption}>{statusNote}</Text>
-          {catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
-        </View>
-
-        {catalogError ? (
-          <View style={styles.alertCard}>
-            <Text style={styles.alertTitle}>Plans unavailable</Text>
-            <Text style={styles.alertBody}>{catalogError}</Text>
-            <Pressable style={styles.retryBtn} onPress={() => void load()} disabled={loading || busyAction !== null}>
-              <Text style={styles.retryText}>{loading ? "Reloading…" : "Try again"}</Text>
-            </Pressable>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.container}>
+          <View style={styles.hero}>
+            <Text style={styles.eyebrow}>Step Outside Pro</Text>
+            <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
+            <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
+            <Text style={styles.heroSupport}>Billed through Apple. Cancel or manage anytime in your App Store subscriptions.</Text>
           </View>
-        ) : null}
 
-        {loading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={BRAND.forest} />
-            <Text style={styles.loadingText}>Loading plans…</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Current status</Text>
+            <Text style={styles.cardBody}>{isPro ? `Pro active (${activePlanLabel})` : "Free plan"}</Text>
+            <Text style={styles.cardCaption}>{statusNote}</Text>
+            {catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
           </View>
-        ) : packages.length === 0 ? (
-          <View style={styles.loadingWrap}>
-            <Text style={styles.loadingText}>
-              {billingReady ? "No subscription packages are available right now." : "Purchases are unavailable in this build right now."}
-            </Text>
-          </View>
-        ) : (
-          packages.map((pkg) => {
-            const featured = pkg.plan === "yearly";
-            const active = proState?.productId === pkg.productId || proState?.plan === pkg.plan;
-            return (
-              <Pressable
-                key={pkg.plan}
-                style={[
-                  featured ? styles.featuredPlan : styles.planCard,
-                  active ? styles.activePlan : null,
-                  busyAction !== null ? styles.planDisabled : null,
-                ]}
-                onPress={() => void activatePlan(pkg)}
-                disabled={busyAction !== null}
-              >
-                <View style={styles.planTopRow}>
-                  <View style={styles.planTitleWrap}>
-                    <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
-                    {pkg.badge ? (
-                      <View style={featured ? styles.featuredBadge : styles.planBadge}>
-                        <Text style={featured ? styles.featuredBadgeText : styles.planBadgeText}>{pkg.badge}</Text>
-                      </View>
-                    ) : null}
+
+          {catalogError ? (
+            <View style={styles.alertCard}>
+              <Text style={styles.alertTitle}>Plans unavailable</Text>
+              <Text style={styles.alertBody}>{catalogError}</Text>
+              <Pressable style={styles.retryBtn} onPress={() => void load()} disabled={loading || busyAction !== null}>
+                <Text style={styles.retryText}>{loading ? "Reloading…" : "Try again"}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {loading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={BRAND.forest} />
+              <Text style={styles.loadingText}>Loading plans…</Text>
+            </View>
+          ) : packages.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Plans not available right now</Text>
+              <Text style={styles.emptyBody}>
+                {billingReady
+                  ? "RevenueCat returned no active packages for this paywall yet. Please try again in a moment."
+                  : "Purchases are unavailable in this build right now."}
+              </Text>
+              <Pressable style={styles.retryBtn} onPress={() => void load()} disabled={busyAction !== null}>
+                <Text style={styles.retryText}>Reload plans</Text>
+              </Pressable>
+            </View>
+          ) : (
+            packages.map((pkg) => {
+              const featured = pkg.plan === "yearly";
+              const active = proState?.productId === pkg.productId || proState?.plan === pkg.plan;
+              return (
+                <Pressable
+                  key={pkg.plan}
+                  style={[
+                    featured ? styles.featuredPlan : styles.planCard,
+                    active ? styles.activePlan : null,
+                    busyAction !== null ? styles.planDisabled : null,
+                  ]}
+                  onPress={() => void activatePlan(pkg)}
+                  disabled={busyAction !== null}
+                >
+                  <View style={styles.planTopRow}>
+                    <View style={styles.planTitleWrap}>
+                      <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
+                      {pkg.badge ? (
+                        <View style={featured ? styles.featuredBadge : styles.planBadge}>
+                          <Text style={featured ? styles.featuredBadgeText : styles.planBadgeText}>{pkg.badge}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={featured ? styles.featuredPrice : styles.planPrice}>{pkg.priceLabel}</Text>
                   </View>
-                  <Text style={featured ? styles.featuredPrice : styles.planPrice}>{pkg.priceLabel}</Text>
-                </View>
-                <Text style={featured ? styles.featuredDetail : styles.planDetail}>{pkg.detail}</Text>
-                <Text style={featured ? styles.featuredFootnote : styles.planFootnote}>
-                  {busyAction === pkg.plan ? "Starting purchase…" : active ? "Current plan" : "Tap to continue with Apple"}
+                  <Text style={featured ? styles.featuredDetail : styles.planDetail}>{pkg.detail}</Text>
+                  <Text style={featured ? styles.featuredFootnote : styles.planFootnote}>
+                    {busyAction === pkg.plan ? "Starting purchase…" : active ? "Current plan" : "Tap to continue with Apple"}
+                  </Text>
+                </Pressable>
+              );
+            })
+          )}
+
+          <Pressable style={styles.restoreBtn} onPress={() => void restore()} disabled={busyAction !== null}>
+            <Text style={styles.restoreText}>{busyAction === "restore" ? "Restoring…" : "Restore purchases"}</Text>
+          </Pressable>
+
+          <View style={styles.linksRow}>
+            <Pressable style={styles.policyBtn} onPress={() => void openExternal(PRIVACY_URL, "Privacy Policy")}>
+              <Text style={styles.policyText}>Privacy Policy</Text>
+            </Pressable>
+            <Pressable style={styles.policyBtn} onPress={() => void openExternal(TERMS_URL, "Terms of Use")}>
+              <Text style={styles.policyText}>Terms of Use</Text>
+            </Pressable>
+            {__DEV__ ? (
+              <Pressable style={styles.policyBtn} onPress={() => void clear()} disabled={busyAction !== null}>
+                <Text style={[styles.policyText, { color: BRAND.red }]}>
+                  {busyAction === "clear" ? "Clearing…" : "Clear Pro (test)"}
                 </Text>
               </Pressable>
-            );
-          })
-        )}
+            ) : null}
+          </View>
 
-        <Pressable style={styles.restoreBtn} onPress={() => void restore()} disabled={busyAction !== null}>
-          <Text style={styles.restoreText}>{busyAction === "restore" ? "Restoring…" : "Restore purchases"}</Text>
-        </Pressable>
-
-        <View style={styles.linksRow}>
-          <Pressable style={styles.policyBtn} onPress={() => void openExternal(PRIVACY_URL, "Privacy Policy")}>
-            <Text style={styles.policyText}>Privacy Policy</Text>
+          <Pressable style={styles.done} onPress={() => router.back()}>
+            <Text style={styles.doneText}>Done</Text>
           </Pressable>
-          <Pressable style={styles.policyBtn} onPress={() => void openExternal(TERMS_URL, "Terms of Use")}>
-            <Text style={styles.policyText}>Terms of Use</Text>
-          </Pressable>
-          {__DEV__ ? (
-            <Pressable style={styles.policyBtn} onPress={() => void clear()} disabled={busyAction !== null}>
-              <Text style={[styles.policyText, { color: BRAND.red }]}>
-                {busyAction === "clear" ? "Clearing…" : "Clear Pro (test)"}
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
-
-        <Pressable style={styles.done} onPress={() => router.back()}>
-          <Text style={styles.doneText}>Done</Text>
-        </Pressable>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BRAND.bone },
+  content: { flexGrow: 1, paddingVertical: 10 },
   container: { flex: 1, backgroundColor: BRAND.bone, padding: 20 },
   hero: {
     padding: 18,
@@ -289,6 +299,7 @@ const styles = StyleSheet.create({
   },
   title: { marginTop: 8, fontSize: 30, lineHeight: 34, fontWeight: "900", color: BRAND.charcoal },
   sub: { marginTop: 10, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 22 },
+  heroSupport: { marginTop: 10, color: "rgba(11,15,14,0.56)", fontWeight: "700", lineHeight: 20, fontSize: 13 },
   card: {
     marginTop: 18,
     borderRadius: 16,
@@ -324,12 +335,23 @@ const styles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 16,
     paddingVertical: 18,
+    paddingHorizontal: 16,
     alignItems: "center",
     backgroundColor: "rgba(11,15,14,0.04)",
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.08)",
   },
   loadingText: { marginTop: 8, color: "rgba(11,15,14,0.62)", fontWeight: "700" },
+  emptyCard: {
+    marginTop: 16,
+    borderRadius: 18,
+    padding: 18,
+    backgroundColor: "rgba(11,15,14,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+  },
+  emptyTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17 },
+  emptyBody: { marginTop: 8, color: "rgba(11,15,14,0.64)", fontWeight: "700", lineHeight: 21 },
   featuredPlan: {
     marginTop: 16,
     backgroundColor: BRAND.forest,
@@ -389,6 +411,7 @@ const styles = StyleSheet.create({
   },
   restoreBtn: {
     marginTop: 18,
+    minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 14,
@@ -400,8 +423,10 @@ const styles = StyleSheet.create({
   restoreText: { fontWeight: "900", color: BRAND.forest },
   linksRow: { marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 10 },
   policyBtn: {
+    minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 2,
+    justifyContent: "center",
   },
   policyText: { fontWeight: "800", color: BRAND.forest, textDecorationLine: "underline" },
   done: {
@@ -409,8 +434,10 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     backgroundColor: "rgba(11,15,14,0.08)",
     borderRadius: 12,
+    minHeight: 44,
     paddingVertical: 10,
     paddingHorizontal: 14,
+    justifyContent: "center",
   },
   doneText: { fontWeight: "900", color: "rgba(11,15,14,0.72)" },
 });

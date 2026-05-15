@@ -333,6 +333,9 @@ export default function HomeTab() {
           </View>
           <Text style={styles.microcopy}>{microcopy}</Text>
           <Text style={styles.heroSupportLine}>A calm ritual for clearing your head and keeping momentum close.</Text>
+          <Text style={styles.heroSupportLineSecondary}>
+            {todayMinutes > 0 ? "You already have credit for today. Another short reset still counts." : "Your next best step is a short walk."}
+          </Text>
 
           <Pressable
             onPress={() => router.push("/walk")}
@@ -348,7 +351,7 @@ export default function HomeTab() {
             <View style={styles.heroMetricChip}>
               <Text style={styles.heroMetricLabel}>Today</Text>
               <Text style={styles.heroMetricValue}>
-                {todayMinutes > 0 ? formatMinutes(todayMinutes) : "Not started"}
+                {todayMinutes > 0 ? formatMinutes(todayMinutes) : "Ready to begin"}
               </Text>
             </View>
 
@@ -405,7 +408,13 @@ export default function HomeTab() {
             <Text style={styles.sparkMission}>{dailySpark.mission}</Text>
             <Text style={styles.sparkReward}>{dailySpark.reward}</Text>
           </View>
-        ) : null}
+        ) : (
+          <View style={styles.sparkCard}>
+            <Text style={styles.cardEyebrow}>Daily Spark</Text>
+            <Text style={styles.sparkQuote}>A simple prompt will show up here each day.</Text>
+            <Text style={styles.sparkMission}>Start a walk whenever you want a calmer reset.</Text>
+          </View>
+        )}
 
         <View style={styles.resetCard}>
           <Text style={styles.cardEyebrow}>Nearby Reset</Text>
@@ -480,6 +489,7 @@ const styles = StyleSheet.create({
   },
   container: {
     paddingHorizontal: 20,
+    paddingTop: 4,
     paddingBottom: 28,
     gap: 14,
   },
@@ -514,8 +524,9 @@ const styles = StyleSheet.create({
   },
   heroTopRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
+    flexWrap: "wrap",
     gap: 12,
   },
   heroBrandBlock: {
@@ -543,12 +554,14 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(248,244,238,0.14)",
     borderWidth: 1,
     borderColor: "rgba(248,244,238,0.14)",
+    maxWidth: "100%",
   },
   statusPillText: {
     color: "#F8F4EE",
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.2,
+    flexShrink: 1,
   },
   greeting: {
     color: "rgba(248,244,238,0.82)",
@@ -571,6 +584,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "700",
+    maxWidth: 320,
+  },
+  heroSupportLineSecondary: {
+    marginTop: 8,
+    color: "rgba(248,244,238,0.86)",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
     maxWidth: 320,
   },
   primaryCta: {
@@ -602,10 +623,12 @@ const styles = StyleSheet.create({
   heroMetricsRow: {
     marginTop: 16,
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
   heroMetricChip: {
     flex: 1,
+    minWidth: 132,
     borderRadius: 18,
     paddingVertical: 12,
     paddingHorizontal: 14,
@@ -660,6 +683,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 0.4,
+    paddingVertical: 6,
   },
   progressGrid: {
     marginTop: 14,

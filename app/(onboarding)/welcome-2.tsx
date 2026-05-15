@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { completeOnboarding } from "../../src/lib/onboarding";
 
@@ -20,31 +21,35 @@ export default function Welcome2() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <Image source={require("../../assets/images/icon.png")} style={styles.bgLogo} />
-      <View style={styles.content}>
-        <Text style={styles.eyebrow}>WHY IT WORKS</Text>
-        <Text style={styles.title}>Small walks create real momentum.</Text>
-        <Text style={styles.body}>
-          Keep your streak alive, stack quick wins, and make consistency feel natural—not overwhelming.
-        </Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
+          <Text style={styles.eyebrow}>WHY IT WORKS</Text>
+          <Text style={styles.title}>Small walks create real momentum.</Text>
+          <Text style={styles.body}>
+            Keep your streak alive, stack quick wins, and make consistency feel natural, not overwhelming.
+          </Text>
+          <Text style={styles.support}>You do not need long workouts to keep the habit alive.</Text>
 
-        <View style={styles.dots}>
-          <View style={styles.dot} />
-          <View style={[styles.dot, styles.dotActive]} />
-          <View style={styles.dot} />
-        </View>
+          <View style={styles.dots}>
+            <View style={styles.dot} />
+            <View style={[styles.dot, styles.dotActive]} />
+            <View style={styles.dot} />
+          </View>
+          <Text style={styles.stepLabel}>2 of 3</Text>
 
-        <View style={styles.row}>
-          <Pressable onPress={skip} style={styles.ghostBtn}>
-            <Text style={styles.ghostText}>Skip</Text>
-          </Pressable>
-          <Pressable onPress={() => router.push("/(onboarding)/welcome-3")} style={styles.primaryBtn}>
-            <Text style={styles.primaryText}>Next</Text>
-          </Pressable>
+          <View style={styles.row}>
+            <Pressable onPress={skip} style={styles.ghostBtn}>
+              <Text style={styles.ghostText}>Skip</Text>
+            </Pressable>
+            <Pressable onPress={() => router.push("/(onboarding)/welcome-3")} style={styles.primaryBtn}>
+              <Text style={styles.primaryText}>Next</Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
-    </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -53,8 +58,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BRAND.bone,
     paddingHorizontal: 24,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",
+    paddingVertical: 28,
   },
   content: {
     width: "100%",
@@ -88,10 +97,23 @@ const styles = StyleSheet.create({
     color: "rgba(11,15,14,0.72)",
     fontWeight: "600",
   },
+  support: {
+    marginTop: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    color: "rgba(11,15,14,0.58)",
+    fontWeight: "700",
+  },
   dots: {
     marginTop: 34,
     flexDirection: "row",
     gap: 8,
+  },
+  stepLabel: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.52)",
+    fontSize: 12,
+    fontWeight: "800",
   },
   dot: {
     width: 8,
@@ -110,8 +132,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   ghostBtn: {
+    minHeight: 50,
     paddingVertical: 12,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
+    justifyContent: "center",
   },
   ghostText: {
     color: "rgba(11,15,14,0.66)",
@@ -120,9 +144,11 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     backgroundColor: BRAND.forest,
+    minHeight: 52,
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 14,
+    justifyContent: "center",
   },
   primaryText: {
     color: "white",

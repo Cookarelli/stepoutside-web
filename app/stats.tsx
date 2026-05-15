@@ -27,6 +27,13 @@ function lastNDaysKeys(n: number): string[] {
   return out.reverse();
 }
 
+function formatMinutesLabel(minutes: number): string {
+  if (minutes <= 0) return "0 min";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return hours >= 10 || Number.isInteger(hours) ? `${Math.round(hours)} hr` : `${hours.toFixed(1)} hr`;
+}
+
 export default function StatsScreen() {
   const router = useRouter();
 
@@ -123,6 +130,7 @@ export default function StatsScreen() {
     }
     return `Best Golden Hour run so far: ${goldenHourStreakBest} day${goldenHourStreakBest === 1 ? "" : "s"}.`;
   }, [dualResetDaysCount, goldenHourSessionCount, goldenHourStreakBest, goldenHourStreakCurrent]);
+  const hasAnyStats = totalSessions > 0;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "left", "right", "bottom"]}>
@@ -173,7 +181,7 @@ export default function StatsScreen() {
               </View>
               <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
                 <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Outside</Text>
-                <Text style={[styles.summaryMetricValue, { color: t.text }]}>{totalMinutes}</Text>
+                <Text style={[styles.summaryMetricValue, { color: t.text }]}>{formatMinutesLabel(totalMinutes)}</Text>
               </View>
             </View>
           </View>
@@ -208,7 +216,7 @@ export default function StatsScreen() {
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
-            {summary ? (
+            {summary && hasAnyStats ? (
               last7.map((dk) => {
                 const mins = summary.daysCompleted?.[dk] ?? 0;
                 return (
@@ -219,9 +227,19 @@ export default function StatsScreen() {
                 );
               })
             ) : (
-              <Text style={[styles.muted, { color: t.sub }]}>
-                {loading ? "Loading…" : "No data yet. Go get one."}
-              </Text>
+              <View style={styles.emptyPanel}>
+                <Text style={[styles.emptyTitle, { color: t.text }]}>{loading ? "Loading your rhythm…" : "No walk history yet"}</Text>
+                <Text style={[styles.emptyBody, { color: t.sub }]}>
+                  {loading
+                    ? "We’re pulling your latest progress now."
+                    : "Your last 7 days will fill in after your first completed walk."}
+                </Text>
+                {!loading ? (
+                  <Pressable style={styles.unlockBtn} onPress={() => router.push("/walk")}>
+                    <Text style={styles.unlockBtnText}>Start a walk</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             )}
           </View>
 
@@ -283,9 +301,14 @@ export default function StatsScreen() {
 
           <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
             {sessions.length === 0 ? (
-              <Text style={[styles.muted, { color: t.sub }]}>
-                {loading ? "Loading…" : "No sessions yet."}
-              </Text>
+              <View style={styles.emptyPanel}>
+                <Text style={[styles.emptyTitle, { color: t.text }]}>{loading ? "Loading sessions…" : "No recent sessions yet"}</Text>
+                <Text style={[styles.emptyBody, { color: t.sub }]}>
+                  {loading
+                    ? "Your recent walks are on the way."
+                    : "Finish one walk and it will show up here with time and date."}
+                </Text>
+              </View>
             ) : (
               sessions.slice(0, 10).map((s, idx) => {
                 const mins = Math.max(1, Math.round(s.durationSec / 60));
@@ -382,7 +405,7 @@ const styles = StyleSheet.create({
   },
   summaryMetricValue: {
     marginTop: 6,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "900",
   },
 
@@ -400,7 +423,7 @@ const styles = StyleSheet.create({
   },
   cardLabel: { fontWeight: "800", fontSize: 13 },
   cardValue: {
-    fontSize: 46,
+    fontSize: 40,
     fontWeight: "900",
     marginTop: 8,
     letterSpacing: -0.3,
@@ -435,6 +458,9 @@ const styles = StyleSheet.create({
   sessionSub: { marginTop: 4, fontWeight: "700", fontSize: 14 },
 
   muted: { fontWeight: "700" },
+  emptyPanel: { gap: 8 },
+  emptyTitle: { fontSize: 16, fontWeight: "900" },
+  emptyBody: { fontWeight: "700", lineHeight: 20 },
   insightText: {
     marginTop: 10,
     fontWeight: "700",

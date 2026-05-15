@@ -3,6 +3,7 @@ import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, type AppStateStatus, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   clearCompletedWalkDraft,
@@ -818,7 +819,7 @@ export default function Walk() {
             : "Start when you're ready. Distance and pace appear automatically when location is on.";
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.bgGlowTop} />
       <View style={styles.bgGlowBottom} />
 
@@ -835,6 +836,11 @@ export default function Walk() {
         <Text style={styles.title}>Walk</Text>
         <Text style={styles.sub}>Elapsed</Text>
         <Text style={styles.big}>{fmtTime(elapsedSec)}</Text>
+        <Text style={styles.sessionSupport}>
+          {permission === "denied"
+            ? "Timer mode is active. Turn location back on anytime for route and distance."
+            : "Keep your phone with you and Step Outside will track route, distance, and pace."}
+        </Text>
 
         <View style={styles.metrics}>
           <View style={styles.metric}>
@@ -929,7 +935,7 @@ export default function Walk() {
           <Text style={styles.homeText}>Home</Text>
         </Pressable>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -940,6 +946,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
+    paddingVertical: 18,
     overflow: "hidden",
   },
   bgGlowTop: {
@@ -1002,8 +1009,16 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: "900", color: "#0B0F0E" },
   sub: { marginTop: 10, fontSize: 14, fontWeight: "800", color: "rgba(11,15,14,0.65)" },
   big: { marginTop: 8, fontSize: 60, fontWeight: "900", color: "#255E36", letterSpacing: -1.2 },
+  sessionSupport: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.62)",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    maxWidth: 280,
+  },
 
-  metrics: { flexDirection: "row", gap: 14, marginTop: 22 },
+  metrics: { flexDirection: "row", gap: 14, marginTop: 18 },
   metric: {
     flex: 1,
     paddingVertical: 12,
@@ -1063,17 +1078,21 @@ const styles = StyleSheet.create({
 
   btnPrimary: {
     backgroundColor: "#255E36",
+    minHeight: 56,
     paddingVertical: 16,
     borderRadius: 18,
     alignItems: "center",
+    justifyContent: "center",
   },
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
 
   btnPause: {
     backgroundColor: "#F2B541",
+    minHeight: 56,
     paddingVertical: 16,
     borderRadius: 18,
     alignItems: "center",
+    justifyContent: "center",
   },
   btnPauseText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
   btnDisabled: {
@@ -1083,11 +1102,13 @@ const styles = StyleSheet.create({
   btnEnd: {
     marginTop: 14,
     backgroundColor: "#C83333",
+    minHeight: 56,
     paddingVertical: 14,
     paddingHorizontal: 26,
     borderRadius: 16,
     minWidth: 240,
     alignItems: "center",
+    justifyContent: "center",
   },
   btnEndText: { color: "white", fontWeight: "900", letterSpacing: 1 },
 
@@ -1096,15 +1117,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
   },
-  back: { paddingVertical: 8, paddingHorizontal: 12 },
+  back: { minHeight: 44, paddingVertical: 8, paddingHorizontal: 12, justifyContent: "center" },
   backText: { color: "rgba(11,15,14,0.65)", fontWeight: "800" },
   home: {
+    minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
     backgroundColor: "rgba(37,94,54,0.10)",
     borderWidth: 1,
     borderColor: "rgba(37,94,54,0.18)",
+    justifyContent: "center",
   },
   homeText: { color: "#255E36", fontWeight: "900" },
 });
