@@ -1,9 +1,15 @@
+import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
 import { AppErrorBoundary } from "../src/components/AppErrorBoundary";
+import { initRevenueCat } from "../src/lib/pro";
 
 export default function RootLayout() {
+  useEffect(() => {
+    void initRevenueCat();
+  }, []);
+
   return (
     <AppErrorBoundary>
       <StatusBar style="auto" />

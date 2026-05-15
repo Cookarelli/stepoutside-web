@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchases";
 
@@ -12,6 +12,7 @@ import {
   refreshProState,
   restorePurchasesScaffold,
   type ProPaywallPackage,
+  type ProPaywallCatalog,
   type ProState,
 } from "../src/lib/pro";
 
@@ -21,15 +22,23 @@ const BRAND = {
   bone: "#F8F4EE",
   charcoal: "#0B0F0E",
   red: "#C83333",
+  mist: "#E7EEE6",
+  sand: "#EFE7DA",
 } as const;
+
+const PRIVACY_URL = "https://stepoutside.app/privacy-policy";
+const TERMS_URL = "https://stepoutside.app/terms";
+const PRO_DESCRIPTION =
+  "Unlock premium walk and hike tracking, streaks, personal progress insights, sunrise and sunset bonuses, reflection prompts, and future Pro features.";
 
 export default function ProScreen() {
   const router = useRouter();
   const [proState, setProStateLocal] = useState<ProState | null>(null);
   const [packages, setPackages] = useState<ProPaywallPackage[]>([]);
   const [billingReady, setBillingReady] = useState(false);
-  const [catalogSource, setCatalogSource] = useState<"live" | "fallback">("fallback");
+  const [catalogSource, setCatalogSource] = useState<ProPaywallCatalog["source"]>("fallback");
   const [offeringId, setOfferingId] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
@@ -43,13 +52,15 @@ export default function ProScreen() {
       setBillingReady(catalog.billingReady);
       setCatalogSource(catalog.source);
       setOfferingId(catalog.offeringId);
+      setCatalogError(catalog.errorMessage);
       setProStateLocal(state);
     } catch {
       const state = await getProState();
       setPackages([]);
       setBillingReady(false);
-      setCatalogSource("fallback");
+      setCatalogSource("error");
       setOfferingId(null);
+      setCatalogError("We couldn't load subscription plans right now. Please try again in a moment.");
       setProStateLocal(state);
     } finally {
       setLoading(false);
@@ -129,67 +140,122 @@ export default function ProScreen() {
   };
 
   const isPro = proState?.isPro ?? false;
-  const statusNote =
-    catalogSource === "live" && offeringId
-      ? `Live pricing loaded from RevenueCat offering "${offeringId}".`
-      : billingReady
-        ? "Purchases are available, but live pricing could not be loaded right now."
-        : "Purchases are only active in a native dev build or TestFlight with RevenueCat configured.";
+  const activePlanLabel =
+    proState?.plan === "yearly" ? "Annual" : proState?.plan === "monthly" ? "Monthly" : proState?.plan ?? "plan";
+  const statusNote = (() => {
+    if (catalogSource === "live") {
+      return "Plans and pricing are loaded live from the App Store through RevenueCat.";
+    }
+
+    if (catalogSource === "empty") {
+      return "No active subscription plans are available right now.";
+    }
+
+    if (catalogSource === "error") {
+      return "We couldn't load live subscription plans right now.";
+    }
+
+    if (billingReady) {
+      return "Purchases are available, but pricing is still loading.";
+    }
+
+    return "Purchases are only active in a native dev build or TestFlight with RevenueCat configured.";
+  })();
+
+  const openExternal = async (url: string, label: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Link unavailable", `We couldn't open the ${label} right now.`);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
-        <Text style={styles.title}>Step Outside Pro</Text>
-        <Text style={styles.sub}>Golden Hour insights, unlimited saved walks, and a steadier daily rhythm.</Text>
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>Step Outside Pro</Text>
+          <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
+          <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
+        </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Current status</Text>
-          <Text style={styles.cardBody}>{isPro ? `Pro active (${proState?.plan ?? "plan"})` : "Free plan"}</Text>
+          <Text style={styles.cardBody}>{isPro ? `Pro active (${activePlanLabel})` : "Free plan"}</Text>
           <Text style={styles.cardCaption}>{statusNote}</Text>
+          {catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
         </View>
+
+        {catalogError ? (
+          <View style={styles.alertCard}>
+            <Text style={styles.alertTitle}>Plans unavailable</Text>
+            <Text style={styles.alertBody}>{catalogError}</Text>
+            <Pressable style={styles.retryBtn} onPress={() => void load()} disabled={loading || busyAction !== null}>
+              <Text style={styles.retryText}>{loading ? "Reloading…" : "Try again"}</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {loading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator color={BRAND.forest} />
             <Text style={styles.loadingText}>Loading plans…</Text>
           </View>
+        ) : packages.length === 0 ? (
+          <View style={styles.loadingWrap}>
+            <Text style={styles.loadingText}>
+              {billingReady ? "No subscription packages are available right now." : "Purchases are unavailable in this build right now."}
+            </Text>
+          </View>
         ) : (
-          packages.map((pkg, index) => {
-            const featured = index === 0;
+          packages.map((pkg) => {
+            const featured = pkg.plan === "yearly";
             const active = proState?.productId === pkg.productId || proState?.plan === pkg.plan;
             return (
               <Pressable
                 key={pkg.plan}
                 style={[
-                  featured ? styles.primary : index === 1 ? styles.primaryAlt : styles.secondary,
+                  featured ? styles.featuredPlan : styles.planCard,
                   active ? styles.activePlan : null,
+                  busyAction !== null ? styles.planDisabled : null,
                 ]}
                 onPress={() => void activatePlan(pkg)}
                 disabled={busyAction !== null}
               >
-                <View style={styles.planHeader}>
-                  <Text style={featured ? styles.primaryText : index === 1 ? styles.primaryAltText : styles.secondaryText}>
-                    {pkg.title} {pkg.badge ? `· ${pkg.badge}` : ""}
-                  </Text>
-                  <Text style={featured ? styles.primaryText : index === 1 ? styles.primaryAltText : styles.secondaryText}>
-                    {pkg.priceLabel}
-                  </Text>
+                <View style={styles.planTopRow}>
+                  <View style={styles.planTitleWrap}>
+                    <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
+                    {pkg.badge ? (
+                      <View style={featured ? styles.featuredBadge : styles.planBadge}>
+                        <Text style={featured ? styles.featuredBadgeText : styles.planBadgeText}>{pkg.badge}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={featured ? styles.featuredPrice : styles.planPrice}>{pkg.priceLabel}</Text>
                 </View>
-                <Text style={featured ? styles.primarySubtext : index === 1 ? styles.primaryAltSubtext : styles.secondarySubtext}>
-                  {busyAction === pkg.plan ? "Working…" : active ? "Current plan" : pkg.detail}
+                <Text style={featured ? styles.featuredDetail : styles.planDetail}>{pkg.detail}</Text>
+                <Text style={featured ? styles.featuredFootnote : styles.planFootnote}>
+                  {busyAction === pkg.plan ? "Starting purchase…" : active ? "Current plan" : "Tap to continue with Apple"}
                 </Text>
               </Pressable>
             );
           })
         )}
 
-        <View style={styles.row}>
-          <Pressable style={styles.linkBtn} onPress={() => void restore()} disabled={busyAction !== null}>
-            <Text style={styles.linkText}>{busyAction === "restore" ? "Restoring…" : "Restore purchases"}</Text>
+        <Pressable style={styles.restoreBtn} onPress={() => void restore()} disabled={busyAction !== null}>
+          <Text style={styles.restoreText}>{busyAction === "restore" ? "Restoring…" : "Restore purchases"}</Text>
+        </Pressable>
+
+        <View style={styles.linksRow}>
+          <Pressable style={styles.policyBtn} onPress={() => void openExternal(PRIVACY_URL, "Privacy Policy")}>
+            <Text style={styles.policyText}>Privacy Policy</Text>
+          </Pressable>
+          <Pressable style={styles.policyBtn} onPress={() => void openExternal(TERMS_URL, "Terms of Use")}>
+            <Text style={styles.policyText}>Terms of Use</Text>
           </Pressable>
           {__DEV__ ? (
-            <Pressable style={styles.linkBtn} onPress={() => void clear()} disabled={busyAction !== null}>
-              <Text style={[styles.linkText, { color: BRAND.red }]}>
+            <Pressable style={styles.policyBtn} onPress={() => void clear()} disabled={busyAction !== null}>
+              <Text style={[styles.policyText, { color: BRAND.red }]}>
                 {busyAction === "clear" ? "Clearing…" : "Clear Pro (test)"}
               </Text>
             </Pressable>
@@ -207,19 +273,53 @@ export default function ProScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BRAND.bone },
   container: { flex: 1, backgroundColor: BRAND.bone, padding: 20 },
-  title: { fontSize: 30, fontWeight: "900", color: BRAND.charcoal },
-  sub: { marginTop: 8, color: "rgba(11,15,14,0.66)", fontWeight: "700" },
+  hero: {
+    padding: 18,
+    borderRadius: 22,
+    backgroundColor: BRAND.mist,
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.1)",
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    color: BRAND.forest,
+  },
+  title: { marginTop: 8, fontSize: 30, lineHeight: 34, fontWeight: "900", color: BRAND.charcoal },
+  sub: { marginTop: 10, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 22 },
   card: {
     marginTop: 18,
     borderRadius: 16,
     padding: 14,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    backgroundColor: "rgba(255,255,255,0.72)",
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.12)",
   },
   cardTitle: { fontWeight: "900", color: BRAND.charcoal },
   cardBody: { marginTop: 4, fontWeight: "700", color: "rgba(11,15,14,0.72)" },
   cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: "rgba(11,15,14,0.58)" },
+  offeringNote: { marginTop: 8, color: "rgba(11,15,14,0.42)", fontSize: 11, fontWeight: "700" },
+  alertCard: {
+    marginTop: 14,
+    borderRadius: 16,
+    padding: 14,
+    backgroundColor: "rgba(200,51,51,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(200,51,51,0.18)",
+  },
+  alertTitle: { fontWeight: "900", color: BRAND.red },
+  alertBody: { marginTop: 6, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 20 },
+  retryBtn: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "rgba(37,94,54,0.12)",
+  },
+  retryText: { color: BRAND.forest, fontWeight: "900" },
   loadingWrap: {
     marginTop: 16,
     borderRadius: 16,
@@ -230,46 +330,80 @@ const styles = StyleSheet.create({
     borderColor: "rgba(11,15,14,0.08)",
   },
   loadingText: { marginTop: 8, color: "rgba(11,15,14,0.62)", fontWeight: "700" },
-  primary: {
+  featuredPlan: {
     marginTop: 16,
     backgroundColor: BRAND.forest,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    shadowColor: "#1F4A2C",
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
-  primaryText: { color: "white", fontWeight: "900" },
-  primarySubtext: { marginTop: 4, color: "rgba(255,255,255,0.8)", fontWeight: "700" },
-  primaryAlt: {
+  planCard: {
     marginTop: 10,
-    backgroundColor: "rgba(37,94,54,0.14)",
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderRadius: 14,
+    backgroundColor: BRAND.sand,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
   },
-  primaryAltText: { color: BRAND.forest, fontWeight: "900" },
-  primaryAltSubtext: { marginTop: 4, color: "rgba(37,94,54,0.86)", fontWeight: "700" },
-  secondary: {
-    marginTop: 10,
-    backgroundColor: BRAND.sunrise,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-  },
-  secondaryText: { color: BRAND.charcoal, fontWeight: "900" },
-  secondarySubtext: { marginTop: 4, color: "rgba(11,15,14,0.72)", fontWeight: "700" },
-  activePlan: {
-    borderWidth: 2,
-    borderColor: "rgba(11,15,14,0.22)",
-  },
-  planHeader: {
+  planDisabled: { opacity: 0.75 },
+  featuredTitle: { color: "white", fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
+  planTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
+  featuredPrice: { color: "white", fontWeight: "900", fontSize: 18, marginLeft: 12 },
+  planPrice: { color: BRAND.charcoal, fontWeight: "900", fontSize: 18, marginLeft: 12 },
+  featuredDetail: { marginTop: 10, color: "rgba(255,255,255,0.84)", fontWeight: "700" },
+  planDetail: { marginTop: 10, color: "rgba(11,15,14,0.66)", fontWeight: "700" },
+  featuredFootnote: { marginTop: 10, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 },
+  planFootnote: { marginTop: 10, color: "rgba(11,15,14,0.54)", fontWeight: "800", fontSize: 12 },
+  planTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
   },
-  row: { marginTop: 16, flexDirection: "row", gap: 16 },
-  linkBtn: { paddingVertical: 8, paddingHorizontal: 4 },
-  linkText: { fontWeight: "900", color: BRAND.forest },
+  planTitleWrap: { flex: 1, gap: 8 },
+  featuredBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderRadius: 999,
+  },
+  planBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(37,94,54,0.12)",
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderRadius: 999,
+  },
+  featuredBadgeText: { color: "white", fontWeight: "900", fontSize: 11, letterSpacing: 0.3 },
+  planBadgeText: { color: BRAND.forest, fontWeight: "900", fontSize: 11, letterSpacing: 0.3 },
+  activePlan: {
+    borderWidth: 2,
+    borderColor: "rgba(11,15,14,0.16)",
+  },
+  restoreBtn: {
+    marginTop: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    backgroundColor: "rgba(37,94,54,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.14)",
+    paddingVertical: 13,
+  },
+  restoreText: { fontWeight: "900", color: BRAND.forest },
+  linksRow: { marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  policyBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+  },
+  policyText: { fontWeight: "800", color: BRAND.forest, textDecorationLine: "underline" },
   done: {
     marginTop: 20,
     alignSelf: "flex-start",
