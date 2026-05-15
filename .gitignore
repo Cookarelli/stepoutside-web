@@ -6,6 +6,7 @@ node_modules/
 # Expo
 .expo/
 dist/
+build/
 web-build/
 expo-env.d.ts
 
@@ -41,10 +42,13 @@ app-example
 # generated native folders
 /ios
 /android
+ios/Pods
+android/.gradle
 
 # env
 .env
 .env.*
+credentials.json
 
 # local project artifacts
 ops/
