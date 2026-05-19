@@ -6,7 +6,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { RoutePreview } from "../src/components/RoutePreview";
-import { getSessionById, type OutsideSession } from "../src/lib/store";
+import { getSessionById, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../src/lib/store";
 
 function fmtDate(ts: number): string {
   return new Date(ts).toLocaleString(undefined, {
@@ -68,6 +68,12 @@ export default function SavedRouteScreen() {
   }, [sessionId]);
 
   const mapsUrl = useMemo(() => (session ? buildMapsUrl(session) : null), [session]);
+  const earnedSunriseBonus = session ? hasSunriseBonus(session) : false;
+  const earnedSunsetBonus = session ? hasSunsetBonus(session) : false;
+  const lockedBonusTeaser =
+    session?.bonusType && !earnedSunriseBonus && !earnedSunsetBonus
+      ? "Premium unlocks sunrise and sunset bonus achievements."
+      : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
@@ -94,14 +100,14 @@ export default function SavedRouteScreen() {
                   <Text style={styles.metaChipText}>Saved {fmtDate(session.savedRouteAt)}</Text>
                 </View>
               ) : null}
-              {session.sunriseBonus ? (
+              {earnedSunriseBonus ? (
                 <View style={styles.metaChip}>
-                  <Text style={styles.metaChipText}>Sunrise bonus</Text>
+                  <Text style={styles.metaChipText}>Sunrise Bonus</Text>
                 </View>
               ) : null}
-              {session.sunsetBonus ? (
+              {earnedSunsetBonus ? (
                 <View style={styles.metaChip}>
-                  <Text style={styles.metaChipText}>Sunset bonus</Text>
+                  <Text style={styles.metaChipText}>Sunset Bonus</Text>
                 </View>
               ) : null}
             </View>
@@ -110,16 +116,32 @@ export default function SavedRouteScreen() {
               <View style={styles.previewWrap}>
                 <RoutePreview
                   points={session.routePoints}
-                  title="Saved route preview"
-                  subtitle="This can become part of future community sharing"
+                  title="Saved GPS route map"
+                  subtitle="Captured from your Premium activity history"
                 />
+              </View>
+            ) : null}
+
+            {session.source === "gps" && (!session.routePoints || session.routePoints.length < 2) ? (
+              <View style={styles.lockedCard}>
+                <Text style={styles.lockedTitle}>Route map unavailable</Text>
+                <Text style={styles.lockedBody}>Unlock saved GPS route maps with Step Outside Premium.</Text>
+              </View>
+            ) : null}
+
+            {lockedBonusTeaser ? (
+              <View style={styles.lockedCard}>
+                <Text style={styles.lockedTitle}>Bonus achievement locked</Text>
+                <Text style={styles.lockedBody}>{lockedBonusTeaser}</Text>
               </View>
             ) : null}
 
             <View style={styles.noteCard}>
               <Text style={styles.noteTitle}>Why this matters</Text>
               <Text style={styles.noteBody}>
-                Saved routes are the foundation for future community sharing, curated Step Outside spots, and local reset ideas.
+                {session.routePoints && session.routePoints.length > 1
+                  ? "Saved routes help you revisit where you walked, compare resets, and keep a visual log of your Premium activity history."
+                  : "Your basic activity summary is still saved here, including time, distance, and any Golden Hour bonuses."}
               </Text>
             </View>
 
@@ -202,6 +224,26 @@ const styles = StyleSheet.create({
   },
   previewWrap: {
     marginTop: 18,
+  },
+  lockedCard: {
+    marginTop: 18,
+    borderRadius: 18,
+    padding: 16,
+    backgroundColor: "rgba(255,255,255,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+  },
+  lockedTitle: {
+    color: "#0B0F0E",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  lockedBody: {
+    marginTop: 8,
+    color: "rgba(11,15,14,0.66)",
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "700",
   },
   noteCard: {
     marginTop: 18,

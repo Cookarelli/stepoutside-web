@@ -288,6 +288,12 @@ export default function Walk() {
               lng: pos.coords.longitude,
               t: pos.timestamp || Date.now(),
               ...(Number.isFinite(accuracy) ? { accuracy } : {}),
+              ...(typeof pos.coords.altitude === "number" && Number.isFinite(pos.coords.altitude)
+                ? { altitude: pos.coords.altitude }
+                : {}),
+              ...(typeof pos.coords.speed === "number" && Number.isFinite(pos.coords.speed)
+                ? { speed: pos.coords.speed }
+                : {}),
             };
             const p = { lat: point.lat, lng: point.lng };
             const last = lastPointRef.current;

@@ -16,6 +16,7 @@ import {
 } from "react-native";
 
 import { ENV } from "../../env";
+import { usePremiumAccess } from "../../hooks/use-premium-access";
 import {
   createEmailPasswordAccount,
   getCachedAuthUser,
@@ -35,7 +36,6 @@ import {
   setNotificationPrefs,
   type NotificationPrefs,
 } from "../../src/lib/notifications";
-import { getProState } from "../../src/lib/pro";
 import { EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
 
 type AuthAction = "google" | "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | null;
@@ -174,7 +174,6 @@ function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSig
 export default function ProfileTab() {
   const router = useRouter();
 
-  const [isPro, setIsPro] = useState(false);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [authUser, setAuthUser] = useState<AuthUserSnapshot | null>(null);
   const [cachedAuthUser, setCachedAuthUser] = useState<AuthUserSnapshot | null>(null);
@@ -184,6 +183,7 @@ export default function ProfileTab() {
   const [authStatus, setAuthStatus] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const { isPremium } = usePremiumAccess();
 
   const googleEnabled = Boolean(
     ENV.AUTH.googleWebClientId && (Platform.OS !== "ios" || ENV.AUTH.googleIosClientId)
@@ -192,6 +192,13 @@ export default function ProfileTab() {
   const visibleUser = authUser ?? cachedAuthUser;
   const providerLabel = useMemo(() => formatProviderLabel(visibleUser), [visibleUser]);
   const reminderCount = useMemo(() => enabledReminderCount(prefs), [prefs]);
+  const currentStreak = summary.currentStreak ?? summary.currentStreakDays ?? 0;
+  const longestStreak = summary.longestStreak ?? summary.bestStreakDays ?? 0;
+  const activeDaysThisWeek = summary.activeDaysThisWeek ?? 0;
+  const activeDaysThisMonth = summary.activeDaysThisMonth ?? 0;
+  const weeklyGoal = summary.weeklyGoal ?? 4;
+  const monthlyGoal = summary.monthlyGoal ?? 16;
+  const weeklyConsistencyStreakCurrent = summary.weeklyConsistencyStreakCurrent ?? 0;
   const profileHeadline = visibleUser
     ? firstNonEmpty(visibleUser.displayName, visibleUser.email, "Profile ready")
     : "Keep your progress close";
@@ -200,18 +207,13 @@ export default function ProfileTab() {
         visibleUser.email,
         "This account is attached to your Step Outside profile on this device."
       )
-    : "Sign in to keep your Pro access and future cloud sync tied to you, not just this phone.";
+    : "Sign in to connect your Premium access to your account instead of only this device.";
   const profileSupport = visibleUser
-    ? "Walk history is still stored locally while cloud sync comes online."
+    ? "Walk history is available on this device and Premium access stays linked to your signed-in account."
     : "Your current walks are still safe on this device even if you stay signed out.";
 
   const loadSettings = useCallback(async () => {
-    const [pro, np, storedSummary] = await Promise.allSettled([
-      getProState(),
-      getNotificationPrefs(),
-      getSummary(),
-    ]);
-    setIsPro(pro.status === "fulfilled" ? pro.value.isPro : false);
+    const [np, storedSummary] = await Promise.allSettled([getNotificationPrefs(), getSummary()]);
     setPrefs(
       np.status === "fulfilled"
         ? np.value
@@ -418,7 +420,7 @@ export default function ProfileTab() {
           </View>
           <View style={styles.profileStatChip}>
             <Text style={styles.profileStatLabel}>Streak</Text>
-            <Text style={styles.profileStatValue}>{summary.currentStreakDays}d</Text>
+            <Text style={styles.profileStatValue}>{currentStreak}d</Text>
           </View>
           <View style={styles.profileStatChip}>
             <Text style={styles.profileStatLabel}>Outside</Text>
@@ -533,22 +535,72 @@ export default function ProfileTab() {
         {authStatus ? <Text style={styles.authStatus}>{authStatus}</Text> : null}
       </View>
 
+      <View style={styles.streakCard}>
+        <Text style={styles.streakEyebrow}>Premium Streaks</Text>
+        {isPremium ? (
+          <>
+            <View style={styles.streakRow}>
+              <Text style={styles.streakLabel}>Current streak</Text>
+              <Text style={styles.streakValue}>{currentStreak} days</Text>
+            </View>
+            <View style={styles.streakRow}>
+              <Text style={styles.streakLabel}>Longest streak</Text>
+              <Text style={styles.streakValue}>{longestStreak} days</Text>
+            </View>
+            <View style={styles.streakRow}>
+              <Text style={styles.streakLabel}>Weekly goal progress</Text>
+              <Text style={styles.streakValue}>{Math.min(activeDaysThisWeek, weeklyGoal)}/{weeklyGoal}</Text>
+            </View>
+            <View style={styles.streakRow}>
+              <Text style={styles.streakLabel}>Active days this month</Text>
+              <Text style={styles.streakValue}>{activeDaysThisMonth}/{monthlyGoal}</Text>
+            </View>
+            <View style={styles.streakRow}>
+              <Text style={styles.streakLabel}>Weekly consistency</Text>
+              <Text style={styles.streakValue}>{weeklyConsistencyStreakCurrent} weeks</Text>
+            </View>
+            <Text style={styles.streakBody}>
+              {activeDaysThisWeek >= weeklyGoal
+                ? "You hit this week's goal. Keep the habit feeling light."
+                : `${Math.max(0, weeklyGoal - activeDaysThisWeek)} more active day${
+                    Math.max(0, weeklyGoal - activeDaysThisWeek) === 1 ? "" : "s"
+                  } to hit your weekly goal.`}
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.streakTitle}>Basic streak active</Text>
+            <Text style={styles.streakBody}>
+              Your current streak is still visible. Premium adds weekly goal progress, longest streaks, active month totals, and comeback tracking.
+            </Text>
+            <View style={styles.streakPreviewRow}>
+              <Text style={styles.streakPreviewLabel}>Weekly progress</Text>
+              <Text style={styles.streakPreviewValue}>Locked</Text>
+            </View>
+            <View style={styles.streakPreviewRow}>
+              <Text style={styles.streakPreviewLabel}>Longest streak</Text>
+              <Text style={styles.streakPreviewValue}>Locked</Text>
+            </View>
+          </>
+        )}
+      </View>
+
       <View style={styles.planCard}>
         <View style={styles.planTopRow}>
           <View>
             <Text style={styles.planEyebrow}>Plan</Text>
-            <Text style={styles.planTitle}>{isPro ? "Pro Active" : "Free Plan"}</Text>
+            <Text style={styles.planTitle}>{isPremium ? "Premium Active" : "Free Plan"}</Text>
             <Text style={styles.planBody}>
-              {isPro
-                ? "Your Pro features are available on this device."
-                : "Upgrade when you want the full route, reflection, and reminder experience."}
+              {isPremium
+                ? "Your Step Outside Premium features are available on this device."
+                : "Upgrade when you want saved route maps, bonus achievements, and deeper progress insights."}
             </Text>
           </View>
           <Pressable
             onPress={() => router.push("/pro")}
             style={({ pressed }) => [styles.btn, pressed ? { opacity: 0.9 } : null]}
           >
-            <Text style={styles.btnText}>{isPro ? "Manage Pro" : "Unlock Pro"}</Text>
+            <Text style={styles.btnText}>{isPremium ? "Manage Premium" : "Unlock Premium"}</Text>
           </Pressable>
         </View>
       </View>
@@ -851,6 +903,62 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
+  },
+  streakCard: {
+    marginTop: 14,
+    width: "100%",
+    borderRadius: 18,
+    backgroundColor: "rgba(242,181,65,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(242,181,65,0.24)",
+    padding: 14,
+  },
+  streakEyebrow: {
+    color: "#8A5D09",
+    fontWeight: "900",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    fontSize: 11,
+  },
+  streakTitle: {
+    marginTop: 6,
+    color: "#0B0F0E",
+    fontWeight: "900",
+    fontSize: 18,
+  },
+  streakBody: {
+    marginTop: 8,
+    color: "rgba(11,15,14,0.66)",
+    fontWeight: "700",
+    lineHeight: 19,
+  },
+  streakRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  streakLabel: {
+    color: "rgba(11,15,14,0.66)",
+    fontWeight: "700",
+  },
+  streakValue: {
+    color: "#0B0F0E",
+    fontWeight: "900",
+  },
+  streakPreviewRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  streakPreviewLabel: {
+    color: "rgba(11,15,14,0.66)",
+    fontWeight: "700",
+  },
+  streakPreviewValue: {
+    color: "#8A5D09",
+    fontWeight: "900",
   },
   planCard: {
     marginTop: 14,

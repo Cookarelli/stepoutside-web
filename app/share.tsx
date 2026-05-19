@@ -104,7 +104,7 @@ export default function ShareScreen() {
       const nextSession = await saveSessionRouteForLater(walkId);
       if (nextSession) {
         setSession(nextSession);
-        setSaveRouteMessage("Saved for future sharing and route ideas.");
+        setSaveRouteMessage("Saved to your route history.");
         void Haptics.selectionAsync();
       }
     } finally {
@@ -150,6 +150,13 @@ export default function ShareScreen() {
           </View>
         ) : null}
 
+        {session?.source === "gps" && (!session.routePoints || session.routePoints.length < 2) ? (
+          <View style={styles.routeLockedCard}>
+            <Text style={styles.routeLockedTitle}>Route maps are a Premium feature</Text>
+            <Text style={styles.routeLockedBody}>Unlock saved GPS route maps with Step Outside Premium.</Text>
+          </View>
+        ) : null}
+
         {session?.routePoints && session.routePoints.length > 1 ? (
           <>
             <Pressable
@@ -175,10 +182,10 @@ export default function ShareScreen() {
               </Text>
             </Pressable>
             <Text style={styles.saveRouteHint}>
-              {saveRouteMessage ||
-                (Boolean(session.savedRouteAt)
-                  ? "This route is saved locally and ready for future community sharing."
-                  : "Keep this route now so we can build future sharing and curated Step Outside spots from it.")}
+                {saveRouteMessage ||
+                  (Boolean(session.savedRouteAt)
+                  ? "This route is saved in your Premium route history."
+                  : "Save this walk to keep its GPS route in your Premium history.")}
             </Text>
           </>
         ) : null}
@@ -308,6 +315,28 @@ const styles = StyleSheet.create({
     marginTop: 18,
     width: "100%",
     maxWidth: 540,
+  },
+  routeLockedCard: {
+    marginTop: 18,
+    width: "100%",
+    maxWidth: 540,
+    borderRadius: 18,
+    padding: 16,
+    backgroundColor: "rgba(255,255,255,0.62)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+  },
+  routeLockedTitle: {
+    color: "#0B0F0E",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  routeLockedBody: {
+    marginTop: 8,
+    color: "rgba(11,15,14,0.66)",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
   },
   saveRouteBtn: {
     marginTop: 14,

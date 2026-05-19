@@ -27,9 +27,12 @@ const BRAND = {
 } as const;
 
 const PRIVACY_URL = "https://stepoutside.app/privacy-policy";
-const TERMS_URL = "https://stepoutside.app/terms";
+const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const MANAGE_SUBSCRIPTIONS_URL = "https://apps.apple.com/account/subscriptions";
+const RENEWAL_DISCLOSURE =
+  "Renews automatically unless canceled at least 24 hours before the end of the current period.";
 const PRO_DESCRIPTION =
-  "Unlock premium walk and hike tracking, streaks, personal progress insights, sunrise and sunset bonuses, reflection prompts, and future Pro features.";
+  "Unlock saved GPS route maps, advanced streaks, monthly progress insights, and sunrise and sunset bonus achievements.";
 
 export default function ProScreen() {
   const router = useRouter();
@@ -83,10 +86,10 @@ export default function ProScreen() {
       const next = await purchaseProPlan(pkg.plan, pkg.rcPackage);
       setProStateLocal(next);
       Alert.alert(
-        next.isPro ? "Pro unlocked" : "Purchase complete",
+        next.isPro ? "Premium unlocked" : "Purchase complete",
         billingReady
-          ? "Your Step Outside Pro status is now synced with RevenueCat."
-          : "Preview mode used local Pro unlock. Test purchases in an iOS dev build or TestFlight."
+          ? "Your Step Outside Premium status is now synced with RevenueCat."
+          : "Preview mode used local Premium unlock. Test purchases in an iOS dev build or TestFlight."
       );
     } catch (error) {
       if (
@@ -97,7 +100,7 @@ export default function ProScreen() {
       }
 
       if (isRevenueCatError(error) && error.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
-        Alert.alert("Purchase pending", "Apple is still processing this purchase. We’ll unlock Pro as soon as it clears.");
+        Alert.alert("Purchase pending", "Apple is still processing this purchase. We’ll unlock Premium as soon as it clears.");
         return;
       }
 
@@ -113,12 +116,12 @@ export default function ProScreen() {
       const next = await restorePurchasesScaffold();
       setProStateLocal(next);
       Alert.alert(
-        next.isPro ? "Purchases restored" : "No Pro purchases found",
+        next.isPro ? "Purchases restored" : "No Premium purchases found",
         billingReady
           ? next.isPro
-            ? "Your previous Pro access is active again."
-            : "This Apple account doesn’t currently have an active Step Outside Pro entitlement."
-          : "Restore is live on native builds. In preview mode this screen only shows your saved local Pro state."
+            ? "Your previous Premium access is active again."
+            : "This Apple account doesn’t currently have an active Step Outside Premium entitlement."
+          : "Restore is live on native builds. In preview mode this screen only shows your saved local Premium state."
       );
     } catch (error) {
       Alert.alert("Restore failed", isRevenueCatError(error) ? error.message : "Please try again in a moment.");
@@ -141,7 +144,11 @@ export default function ProScreen() {
 
   const isPro = proState?.isPro ?? false;
   const activePlanLabel =
-    proState?.plan === "yearly" ? "Annual" : proState?.plan === "monthly" ? "Monthly" : proState?.plan ?? "plan";
+    proState?.plan === "yearly"
+      ? "Annual subscription"
+      : proState?.plan === "monthly"
+        ? "Monthly subscription"
+        : proState?.plan ?? "plan";
   const statusNote = (() => {
     if (catalogSource === "live") {
       return "Plans and pricing are loaded live from the App Store through RevenueCat.";
@@ -175,17 +182,19 @@ export default function ProScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.container}>
           <View style={styles.hero}>
-            <Text style={styles.eyebrow}>Step Outside Pro</Text>
+            <Text style={styles.eyebrow}>Step Outside Premium</Text>
             <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
             <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
-            <Text style={styles.heroSupport}>Billed through Apple. Cancel or manage anytime in your App Store subscriptions.</Text>
+            <Text style={styles.heroSupport}>
+              Monthly and annual subscriptions are billed through Apple using live App Store pricing.
+            </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Current status</Text>
-            <Text style={styles.cardBody}>{isPro ? `Pro active (${activePlanLabel})` : "Free plan"}</Text>
+            <Text style={styles.cardBody}>{isPro ? `Premium active (${activePlanLabel})` : "Free plan"}</Text>
             <Text style={styles.cardCaption}>{statusNote}</Text>
-            {catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
+            {__DEV__ && catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
           </View>
 
           {catalogError ? (
@@ -233,6 +242,7 @@ export default function ProScreen() {
                   <View style={styles.planTopRow}>
                     <View style={styles.planTitleWrap}>
                       <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
+                      <Text style={featured ? styles.featuredPeriod : styles.planPeriod}>{pkg.periodLabel}</Text>
                       {pkg.badge ? (
                         <View style={featured ? styles.featuredBadge : styles.planBadge}>
                           <Text style={featured ? styles.featuredBadgeText : styles.planBadgeText}>{pkg.badge}</Text>
@@ -250,8 +260,23 @@ export default function ProScreen() {
             })
           )}
 
+          <View style={styles.disclosureCard}>
+            <Text style={styles.disclosureTitle}>Subscription details</Text>
+            <Text style={styles.disclosureBody}>
+              Step Outside Premium is available as a monthly subscription or annual subscription.
+            </Text>
+            <Text style={styles.disclosureBody}>{RENEWAL_DISCLOSURE}</Text>
+            <Text style={styles.disclosureBody}>
+              Manage or cancel anytime in your Apple ID subscription settings. Restore Purchases is available below.
+            </Text>
+          </View>
+
           <Pressable style={styles.restoreBtn} onPress={() => void restore()} disabled={busyAction !== null}>
             <Text style={styles.restoreText}>{busyAction === "restore" ? "Restoring…" : "Restore purchases"}</Text>
+          </Pressable>
+
+          <Pressable style={styles.manageBtn} onPress={() => void openExternal(MANAGE_SUBSCRIPTIONS_URL, "Manage Subscription")} disabled={busyAction !== null}>
+            <Text style={styles.manageText}>Manage Subscription</Text>
           </Pressable>
 
           <View style={styles.linksRow}>
@@ -376,6 +401,8 @@ const styles = StyleSheet.create({
   planDisabled: { opacity: 0.75 },
   featuredTitle: { color: "white", fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
   planTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
+  featuredPeriod: { color: "rgba(255,255,255,0.84)", fontWeight: "800", fontSize: 13 },
+  planPeriod: { color: "rgba(11,15,14,0.72)", fontWeight: "800", fontSize: 13 },
   featuredPrice: { color: "white", fontWeight: "900", fontSize: 18, marginLeft: 12 },
   planPrice: { color: BRAND.charcoal, fontWeight: "900", fontSize: 18, marginLeft: 12 },
   featuredDetail: { marginTop: 10, color: "rgba(255,255,255,0.84)", fontWeight: "700" },
@@ -409,6 +436,17 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(11,15,14,0.16)",
   },
+  disclosureCard: {
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 14,
+    backgroundColor: "rgba(255,255,255,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.12)",
+    gap: 8,
+  },
+  disclosureTitle: { color: BRAND.charcoal, fontWeight: "900" },
+  disclosureBody: { color: "rgba(11,15,14,0.7)", fontWeight: "700", lineHeight: 20 },
   restoreBtn: {
     marginTop: 18,
     minHeight: 52,
@@ -421,6 +459,18 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
   },
   restoreText: { fontWeight: "900", color: BRAND.forest },
+  manageBtn: {
+    marginTop: 10,
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    backgroundColor: "rgba(11,15,14,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.09)",
+    paddingVertical: 12,
+  },
+  manageText: { fontWeight: "900", color: BRAND.charcoal },
   linksRow: { marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 10 },
   policyBtn: {
     minHeight: 44,

@@ -6,6 +6,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { RoutePreview } from "../src/components/RoutePreview";
 import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
+import { getPremiumStatus } from "../src/lib/pro";
+import { evaluateSolarBonus } from "../src/lib/solarBonus";
 import { addCompletedSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
 
 function minutesFromDuration(durationSec: number): number {
@@ -37,8 +39,6 @@ export default function CompleteScreen() {
     durationSec?: string;
     distanceM?: string;
     source?: string;
-    endLat?: string;
-    endLng?: string;
   }>();
 
   const startedAt = Number(params.startedAt ?? "");
@@ -46,8 +46,6 @@ export default function CompleteScreen() {
   const durationSec = Number(params.durationSec ?? "");
   const distanceM = Number(params.distanceM ?? "0");
   const source: SessionSource = params.source === "gps" ? "gps" : "timer";
-  const endLat = Number(params.endLat ?? "");
-  const endLng = Number(params.endLng ?? "");
 
   const valid =
     Number.isFinite(startedAt) &&
@@ -67,6 +65,7 @@ export default function CompleteScreen() {
   const [errorText, setErrorText] = useState("");
   const [sunriseBonus, setSunriseBonus] = useState(false);
   const [sunsetBonus, setSunsetBonus] = useState(false);
+  const [lockedBonusTeaser, setLockedBonusTeaser] = useState(false);
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
 
   const lastSaveKeyRef = useRef<string | null>(null);
@@ -102,41 +101,18 @@ export default function CompleteScreen() {
 
         const id = `${startedAt}-${endedAt}`;
         const walkDraft = await getCompletedWalkDraft();
+        const draftRoutePoints = walkDraft?.routePoints ?? [];
+        const premiumStatus = await getPremiumStatus();
+        const solarBonus = await evaluateSolarBonus({
+          startedAt,
+          startPoint: draftRoutePoints[0] ?? null,
+          isPremium: premiumStatus.isPremium,
+        });
 
-        let earnedSunriseBonus = false;
-        let earnedSunsetBonus = false;
-
-        if (Number.isFinite(endLat) && Number.isFinite(endLng)) {
-          try {
-            const day = new Date(endedAt).toISOString().slice(0, 10);
-            const wx = await fetch(
-              `https://api.open-meteo.com/v1/forecast?latitude=${endLat}&longitude=${endLng}&daily=sunrise,sunset&timezone=auto&start_date=${day}&end_date=${day}`
-            );
-            if (wx.ok) {
-              const data = await wx.json();
-              const sunriseIso = data?.daily?.sunrise?.[0] as string | undefined;
-              const sunsetIso = data?.daily?.sunset?.[0] as string | undefined;
-
-              const endMs = endedAt;
-              const windowMs = 45 * 60 * 1000;
-
-              if (sunriseIso) {
-                const sr = new Date(sunriseIso).getTime();
-                earnedSunriseBonus = Math.abs(endMs - sr) <= windowMs;
-              }
-              if (sunsetIso) {
-                const ss = new Date(sunsetIso).getTime();
-                earnedSunsetBonus = Math.abs(endMs - ss) <= windowMs;
-              }
-            }
-          } catch {
-            // bonus check best effort only
-          }
-        }
-
-        setSunriseBonus(earnedSunriseBonus);
-        setSunsetBonus(earnedSunsetBonus);
-        setRoutePoints(walkDraft?.routePoints ?? []);
+        setSunriseBonus(solarBonus.isSunriseBonus);
+        setSunsetBonus(solarBonus.isSunsetBonus);
+        setLockedBonusTeaser(Boolean(solarBonus.bonusType) && !premiumStatus.isPremium);
+        setRoutePoints(draftRoutePoints);
 
         const result = await addCompletedSession({
           id,
@@ -144,10 +120,17 @@ export default function CompleteScreen() {
           endedAt,
           durationSec,
           source,
+          title: source === "gps" ? "Tracked outdoor walk" : "Outdoor walk",
+          activityType: "walk",
           distanceM: Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0,
-          routePoints: walkDraft?.routePoints ?? [],
-          sunriseBonus: earnedSunriseBonus,
-          sunsetBonus: earnedSunsetBonus,
+          routePoints: draftRoutePoints,
+          isSunriseBonus: solarBonus.isSunriseBonus,
+          isSunsetBonus: solarBonus.isSunsetBonus,
+          bonusType: solarBonus.bonusType,
+          bonusLabel: solarBonus.bonusLabel,
+          bonusPoints: solarBonus.bonusPoints,
+          sunriseBonus: solarBonus.isSunriseBonus,
+          sunsetBonus: solarBonus.isSunsetBonus,
         });
 
         await clearCompletedWalkDraft();
@@ -246,8 +229,11 @@ export default function CompleteScreen() {
             {!saving && routePoints.length > 1 ? (
               <Text style={styles.routeNote}>Route captured for this walk.</Text>
             ) : null}
-            {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise bonus earned</Text> : null}
-            {sunsetBonus ? <Text style={styles.bonus}>🌅 Sunset bonus earned</Text> : null}
+            {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise Bonus earned</Text> : null}
+            {sunsetBonus ? <Text style={styles.bonus}>🌅 Sunset Bonus earned</Text> : null}
+            {lockedBonusTeaser ? (
+              <Text style={styles.bonusTeaser}>Premium unlocks sunrise and sunset bonus achievements.</Text>
+            ) : null}
           </>
         ) : (
           <Text style={styles.sub}>No session found.</Text>
@@ -328,6 +314,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     color: "#255E36",
+  },
+  bonusTeaser: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "700",
+    color: "rgba(11,15,14,0.7)",
+    textAlign: "center",
   },
   routeNote: {
     marginTop: 8,
