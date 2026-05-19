@@ -5,7 +5,8 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BrandBadge } from "../src/components/BrandBadge";
-import { getProState } from "../src/lib/pro";
+import { PremiumFeatureGate } from "../src/components/PremiumFeatureGate";
+import { buildMonthlyActivityStats } from "../src/lib/monthlyStats";
 import { dayKeyLocal, EMPTY_SUMMARY, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
 
 function fmtTime(ts: number): string {
@@ -34,6 +35,32 @@ function formatMinutesLabel(minutes: number): string {
   return hours >= 10 || Number.isInteger(hours) ? `${Math.round(hours)} hr` : `${hours.toFixed(1)} hr`;
 }
 
+function formatDistanceMiles(distanceM: number): string {
+  if (!Number.isFinite(distanceM) || distanceM <= 0) return "0.00 mi";
+  return `${(distanceM / 1609.344).toFixed(2)} mi`;
+}
+
+function formatDurationLabel(durationSec: number): string {
+  if (durationSec <= 0) return "0 min";
+  const minutes = Math.round(durationSec / 60);
+  return formatMinutesLabel(minutes);
+}
+
+function formatDayKeyLabel(dayKey: string | null): string {
+  if (!dayKey) return "No standout day yet";
+  const [year, month, day] = dayKey.split("-").map((value) => Number(value));
+  return new Date(year, (month ?? 1) - 1, day ?? 1).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatDelta(value: number, formatter: (input: number) => string): string {
+  if (!Number.isFinite(value) || value === 0) return "Even with last month";
+  const prefix = value > 0 ? "+" : "-";
+  return `${prefix}${formatter(Math.abs(value))}`;
+}
+
 export default function StatsScreen() {
   const router = useRouter();
 
@@ -54,21 +81,18 @@ export default function StatsScreen() {
   const [summary, setSummary] = useState<SummaryStats | null>(null);
   const [sessions, setSessions] = useState<OutsideSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isPro, setIsPro] = useState(false);
 
   const last7 = useMemo(() => lastNDaysKeys(7), []);
 
   const load = async () => {
     try {
       setLoading(true);
-      const [s, sess, pro] = await Promise.all([getSummary(), getSessions(), getProState()]);
+      const [s, sess] = await Promise.all([getSummary(), getSessions()]);
       setSummary(s);
       setSessions(sess);
-      setIsPro(pro.isPro);
     } catch {
       setSummary(EMPTY_SUMMARY);
       setSessions([]);
-      setIsPro(false);
     } finally {
       setLoading(false);
     }
@@ -86,8 +110,15 @@ export default function StatsScreen() {
 
   const totalMinutes = summary?.totalMinutes ?? 0;
   const totalSessions = summary?.totalSessions ?? 0;
-  const currentStreak = summary?.currentStreakDays ?? 0;
-  const bestStreak = summary?.bestStreakDays ?? 0;
+  const currentStreak = summary?.currentStreak ?? summary?.currentStreakDays ?? 0;
+  const bestStreak = summary?.longestStreak ?? summary?.bestStreakDays ?? 0;
+  const activeDaysThisWeek = summary?.activeDaysThisWeek ?? 0;
+  const activeDaysThisMonth = summary?.activeDaysThisMonth ?? 0;
+  const weeklyGoal = summary?.weeklyGoal ?? 4;
+  const monthlyGoal = summary?.monthlyGoal ?? 16;
+  const weeklyConsistencyStreakCurrent = summary?.weeklyConsistencyStreakCurrent ?? 0;
+  const comebackStreakCount = summary?.comebackStreakCount ?? 0;
+  const streakFreezeCount = summary?.streakFreezeCount ?? 0;
   const sunriseBonusCount = summary?.sunriseBonusCount ?? 0;
   const sunsetBonusCount = summary?.sunsetBonusCount ?? 0;
   const goldenHourStreakCurrent = summary?.goldenHourStreakCurrent ?? 0;
@@ -118,6 +149,22 @@ export default function StatsScreen() {
     return count;
   }, [summary]);
 
+  const weeklyGoalProgress = useMemo(
+    () => `${Math.min(activeDaysThisWeek, weeklyGoal)}/${weeklyGoal} days`,
+    [activeDaysThisWeek, weeklyGoal]
+  );
+
+  const premiumStreakMessage = useMemo(() => {
+    if (activeDaysThisWeek >= weeklyGoal) {
+      return "Weekly goal complete. Keep your streak calm and steady.";
+    }
+    const remaining = Math.max(0, weeklyGoal - activeDaysThisWeek);
+    if (currentStreak === 0) {
+      return "A fresh streak starts with one walk. Your weekly goal is still within reach.";
+    }
+    return `${remaining} more active day${remaining === 1 ? "" : "s"} to hit this week's goal.`;
+  }, [activeDaysThisWeek, currentStreak, weeklyGoal]);
+
   const goldenHourInsight = useMemo(() => {
     if (goldenHourSessionCount === 0) {
       return "Your first sunrise or sunset walk starts this rhythm.";
@@ -130,6 +177,7 @@ export default function StatsScreen() {
     }
     return `Best Golden Hour run so far: ${goldenHourStreakBest} day${goldenHourStreakBest === 1 ? "" : "s"}.`;
   }, [dualResetDaysCount, goldenHourSessionCount, goldenHourStreakBest, goldenHourStreakCurrent]);
+  const monthlyStats = useMemo(() => buildMonthlyActivityStats(sessions, new Date()), [sessions]);
   const hasAnyStats = totalSessions > 0;
 
   return (
@@ -243,6 +291,119 @@ export default function StatsScreen() {
             )}
           </View>
 
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Monthly Progress</Text>
+          <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
+
+          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
+            <PremiumFeatureGate
+              title="Monthly progress insights"
+              body="Unlock monthly progress insights with Step Outside Premium."
+              ctaLabel="Unlock Premium"
+            >
+              <>
+                <Text style={[styles.monthTitle, { color: t.text }]}>{monthlyStats.monthLabel}</Text>
+                <Text style={[styles.monthBody, { color: t.sub }]}>
+                  {monthlyStats.totalActivities === 0
+                    ? "No walks or hikes logged this month yet."
+                    : `${monthlyStats.totalActivities} total activities • ${monthlyStats.walkCount} walks • ${monthlyStats.hikeCount} hikes`}
+                </Text>
+
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Total distance</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{formatDistanceMiles(monthlyStats.totalDistanceM)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Total duration</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{formatDurationLabel(monthlyStats.totalDurationSec)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Average distance</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{formatDistanceMiles(monthlyStats.averageDistanceM)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Best day</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{formatDayKeyLabel(monthlyStats.bestDayKey)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Golden Hour bonuses</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>
+                    {monthlyStats.sunriseBonusCount + monthlyStats.sunsetBonusCount}
+                  </Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Active days this month</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{monthlyStats.activeDays}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Longest activity</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>
+                    {monthlyStats.longestActivity ? formatDurationLabel(monthlyStats.longestActivity.durationSec) : "Not yet"}
+                  </Text>
+                </View>
+
+                {monthlyStats.comparison ? (
+                  <View style={styles.monthComparisonCard}>
+                    <Text style={[styles.monthComparisonTitle, { color: t.text }]}>
+                      Compared with {monthlyStats.comparison.previousMonthLabel}
+                    </Text>
+                    <Text style={[styles.monthComparisonBody, { color: t.sub }]}>
+                      Activities {formatDelta(monthlyStats.comparison.activityDelta, (value) => `${value}`)} • Distance{" "}
+                      {formatDelta(monthlyStats.comparison.distanceDeltaM, formatDistanceMiles)} • Time{" "}
+                      {formatDelta(monthlyStats.comparison.durationDeltaSec, formatDurationLabel)}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.insightText, { color: t.sub }]}>
+                    Last month’s comparison will appear once previous month activity exists.
+                  </Text>
+                )}
+              </>
+            </PremiumFeatureGate>
+          </View>
+
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Premium Streaks</Text>
+          <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
+
+          <View style={[styles.panel, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
+            <PremiumFeatureGate
+              title="Premium streaks"
+              body="Unlock Premium for weekly consistency streaks, active day totals, comeback tracking, and goal progress."
+              ctaLabel="Unlock Premium"
+            >
+              <>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Current streak</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{currentStreak} days</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Longest streak</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{bestStreak} days</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Weekly consistency</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{weeklyConsistencyStreakCurrent} weeks</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Weekly progress</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{weeklyGoalProgress}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Active days this month</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{activeDaysThisMonth}/{monthlyGoal}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Comeback streaks</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{comebackStreakCount}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, { color: t.sub }]}>Streak freeze</Text>
+                  <Text style={[styles.rowRight, { color: t.text }]}>{streakFreezeCount} saved for later</Text>
+                </View>
+                <Text style={[styles.insightText, { color: t.sub }]}>{premiumStreakMessage}</Text>
+              </>
+            </PremiumFeatureGate>
+          </View>
+
           <Text style={[styles.sectionTitle, { color: t.text }]}>Golden Hours</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
@@ -256,7 +417,11 @@ export default function StatsScreen() {
               <Text style={[styles.rowRight, { color: t.text }]}>{sunsetBonusCount}</Text>
             </View>
 
-            {isPro ? (
+            <PremiumFeatureGate
+              title="Premium insights"
+              body="Unlock Premium for Golden Hour streaks, dual reset tracking, and deeper rhythm insights."
+              ctaLabel="Unlock Premium"
+            >
               <>
                 <View style={styles.row}>
                   <Text style={[styles.rowLeft, { color: t.sub }]}>Golden Hour streak</Text>
@@ -284,16 +449,7 @@ export default function StatsScreen() {
                 </View>
                 <Text style={[styles.insightText, { color: t.sub }]}>{goldenHourInsight}</Text>
               </>
-            ) : (
-              <View>
-                <Text style={[styles.muted, { color: t.sub }]}>
-                  Unlock Pro for Golden Hour streaks, dual reset tracking, and deeper rhythm insights.
-                </Text>
-                <Pressable style={styles.unlockBtn} onPress={() => router.push("/pro")}>
-                  <Text style={styles.unlockBtnText}>Unlock Pro</Text>
-                </Pressable>
-              </View>
-            )}
+            </PremiumFeatureGate>
           </View>
 
           <Text style={[styles.sectionTitle, { color: t.text }]}>Recent sessions</Text>
@@ -461,6 +617,32 @@ const styles = StyleSheet.create({
   emptyPanel: { gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: "900" },
   emptyBody: { fontWeight: "700", lineHeight: 20 },
+  monthTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  monthBody: {
+    marginTop: 6,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  monthComparisonCard: {
+    marginTop: 12,
+    borderRadius: 16,
+    padding: 12,
+    backgroundColor: "rgba(37,94,54,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.12)",
+  },
+  monthComparisonTitle: {
+    fontWeight: "900",
+    fontSize: 14,
+  },
+  monthComparisonBody: {
+    marginTop: 6,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
   insightText: {
     marginTop: 10,
     fontWeight: "700",

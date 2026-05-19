@@ -1,8 +1,16 @@
 import React from "react";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 const PRIVACY_URL = "https://stepoutside.app/privacy-policy";
-const TERMS_URL = "https://stepoutside.app/terms";
+const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+
+async function openExternal(url: string, label: string) {
+  try {
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert("Link unavailable", `We couldn't open the ${label} right now.`);
+  }
+}
 
 export default function ExploreScreen() {
   return (
@@ -16,7 +24,7 @@ export default function ExploreScreen() {
       <View style={styles.actions}>
         <Pressable
           onPress={() => {
-            void Linking.openURL(PRIVACY_URL);
+            void openExternal(PRIVACY_URL, "Privacy Policy");
           }}
           style={({ pressed }) => [styles.button, pressed ? { opacity: 0.9 } : null]}
         >
@@ -25,7 +33,7 @@ export default function ExploreScreen() {
 
         <Pressable
           onPress={() => {
-            void Linking.openURL(TERMS_URL);
+            void openExternal(TERMS_URL, "Terms of Use");
           }}
           style={({ pressed }) => [styles.secondaryButton, pressed ? { opacity: 0.9 } : null]}
         >
@@ -33,7 +41,7 @@ export default function ExploreScreen() {
         </Pressable>
       </View>
 
-      <Text style={styles.caption}>Use your live stepoutside.app privacy and terms pages here before submission.</Text>
+      <Text style={styles.caption}>These live links match the paywall language Apple reviews for subscriptions.</Text>
     </View>
   );
 }

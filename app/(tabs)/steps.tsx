@@ -6,9 +6,9 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { usePremiumAccess } from "../../hooks/use-premium-access";
 import { RoutePreview } from "../../src/components/RoutePreview";
-import { getProState } from "../../src/lib/pro";
-import { getSavedRouteSessions, type OutsideSession } from "../../src/lib/store";
+import { getSavedRouteSessions, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../../src/lib/store";
 import {
   cacheRouteSuggestions,
   getFallbackRouteSuggestions,
@@ -188,9 +188,9 @@ export default function StepsTab() {
   const [savedRouteSessions, setSavedRouteSessions] = useState<OutsideSession[]>([]);
   const [showAllSaved, setShowAllSaved] = useState(false);
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [isPro, setIsPro] = useState(false);
   const [zipCode, setZipCode] = useState("");
   const [zipHint, setZipHint] = useState("Enter a ZIP code to browse short park loops and indoor backup walks.");
+  const { isPremium } = usePremiumAccess();
 
   useEffect(() => {
     userCoordsRef.current = userCoords;
@@ -210,7 +210,7 @@ export default function StepsTab() {
     () => (showAllSaved ? sortedSavedWalks : sortedSavedWalks.slice(0, 3)),
     [showAllSaved, sortedSavedWalks]
   );
-  const freeSaveLimitReached = useMemo(() => !isPro && savedWalks.length >= 3, [isPro, savedWalks.length]);
+  const freeSaveLimitReached = useMemo(() => !isPremium && savedWalks.length >= 3, [isPremium, savedWalks.length]);
 
   const loadSavedWalks = useCallback(async () => {
     try {
@@ -266,16 +266,11 @@ export default function StepsTab() {
     await AsyncStorage.setItem(ZIP_CODE_KEY, zip);
   }, []);
 
-  const loadSettings = useCallback(async () => {
-    const pro = await getProState();
-    setIsPro(pro.isPro);
-  }, []);
-
   const toggleSaveWalk = useCallback(
     async (walk: TrailSuggestion) => {
       setSavedWalks((prev) => {
         const exists = prev.some((w) => w.id === walk.id);
-        if (!exists && !isPro && prev.length >= 3) {
+        if (!exists && !isPremium && prev.length >= 3) {
           return prev;
         }
         const next = exists ? prev.filter((w) => w.id !== walk.id) : [walk, ...prev];
@@ -283,7 +278,7 @@ export default function StepsTab() {
         return next;
       });
     },
-    [isPro, persistSavedWalks]
+    [isPremium, persistSavedWalks]
   );
 
   const removeSavedWalk = useCallback(
@@ -485,7 +480,7 @@ export default function StepsTab() {
 
     void (async () => {
       try {
-        await Promise.all([loadSavedWalks(), loadSavedZip(), loadSavedRouteSessions(), loadSettings(), loadCachedSuggestions()]);
+        await Promise.all([loadSavedWalks(), loadSavedZip(), loadSavedRouteSessions(), loadCachedSuggestions()]);
         if (!cancelled) {
           setBootstrapped(true);
           void loadNearby(false);
@@ -500,12 +495,12 @@ export default function StepsTab() {
     return () => {
       cancelled = true;
     };
-  }, [loadCachedSuggestions, loadNearby, loadSavedRouteSessions, loadSavedWalks, loadSavedZip, loadSettings]);
+  }, [loadCachedSuggestions, loadNearby, loadSavedRouteSessions, loadSavedWalks, loadSavedZip]);
 
   useFocusEffect(
     useCallback(() => {
-      void Promise.all([loadSettings(), loadSavedRouteSessions()]);
-    }, [loadSavedRouteSessions, loadSettings])
+      void Promise.all([loadSavedRouteSessions()]);
+    }, [loadSavedRouteSessions])
   );
 
   return (
@@ -553,7 +548,7 @@ export default function StepsTab() {
           <View style={styles.savedRoutesWrap}>
             <View style={styles.savedHeaderRow}>
               <Text style={styles.savedRoutesTitle}>Your Saved Routes</Text>
-              <Text style={styles.savedRoutesMeta}>For future sharing</Text>
+              <Text style={styles.savedRoutesMeta}>Premium history</Text>
             </View>
 
             {savedRouteSessions.map((session) => (
@@ -580,12 +575,33 @@ export default function StepsTab() {
                   {session.savedRouteAt ? ` • saved ${fmtSavedRouteDate(session.savedRouteAt)}` : ""}
                 </Text>
 
+                {hasSunriseBonus(session) || hasSunsetBonus(session) ? (
+                  <View style={styles.savedRouteMetaRow}>
+                    {hasSunriseBonus(session) ? (
+                      <View style={styles.savedRouteMetaChip}>
+                        <Text style={styles.savedRouteMetaChipText}>Sunrise Bonus</Text>
+                      </View>
+                    ) : null}
+                    {hasSunsetBonus(session) ? (
+                      <View style={styles.savedRouteMetaChip}>
+                        <Text style={styles.savedRouteMetaChipText}>Sunset Bonus</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {session.bonusType && !hasSunriseBonus(session) && !hasSunsetBonus(session) ? (
+                  <Text style={styles.savedRouteLockedText}>
+                    Premium unlocks sunrise and sunset bonus achievements.
+                  </Text>
+                ) : null}
+
                 {session.routePoints && session.routePoints.length > 1 ? (
                   <View style={styles.savedRoutePreviewWrap}>
                     <RoutePreview
                       points={session.routePoints}
                       title="Saved route"
-                      subtitle="Ready for future community sharing"
+                      subtitle="Saved to your Premium route history"
                     />
                   </View>
                 ) : null}
@@ -596,9 +612,9 @@ export default function StepsTab() {
 
         {freeSaveLimitReached ? (
           <View style={styles.proNudge}>
-            <Text style={styles.proNudgeText}>Free plan saves up to 3 walks. Upgrade to Pro for unlimited saved walks.</Text>
+            <Text style={styles.proNudgeText}>Free plan saves up to 3 walks. Upgrade to Premium for unlimited saved walks.</Text>
             <Pressable style={styles.proNudgeBtn} onPress={() => router.push("/pro")}>
-              <Text style={styles.proNudgeBtnText}>Unlock Pro</Text>
+              <Text style={styles.proNudgeBtnText}>Unlock Premium</Text>
             </Pressable>
           </View>
         ) : null}
@@ -921,6 +937,32 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: "rgba(11,15,14,0.66)",
     fontSize: 12,
+    fontWeight: "700",
+  },
+  savedRouteMetaRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  savedRouteMetaChip: {
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: "rgba(37,94,54,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.16)",
+  },
+  savedRouteMetaChipText: {
+    color: BRAND.forest,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  savedRouteLockedText: {
+    marginTop: 10,
+    color: "rgba(11,15,14,0.66)",
+    fontSize: 12,
+    lineHeight: 18,
     fontWeight: "700",
   },
   savedRoutePreviewWrap: {

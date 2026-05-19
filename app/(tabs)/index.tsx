@@ -13,8 +13,8 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { usePremiumAccess } from "../../hooks/use-premium-access";
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
-import { getProState } from "../../src/lib/pro";
 import {
   cacheRouteSuggestions,
   getRouteSuggestionsByZip,
@@ -235,26 +235,38 @@ export default function HomeTab() {
     route: null,
     sourceLine: "Looking for a nearby reset…",
   });
-  const [isPro, setIsPro] = useState(false);
   const [loadingContext, setLoadingContext] = useState(true);
+  const { isPremium, isLoading: premiumLoading } = usePremiumAccess();
 
   const now = new Date();
   const todayKey = dayKeyLocal(now);
   const todayMinutes = summary.daysCompleted?.[todayKey] ?? 0;
+  const currentStreak = summary.currentStreak ?? summary.currentStreakDays ?? 0;
+  const longestStreak = summary.longestStreak ?? summary.bestStreakDays ?? 0;
+  const activeDaysThisWeek = summary.activeDaysThisWeek ?? 0;
+  const activeDaysThisMonth = summary.activeDaysThisMonth ?? 0;
+  const weeklyGoal = summary.weeklyGoal ?? 4;
+  const monthlyGoal = summary.monthlyGoal ?? 16;
+  const weeklyConsistencyStreakCurrent = summary.weeklyConsistencyStreakCurrent ?? 0;
 
   const greeting = getGreeting(now);
   const dayLabel = formatDayLabel(now);
   const microcopy = pickMicrocopy(now);
   const statusLine = buildStatusLine(todayMinutes, weather, now);
+  const weeklyProgressLabel = `${Math.min(activeDaysThisWeek, weeklyGoal)}/${weeklyGoal} this week`;
+  const weeklyGoalRemaining = Math.max(0, weeklyGoal - activeDaysThisWeek);
+  const premiumStreakMessage =
+    activeDaysThisWeek >= weeklyGoal
+      ? "Weekly goal complete. Keep the rhythm going."
+      : `${weeklyGoalRemaining} more active day${weeklyGoalRemaining === 1 ? "" : "s"} to hit your weekly goal.`;
 
   const loadHome = useCallback(async () => {
     setLoadingContext(true);
 
-    const [summaryResult, proResult] = await Promise.allSettled([getSummary(), getProState()]);
+    const [summaryResult] = await Promise.allSettled([getSummary()]);
 
     setSummary(summaryResult.status === "fulfilled" ? summaryResult.value : EMPTY_SUMMARY);
     setDailySpark(getDailySpark(new Date()));
-    setIsPro(proResult.status === "fulfilled" ? proResult.value.isPro : false);
 
     let nextWeather: WeatherSnapshot | null = null;
     let nextReset: FeaturedReset | null = null;
@@ -375,10 +387,8 @@ export default function HomeTab() {
           <View style={styles.progressGrid}>
             <View style={styles.statCardOnGreen}>
               <Text style={styles.statLabelOnGreen}>Streak</Text>
-              <Text style={styles.statValueOnGreen}>{summary.currentStreakDays}</Text>
-              <Text style={styles.statMetaOnGreen}>
-                day{summary.currentStreakDays === 1 ? "" : "s"}
-              </Text>
+              <Text style={styles.statValueOnGreen}>{currentStreak}</Text>
+              <Text style={styles.statMetaOnGreen}>day{currentStreak === 1 ? "" : "s"}</Text>
             </View>
 
             <View style={styles.statCardOnGreen}>
@@ -399,6 +409,47 @@ export default function HomeTab() {
               <Text style={styles.statMetaOnGreen}>golden resets</Text>
             </View>
           </View>
+
+          {isPremium && !premiumLoading ? (
+            <View style={styles.premiumStreakCard}>
+              <Text style={styles.premiumStreakEyebrow}>Premium Streaks</Text>
+              <View style={styles.premiumStreakRow}>
+                <Text style={styles.premiumStreakLabel}>Longest streak</Text>
+                <Text style={styles.premiumStreakValue}>{longestStreak} days</Text>
+              </View>
+              <View style={styles.premiumStreakRow}>
+                <Text style={styles.premiumStreakLabel}>Weekly progress</Text>
+                <Text style={styles.premiumStreakValue}>{weeklyProgressLabel}</Text>
+              </View>
+              <View style={styles.premiumStreakRow}>
+                <Text style={styles.premiumStreakLabel}>Active days this month</Text>
+                <Text style={styles.premiumStreakValue}>{activeDaysThisMonth}/{monthlyGoal}</Text>
+              </View>
+              <View style={styles.premiumStreakRow}>
+                <Text style={styles.premiumStreakLabel}>Weekly consistency</Text>
+                <Text style={styles.premiumStreakValue}>{weeklyConsistencyStreakCurrent} weeks</Text>
+              </View>
+              <Text style={styles.premiumStreakBody}>{premiumStreakMessage}</Text>
+            </View>
+          ) : null}
+
+          {!isPremium && !premiumLoading ? (
+            <View style={styles.premiumPreviewCard}>
+              <Text style={styles.premiumPreviewEyebrow}>Premium Streaks</Text>
+              <Text style={styles.premiumPreviewTitle}>See the deeper pattern.</Text>
+              <Text style={styles.premiumPreviewBody}>
+                Unlock weekly goal progress, longest streaks, active month totals, and comeback tracking.
+              </Text>
+              <View style={styles.premiumPreviewRow}>
+                <Text style={styles.premiumPreviewLabel}>Weekly progress</Text>
+                <Text style={styles.premiumPreviewPlaceholder}>Locked</Text>
+              </View>
+              <View style={styles.premiumPreviewRow}>
+                <Text style={styles.premiumPreviewLabel}>Longest streak</Text>
+                <Text style={styles.premiumPreviewPlaceholder}>Locked</Text>
+              </View>
+            </View>
+          ) : null}
         </View>
 
         {dailySpark ? (
@@ -460,9 +511,9 @@ export default function HomeTab() {
           )}
         </View>
 
-        {!isPro ? (
+        {!isPremium && !premiumLoading ? (
           <View style={styles.proCard}>
-            <Text style={styles.cardEyebrow}>Step Outside Pro</Text>
+            <Text style={styles.cardEyebrow}>Step Outside Premium</Text>
             <Text style={styles.proTitle}>Keep your reset close.</Text>
             <Text style={styles.proBody}>
               Unlock the full version for a steadier rhythm, smarter route support, and a more
@@ -473,7 +524,7 @@ export default function HomeTab() {
               style={styles.proButton}
               onPress={() => router.push("/pro")}
             >
-              <Text style={styles.proButtonText}>EXPLORE PRO</Text>
+              <Text style={styles.proButtonText}>EXPLORE PREMIUM</Text>
             </Pressable>
           </View>
         ) : null}
@@ -746,6 +797,89 @@ const styles = StyleSheet.create({
     color: "rgba(248,244,238,0.72)",
     fontSize: 12,
     fontWeight: "700",
+  },
+  premiumStreakCard: {
+    marginTop: 14,
+    borderRadius: 20,
+    padding: 16,
+    backgroundColor: "rgba(248,244,238,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.16)",
+  },
+  premiumStreakEyebrow: {
+    color: BRAND.sunrise,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  premiumStreakRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  premiumStreakLabel: {
+    color: "rgba(248,244,238,0.72)",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  premiumStreakValue: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  premiumStreakBody: {
+    marginTop: 12,
+    color: "rgba(248,244,238,0.82)",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  premiumPreviewCard: {
+    marginTop: 14,
+    borderRadius: 20,
+    padding: 16,
+    backgroundColor: "rgba(248,244,238,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.14)",
+  },
+  premiumPreviewEyebrow: {
+    color: BRAND.sunrise,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  premiumPreviewTitle: {
+    marginTop: 8,
+    color: "#FFFFFF",
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: "900",
+  },
+  premiumPreviewBody: {
+    marginTop: 8,
+    color: "rgba(248,244,238,0.76)",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  premiumPreviewRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  premiumPreviewLabel: {
+    color: "rgba(248,244,238,0.72)",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  premiumPreviewPlaceholder: {
+    color: BRAND.sunrise,
+    fontSize: 13,
+    fontWeight: "900",
   },
   sparkCard: {
     borderRadius: 24,

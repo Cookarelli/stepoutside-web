@@ -18,6 +18,7 @@ export type ProState = {
 export type ProPaywallPackage = {
   plan: ProPlan;
   title: string;
+  periodLabel: string;
   priceLabel: string;
   detail: string;
   badge: string | null;
@@ -33,6 +34,12 @@ export type ProPaywallCatalog = {
   errorMessage: string | null;
 };
 
+export type PremiumStatus = {
+  isPremium: boolean;
+  customerInfo: CustomerInfo | null;
+  error: Error | null;
+};
+
 export const PRO_PRODUCT_IDS = {
   monthly: "stepoutside_pro_monthly",
   yearly: "stepoutside_pro_yearly",
@@ -43,6 +50,8 @@ const PAYWALL_PLANS: ProPlan[] = ["yearly", "monthly"];
 
 const KEY_PRO_STATE = "@stepoutside/proState";
 const ENTITLEMENT_ID = "pro";
+// If no entitlement identifier is configured in RevenueCat, fall back to "premium".
+export const PREMIUM_ENTITLEMENT_ID = ENTITLEMENT_ID || "premium";
 
 const DEFAULT_PRO_STATE: ProState = {
   isPro: false,
@@ -64,7 +73,7 @@ function derivePlan(productId: string | null): ProPlan | null {
 }
 
 function mapCustomerInfoToPro(info: CustomerInfo): ProState {
-  const entitlement = info.entitlements.active[ENTITLEMENT_ID];
+  const entitlement = info.entitlements.active[PREMIUM_ENTITLEMENT_ID];
   const productId = entitlement?.productIdentifier ?? null;
   return {
     isPro: Boolean(entitlement),
@@ -77,6 +86,10 @@ function mapCustomerInfoToPro(info: CustomerInfo): ProState {
 async function persist(next: ProState): Promise<ProState> {
   await AsyncStorage.setItem(KEY_PRO_STATE, JSON.stringify(next));
   return next;
+}
+
+function normalizeError(error: unknown, fallback: string): Error {
+  return error instanceof Error ? error : new Error(fallback);
 }
 
 function isExpoGo(): boolean {
@@ -213,6 +226,37 @@ export async function refreshProState(): Promise<ProState> {
   }
 }
 
+export async function getPremiumStatus(): Promise<PremiumStatus> {
+  try {
+    const ready = await initRevenueCat();
+    if (!ready) {
+      const cached = await getProState();
+      return {
+        isPremium: cached.isPro,
+        customerInfo: null,
+        error: null,
+      };
+    }
+
+    const customerInfo = await Purchases.getCustomerInfo();
+    const next = mapCustomerInfoToPro(customerInfo);
+    await persist(next);
+
+    return {
+      isPremium: next.isPro,
+      customerInfo,
+      error: null,
+    };
+  } catch (error) {
+    const cached = await getProState();
+    return {
+      isPremium: cached.isPro,
+      customerInfo: null,
+      error: normalizeError(error, "We couldn't confirm Premium access right now."),
+    };
+  }
+}
+
 export async function setProState(next: ProState): Promise<void> {
   await persist(next);
 }
@@ -261,9 +305,10 @@ function buildLivePaywallPackage(
   if (plan === "monthly") {
     return {
       plan,
-      title: "Step Outside Pro Monthly",
-      priceLabel: product.priceString,
-      detail: "Billed monthly",
+      title: "Step Outside Premium",
+      periodLabel: "Monthly subscription",
+      priceLabel: product.priceString || "$X.XX/month",
+      detail: "Billed monthly through Apple.",
       badge: null,
       productId: product.identifier,
       rcPackage,
@@ -275,9 +320,10 @@ function buildLivePaywallPackage(
 
     return {
       plan,
-      title: "Step Outside Pro Annual",
-      priceLabel: product.priceString,
-      detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually` : "Billed annually",
+      title: "Step Outside Premium",
+      periodLabel: "Annual subscription",
+      priceLabel: product.priceString || "$X.XX/year",
+      detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually.` : "Billed annually through Apple.",
       badge: "Best Value",
       productId: product.identifier,
       rcPackage,
@@ -287,7 +333,8 @@ function buildLivePaywallPackage(
   return {
     plan,
     title: "Lifetime",
-    priceLabel: product.priceString,
+    periodLabel: "One-time purchase",
+    priceLabel: product.priceString || "$X.XX",
     detail: "one-time purchase",
     badge: "Launch",
     productId: product.identifier,
