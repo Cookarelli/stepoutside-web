@@ -40,7 +40,7 @@ function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
 }
 
 function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
-  const sampled = samplePoints(points, 48);
+  const sampled = samplePoints(points, 32);
   const lats = sampled.map((point) => point.lat);
   const lngs = sampled.map((point) => point.lng);
 
@@ -67,6 +67,44 @@ function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
       isEnd: index === sampled.length - 1,
     };
   });
+}
+
+function smoothPreviewPoints(points: PreviewPoint[], passes = 2): PreviewPoint[] {
+  if (points.length < 3) return points;
+
+  let next = points;
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    const smoothed: PreviewPoint[] = [next[0]];
+
+    for (let index = 0; index < next.length - 1; index += 1) {
+      const current = next[index];
+      const following = next[index + 1];
+      if (!current || !following) continue;
+
+      smoothed.push({
+        x: current.x * 0.75 + following.x * 0.25,
+        y: current.y * 0.75 + following.y * 0.25,
+      });
+      smoothed.push({
+        x: current.x * 0.25 + following.x * 0.75,
+        y: current.y * 0.25 + following.y * 0.75,
+      });
+    }
+
+    const last = next[next.length - 1];
+    if (last) {
+      smoothed.push({ ...last });
+    }
+
+    next = smoothed.map((point, index) => ({
+      ...point,
+      isStart: index === 0,
+      isEnd: index === smoothed.length - 1,
+    }));
+  }
+
+  return next;
 }
 
 function buildSegments(points: PreviewPoint[]): PreviewSegment[] {
@@ -110,7 +148,7 @@ function describeSignal(points: RoutePoint[]): string {
 export function RoutePreview({ points, title = "Your route", subtitle = "Captured from this walk" }: RoutePreviewProps) {
   const previewPoints = useMemo(() => {
     if (points.length < 2) return [];
-    return buildPreviewPoints(points);
+    return smoothPreviewPoints(buildPreviewPoints(points));
   }, [points]);
   const segments = useMemo(() => buildSegments(previewPoints), [previewPoints]);
   const signalLabel = useMemo(() => describeSignal(points), [points]);
@@ -150,7 +188,9 @@ export function RoutePreview({ points, title = "Your route", subtitle = "Capture
             ]}
           />
         ))}
-        {previewPoints.map((point, index) => (
+        {previewPoints
+          .filter((point) => point.isStart || point.isEnd)
+          .map((point, index) => (
           <View
             key={`${point.x}-${point.y}-${index}`}
             style={[
@@ -226,9 +266,9 @@ const styles = StyleSheet.create({
   },
   segment: {
     position: "absolute",
-    height: 2.5,
+    height: 3.5,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.26)",
+    backgroundColor: "rgba(37,94,54,0.3)",
   },
   dot: {
     position: "absolute",

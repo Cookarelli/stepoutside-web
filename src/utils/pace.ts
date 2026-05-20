@@ -9,6 +9,7 @@ import {
 
 export const PACE_MIN_DISTANCE_MILES = 0.05;
 const MAX_MOVING_GAP_MS = 15000;
+const DEFAULT_ROLLING_PACE_WINDOW_MS = 25000;
 
 // Validation examples:
 // 0.30 miles in 239 seconds = about 13:17 / mi
@@ -67,21 +68,81 @@ export function calculateMovingTimeSeconds(routePoints?: RoutePoint[] | null): n
   return movingMs > 0 ? Math.round(movingMs / 1000) : null;
 }
 
-export function getPaceDisplay(options: {
+export function calculateRollingPaceMinutesPerMile(
+  routePoints?: RoutePoint[] | null,
+  windowMs = DEFAULT_ROLLING_PACE_WINDOW_MS
+): number | null {
+  if (!Array.isArray(routePoints) || routePoints.length < 2) return null;
+
+  const latestTimestamp = routePoints[routePoints.length - 1]?.t;
+  if (typeof latestTimestamp !== "number" || !Number.isFinite(latestTimestamp)) {
+    return null;
+  }
+
+  let rollingDistanceM = 0;
+  let rollingMs = 0;
+
+  for (let index = routePoints.length - 1; index >= 1; index -= 1) {
+    const previous = routePoints[index - 1];
+    const current = routePoints[index];
+    if (!previous || !current) continue;
+
+    if (latestTimestamp - current.t > windowMs) {
+      break;
+    }
+
+    const deltaMs = current.t - previous.t;
+    if (deltaMs <= 0 || deltaMs > MAX_MOVING_GAP_MS) {
+      continue;
+    }
+
+    const distanceM = haversineMeters(previous, current);
+    if (distanceM < GPS_MIN_DISTANCE_METERS) {
+      continue;
+    }
+
+    const speedMps = distanceM / (deltaMs / 1000);
+    if (speedMps > GPS_MAX_REASONABLE_SPEED_MPS) {
+      continue;
+    }
+
+    if (deltaMs < GPS_MIN_TIME_BETWEEN_POINTS_MS && distanceM < GPS_MIN_DISTANCE_METERS * 2) {
+      continue;
+    }
+
+    rollingDistanceM += distanceM;
+    rollingMs += deltaMs;
+  }
+
+  if (rollingMs <= 0) return null;
+  return calculatePaceMinutesPerMile(rollingDistanceM / 1609.344, rollingMs / 1000);
+}
+
+export function getPaceMetrics(options: {
   distanceM?: number | null;
   elapsedSeconds: number;
   movingSeconds?: number | null;
   routePoints?: RoutePoint[] | null;
+  preferRolling?: boolean;
   loadingFallback?: string;
   emptyFallback?: string;
-}): string {
+  rollingWindowMs?: number;
+}): {
+  display: string;
+  rawDisplay: string;
+  rollingDisplay: string;
+  rawPaceMinutesPerMile: number | null;
+  rollingPaceMinutesPerMile: number | null;
+} {
   const {
     distanceM,
     elapsedSeconds,
     movingSeconds,
     routePoints,
+    preferRolling = true,
     loadingFallback = "Getting GPS...",
     emptyFallback = "-- / mi",
+    rollingWindowMs = DEFAULT_ROLLING_PACE_WINDOW_MS,
   } = options;
 
   const distanceMiles =
@@ -92,11 +153,35 @@ export function getPaceDisplay(options: {
       : null) ??
     calculateMovingTimeSeconds(routePoints) ??
     elapsedSeconds;
-  const pace = calculatePaceMinutesPerMile(distanceMiles, effectiveSeconds);
+  const rawPaceMinutesPerMile = calculatePaceMinutesPerMile(distanceMiles, effectiveSeconds);
+  const rollingPaceMinutesPerMile = calculateRollingPaceMinutesPerMile(routePoints, rollingWindowMs);
+  const preferredPaceMinutesPerMile =
+    preferRolling ? rollingPaceMinutesPerMile ?? rawPaceMinutesPerMile : rawPaceMinutesPerMile;
 
-  if (pace === null) {
-    return distanceMiles > 0 && distanceMiles < PACE_MIN_DISTANCE_MILES ? loadingFallback : emptyFallback;
-  }
+  const fallback =
+    preferredPaceMinutesPerMile === null &&
+    distanceMiles > 0 &&
+    distanceMiles < PACE_MIN_DISTANCE_MILES
+      ? loadingFallback
+      : emptyFallback;
 
-  return formatPace(pace, emptyFallback);
+  return {
+    display: formatPace(preferredPaceMinutesPerMile, fallback),
+    rawDisplay: formatPace(rawPaceMinutesPerMile, emptyFallback),
+    rollingDisplay: formatPace(rollingPaceMinutesPerMile, emptyFallback),
+    rawPaceMinutesPerMile,
+    rollingPaceMinutesPerMile,
+  };
+}
+
+export function getPaceDisplay(options: {
+  distanceM?: number | null;
+  elapsedSeconds: number;
+  movingSeconds?: number | null;
+  routePoints?: RoutePoint[] | null;
+  preferRolling?: boolean;
+  loadingFallback?: string;
+  emptyFallback?: string;
+}): string {
+  return getPaceMetrics(options).display;
 }

@@ -100,6 +100,7 @@ export default function SavedRouteScreen() {
             elapsedSeconds: session.durationSec,
             movingSeconds: session.movingTimeSec,
             routePoints: session.routePoints,
+            preferRolling: false,
             loadingFallback: "-- / mi",
             emptyFallback: "-- / mi",
           })

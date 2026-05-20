@@ -13,8 +13,8 @@ import {
   setCompletedWalkDraft,
 } from "../src/lib/activeWalk";
 import type { RoutePoint } from "../src/lib/store";
-import { filterGpsPoint, haversineMeters } from "../src/utils/gpsFiltering";
-import { calculateMovingTimeSeconds, getPaceDisplay } from "../src/utils/pace";
+import { type MotionState, filterGpsPoint, haversineMeters } from "../src/utils/gpsFiltering";
+import { calculateMovingTimeSeconds, getPaceMetrics } from "../src/utils/pace";
 
 type PermissionState = "unknown" | "granted" | "denied";
 
@@ -46,12 +46,17 @@ type GpsDebugState = {
   rejectedPointCount: number;
   latestAccuracy: number | null;
   latestSpeed: number | null;
+  latestHorizontalDistanceM: number;
+  latestVerticalChangeM: number;
   totalFilteredDistanceM: number;
   totalRawDistanceM: number;
   movingTimeSeconds: number;
   pausedTimeSeconds: number;
   currentPace: string;
+  currentRawPace: string;
+  currentRollingPace: string;
   lastRejectedReason: string;
+  motionState: MotionState | "unknown";
 };
 
 const EMPTY_GPS_DEBUG_STATE: GpsDebugState = {
@@ -60,12 +65,17 @@ const EMPTY_GPS_DEBUG_STATE: GpsDebugState = {
   rejectedPointCount: 0,
   latestAccuracy: null,
   latestSpeed: null,
+  latestHorizontalDistanceM: 0,
+  latestVerticalChangeM: 0,
   totalFilteredDistanceM: 0,
   totalRawDistanceM: 0,
   movingTimeSeconds: 0,
   pausedTimeSeconds: 0,
   currentPace: "-- / mi",
+  currentRawPace: "-- / mi",
+  currentRollingPace: "-- / mi",
   lastRejectedReason: "none",
+  motionState: "unknown",
 };
 
 export default function Walk() {
@@ -108,16 +118,18 @@ export default function Walk() {
   const locationGenerationRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
-  const pace = useMemo(() => {
-    return getPaceDisplay({
+  const paceMetrics = useMemo(() => {
+    return getPaceMetrics({
       distanceM,
       elapsedSeconds: elapsedSec,
       movingSeconds: movingSec,
       routePoints: routePointsRef.current,
+      preferRolling: true,
       loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
       emptyFallback: "-- / mi",
     });
   }, [distanceM, elapsedSec, movingSec, permission]);
+  const pace = paceMetrics.display;
 
   const logWalk = useCallback((message: string, details?: Record<string, unknown>) => {
     if (details) {
@@ -378,6 +390,7 @@ export default function Walk() {
             const filtered = filterGpsPoint({
               point: nextPoint,
               lastAcceptedPoint: lastPointRef.current,
+              secondLastAcceptedPoint: routePointsRef.current.length > 1 ? routePointsRef.current[routePointsRef.current.length - 2] : null,
               isTracking: phaseRef.current === "tracking",
               stationaryPointStreak: stationaryPointStreakRef.current,
             });
@@ -386,11 +399,27 @@ export default function Walk() {
               setGpsDebugSafe((current) => ({
                 ...current,
                 rejectedPointCount: current.rejectedPointCount + 1,
+                latestHorizontalDistanceM: filtered.rawHorizontalDistanceM,
+                latestVerticalChangeM: filtered.verticalDeltaM,
                 movingTimeSeconds: movingSecRef.current,
                 pausedTimeSeconds: getPausedNow(),
                 currentPace: pace,
+                currentRawPace: current.currentRawPace,
+                currentRollingPace: current.currentRollingPace,
                 lastRejectedReason: filtered.reason,
+                motionState: filtered.motionState,
               }));
+              if (__DEV__) {
+                console.debug("[gps] rejected", {
+                  reason: filtered.reason,
+                  accuracy: nextPoint.accuracy ?? null,
+                  horizontalDistanceM: Number(filtered.rawHorizontalDistanceM.toFixed(1)),
+                  verticalDeltaM: Number(filtered.verticalDeltaM.toFixed(1)),
+                  derivedSpeedMps: Number(filtered.derivedSpeedMps.toFixed(2)),
+                  motionState: filtered.motionState,
+                  confidence: filtered.confidence,
+                });
+              }
               return;
             }
 
@@ -408,14 +437,39 @@ export default function Walk() {
             if (shouldAnchorWithoutDistance) {
               awaitingResumeAnchorRef.current = false;
               hadGpsPointsRef.current = routePointsRef.current.length > 1;
+              const anchorPaceMetrics = getPaceMetrics({
+                distanceM: distanceRef.current,
+                elapsedSeconds: getActiveElapsedNow() + getPausedNow(),
+                movingSeconds: movingSecRef.current,
+                routePoints: routePointsRef.current,
+                preferRolling: true,
+                loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+                emptyFallback: "-- / mi",
+              });
               setGpsDebugSafe((current) => ({
                 ...current,
                 acceptedPointCount: current.acceptedPointCount + 1,
+                latestHorizontalDistanceM: filtered.rawHorizontalDistanceM,
+                latestVerticalChangeM: filtered.verticalDeltaM,
                 totalFilteredDistanceM: distanceRef.current,
                 movingTimeSeconds: movingSecRef.current,
                 pausedTimeSeconds: getPausedNow(),
-                currentPace: pace,
+                currentPace: anchorPaceMetrics.display,
+                currentRawPace: anchorPaceMetrics.rawDisplay,
+                currentRollingPace: anchorPaceMetrics.rollingDisplay,
+                motionState: filtered.motionState,
               }));
+              if (__DEV__) {
+                console.debug("[gps] accepted-anchor", {
+                  accuracy: nextPoint.accuracy ?? null,
+                  horizontalDistanceM: Number(filtered.rawHorizontalDistanceM.toFixed(1)),
+                  verticalDeltaM: Number(filtered.verticalDeltaM.toFixed(1)),
+                  rollingPace: anchorPaceMetrics.rollingDisplay,
+                  rawPace: anchorPaceMetrics.rawDisplay,
+                  motionState: filtered.motionState,
+                  confidence: filtered.confidence,
+                });
+              }
               return;
             }
 
@@ -432,22 +486,43 @@ export default function Walk() {
               setMovingSafe(nextMovingSec);
             }
 
+            const nextPaceMetrics = getPaceMetrics({
+              distanceM: distanceRef.current,
+              elapsedSeconds: getActiveElapsedNow() + getPausedNow(),
+              movingSeconds: movingSecRef.current,
+              routePoints: routePointsRef.current,
+              preferRolling: true,
+              loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+              emptyFallback: "-- / mi",
+            });
+
             setGpsDebugSafe((current) => ({
               ...current,
               acceptedPointCount: current.acceptedPointCount + 1,
+              latestHorizontalDistanceM: filtered.rawHorizontalDistanceM,
+              latestVerticalChangeM: filtered.verticalDeltaM,
               totalFilteredDistanceM: distanceRef.current,
               movingTimeSeconds: movingSecRef.current,
               pausedTimeSeconds: getPausedNow(),
-              currentPace: getPaceDisplay({
-                distanceM: distanceRef.current,
-                elapsedSeconds: getActiveElapsedNow() + getPausedNow(),
-                movingSeconds: movingSecRef.current,
-                routePoints: routePointsRef.current,
-                loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
-                emptyFallback: "-- / mi",
-              }),
+              currentPace: nextPaceMetrics.display,
+              currentRawPace: nextPaceMetrics.rawDisplay,
+              currentRollingPace: nextPaceMetrics.rollingDisplay,
               lastRejectedReason: current.lastRejectedReason,
+              motionState: filtered.motionState,
             }));
+            if (__DEV__) {
+              console.debug("[gps] accepted", {
+                accuracy: nextPoint.accuracy ?? null,
+                horizontalDistanceM: Number(filtered.rawHorizontalDistanceM.toFixed(1)),
+                verticalDeltaM: Number(filtered.verticalDeltaM.toFixed(1)),
+                filteredDistanceM: Number(distanceRef.current.toFixed(1)),
+                rollingPace: nextPaceMetrics.rollingDisplay,
+                rawPace: nextPaceMetrics.rawDisplay,
+                derivedSpeedMps: Number(filtered.derivedSpeedMps.toFixed(2)),
+                motionState: filtered.motionState,
+                confidence: filtered.confidence,
+              });
+            }
           }
         );
 
@@ -1003,19 +1078,41 @@ export default function Walk() {
           rejectedPointCount: 0,
           latestAccuracy: routePointsRef.current.at(-1)?.accuracy ?? null,
           latestSpeed: routePointsRef.current.at(-1)?.speed ?? null,
+          latestHorizontalDistanceM: 0,
+          latestVerticalChangeM: 0,
           totalFilteredDistanceM: snapshot.distanceM,
           totalRawDistanceM: snapshot.distanceM,
           movingTimeSeconds: movingSecRef.current,
           pausedTimeSeconds: snapshot.running ? restoredPausedSec : getPausedNow(),
-          currentPace: getPaceDisplay({
+          currentPace: getPaceMetrics({
             distanceM: snapshot.distanceM,
             elapsedSeconds: recoveredElapsed,
             movingSeconds: movingSecRef.current,
             routePoints: routePointsRef.current,
+            preferRolling: true,
             loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
             emptyFallback: "-- / mi",
-          }),
+          }).display,
+          currentRawPace: getPaceMetrics({
+            distanceM: snapshot.distanceM,
+            elapsedSeconds: recoveredElapsed,
+            movingSeconds: movingSecRef.current,
+            routePoints: routePointsRef.current,
+            preferRolling: false,
+            loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+            emptyFallback: "-- / mi",
+          }).display,
+          currentRollingPace: getPaceMetrics({
+            distanceM: snapshot.distanceM,
+            elapsedSeconds: recoveredElapsed,
+            movingSeconds: movingSecRef.current,
+            routePoints: routePointsRef.current,
+            preferRolling: true,
+            loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+            emptyFallback: "-- / mi",
+          }).rollingDisplay,
           lastRejectedReason: "none",
+          motionState: "unknown",
         });
 
         if (snapshot.running) {
@@ -1159,11 +1256,16 @@ export default function Walk() {
             <Text style={styles.debugRow}>Rejected GPS points: {gpsDebug.rejectedPointCount}</Text>
             <Text style={styles.debugRow}>Latest accuracy: {fmtDebugNumber(gpsDebug.latestAccuracy)} m</Text>
             <Text style={styles.debugRow}>Latest speed: {fmtDebugNumber(gpsDebug.latestSpeed)} m/s</Text>
+            <Text style={styles.debugRow}>Latest horizontal: {fmtMeters(gpsDebug.latestHorizontalDistanceM)}</Text>
+            <Text style={styles.debugRow}>Latest vertical: {fmtDebugNumber(gpsDebug.latestVerticalChangeM)} m</Text>
             <Text style={styles.debugRow}>Filtered distance: {fmtMeters(gpsDebug.totalFilteredDistanceM)}</Text>
             <Text style={styles.debugRow}>Raw distance: {fmtMeters(gpsDebug.totalRawDistanceM)}</Text>
             <Text style={styles.debugRow}>Moving time: {fmtTime(gpsDebug.movingTimeSeconds)}</Text>
             <Text style={styles.debugRow}>Paused time: {fmtTime(gpsDebug.pausedTimeSeconds)}</Text>
             <Text style={styles.debugRow}>Current pace: {gpsDebug.currentPace}</Text>
+            <Text style={styles.debugRow}>Rolling pace: {gpsDebug.currentRollingPace}</Text>
+            <Text style={styles.debugRow}>Raw pace: {gpsDebug.currentRawPace}</Text>
+            <Text style={styles.debugRow}>Motion state: {gpsDebug.motionState}</Text>
             <Text style={styles.debugRow}>Last reject: {gpsDebug.lastRejectedReason}</Text>
           </View>
         </View>

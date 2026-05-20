@@ -11,21 +11,43 @@ export const GPS_MIN_TIME_BETWEEN_POINTS_MS = 3000;
 export const GPS_STATIONARY_SPEED_MPS = 0.4;
 // Require a couple of consecutive "still" samples before treating the user as stationary drift.
 export const GPS_STATIONARY_CONFIRMATION_POINTS = 2;
+// Accuracy above ~18m is often good enough for a map pin, but not ideal for short walking segments.
+export const GPS_LOW_CONFIDENCE_ACCURACY_METERS = 18;
+// Abrupt reversals above this threshold are usually bounce or reflection, not a real turn on foot.
+export const GPS_MAX_DIRECTION_CHANGE_DEGREES = 115;
+// Human walking/running acceleration is far lower than most GPS jump artifacts.
+export const GPS_MAX_REASONABLE_ACCELERATION_MPS2 = 2.6;
+// Large one-step altitude swings usually indicate GPS/barometer noise rather than terrain.
+export const GPS_MAX_VERTICAL_SPIKE_METERS = 12;
+// Speeds above this are confidently "moving" for a walking/hiking activity.
+export const GPS_WALKING_SPEED_MPS = 0.7;
 
 const GPS_SMOOTHING_WEIGHT = 0.2;
+const GPS_MEDIUM_SMOOTHING_WEIGHT = 0.32;
+const GPS_HEAVY_SMOOTHING_WEIGHT = 0.44;
 
 type GpsFilterInput = {
   point: Partial<RoutePoint> | null | undefined;
   lastAcceptedPoint: RoutePoint | null;
+  secondLastAcceptedPoint?: RoutePoint | null;
   isTracking: boolean;
   stationaryPointStreak?: number;
 };
+
+export type MotionState = "stationary" | "walking" | "uncertain";
+export type GpsConfidence = "high" | "medium" | "low";
 
 export type GpsFilterResult =
   | {
       accepted: true;
       point: RoutePoint;
       distanceDeltaM: number;
+      rawHorizontalDistanceM: number;
+      verticalDeltaM: number;
+      derivedSpeedMps: number;
+      accelerationMps2: number | null;
+      motionState: MotionState;
+      confidence: GpsConfidence;
       timeDeltaMs: number;
       nextStationaryPointStreak: number;
       reason: "accepted";
@@ -34,17 +56,27 @@ export type GpsFilterResult =
       accepted: false;
       point: null;
       distanceDeltaM: 0;
+      rawHorizontalDistanceM: number;
+      verticalDeltaM: number;
+      derivedSpeedMps: number;
+      accelerationMps2: number | null;
+      motionState: MotionState;
+      confidence: GpsConfidence;
       timeDeltaMs: 0;
       nextStationaryPointStreak: number;
       reason:
         | "paused"
         | "missing-coordinates"
         | "accuracy"
+        | "low-confidence"
         | "non-monotonic-time"
         | "jitter"
         | "too-frequent"
         | "speed-spike"
-        | "stationary";
+        | "stationary"
+        | "direction-jump"
+        | "acceleration-spike"
+        | "vertical-spike";
     };
 
 export function haversineMeters(a: Pick<RoutePoint, "lat" | "lng">, b: Pick<RoutePoint, "lat" | "lng">): number {
@@ -89,28 +121,80 @@ function normalizePoint(point: Partial<RoutePoint> | null | undefined): RoutePoi
   };
 }
 
-function smoothPoint(previous: RoutePoint, next: RoutePoint): RoutePoint {
+function getConfidence(accuracy?: number): GpsConfidence {
+  if (typeof accuracy !== "number" || !Number.isFinite(accuracy) || accuracy <= 8) return "high";
+  if (accuracy <= GPS_LOW_CONFIDENCE_ACCURACY_METERS) return "medium";
+  return "low";
+}
+
+function getMotionState(distanceM: number, speedMps: number): MotionState {
+  if (speedMps <= GPS_STATIONARY_SPEED_MPS || distanceM < GPS_MIN_DISTANCE_METERS) {
+    return "stationary";
+  }
+
+  if (speedMps >= GPS_WALKING_SPEED_MPS) {
+    return "walking";
+  }
+
+  return "uncertain";
+}
+
+function bearingDegrees(a: Pick<RoutePoint, "lat" | "lng">, b: Pick<RoutePoint, "lat" | "lng">): number {
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const toDeg = (x: number) => (x * 180) / Math.PI;
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const dLon = toRad(b.lng - a.lng);
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function bearingDeltaDegrees(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+function smoothPoint(previous: RoutePoint, next: RoutePoint, confidence: GpsConfidence, motionState: MotionState): RoutePoint {
   // Light smoothing reduces dot-jitter while preserving the actual route shape.
+  const smoothingWeight =
+    confidence === "high" && motionState === "walking"
+      ? GPS_SMOOTHING_WEIGHT
+      : confidence === "medium" || motionState === "uncertain"
+        ? GPS_MEDIUM_SMOOTHING_WEIGHT
+        : GPS_HEAVY_SMOOTHING_WEIGHT;
+
   return {
     ...next,
-    lat: previous.lat + (next.lat - previous.lat) * (1 - GPS_SMOOTHING_WEIGHT),
-    lng: previous.lng + (next.lng - previous.lng) * (1 - GPS_SMOOTHING_WEIGHT),
+    lat: previous.lat + (next.lat - previous.lat) * (1 - smoothingWeight),
+    lng: previous.lng + (next.lng - previous.lng) * (1 - smoothingWeight),
   };
 }
 
 export function filterGpsPoint({
   point,
   lastAcceptedPoint,
+  secondLastAcceptedPoint = null,
   isTracking,
   stationaryPointStreak = 0,
 }: GpsFilterInput): GpsFilterResult {
+  const missingResult = {
+    point: null,
+    distanceDeltaM: 0 as const,
+    rawHorizontalDistanceM: 0,
+    verticalDeltaM: 0,
+    derivedSpeedMps: 0,
+    accelerationMps2: null,
+    motionState: "uncertain" as MotionState,
+    confidence: "low" as GpsConfidence,
+    timeDeltaMs: 0 as const,
+    nextStationaryPointStreak: stationaryPointStreak,
+  };
+
   if (!isTracking) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
-      nextStationaryPointStreak: stationaryPointStreak,
+      ...missingResult,
       reason: "paused",
     };
   }
@@ -119,13 +203,12 @@ export function filterGpsPoint({
   if (!normalized) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
-      nextStationaryPointStreak: stationaryPointStreak,
+      ...missingResult,
       reason: "missing-coordinates",
     };
   }
+
+  const confidence = getConfidence(normalized.accuracy);
 
   if (
     typeof normalized.accuracy === "number" &&
@@ -133,9 +216,8 @@ export function filterGpsPoint({
   ) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
+      ...missingResult,
+      confidence,
       nextStationaryPointStreak: stationaryPointStreak,
       reason: "accuracy",
     };
@@ -146,6 +228,12 @@ export function filterGpsPoint({
       accepted: true,
       point: normalized,
       distanceDeltaM: 0,
+      rawHorizontalDistanceM: 0,
+      verticalDeltaM: 0,
+      derivedSpeedMps: 0,
+      accelerationMps2: null,
+      motionState: getMotionState(0, typeof normalized.speed === "number" ? normalized.speed : 0),
+      confidence,
       timeDeltaMs: 0,
       nextStationaryPointStreak: 0,
       reason: "accepted",
@@ -156,24 +244,45 @@ export function filterGpsPoint({
   if (deltaMs <= 0) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
+      ...missingResult,
+      confidence,
       nextStationaryPointStreak: stationaryPointStreak,
       reason: "non-monotonic-time",
     };
   }
 
   const rawDistanceM = haversineMeters(lastAcceptedPoint, normalized);
+  const verticalDeltaM =
+    typeof normalized.altitude === "number" && typeof lastAcceptedPoint.altitude === "number"
+      ? normalized.altitude - lastAcceptedPoint.altitude
+      : 0;
+  const derivedSpeedMps = rawDistanceM / (deltaMs / 1000);
+  const reportedSpeedMps =
+    typeof normalized.speed === "number" && normalized.speed >= 0 ? normalized.speed : 0;
+  const speedForValidation = Math.max(derivedSpeedMps, reportedSpeedMps);
+  const motionState = getMotionState(rawDistanceM, speedForValidation);
+  const previousSpeedMps =
+    secondLastAcceptedPoint
+      ? haversineMeters(secondLastAcceptedPoint, lastAcceptedPoint) /
+        Math.max(1, (lastAcceptedPoint.t - secondLastAcceptedPoint.t) / 1000)
+      : null;
+  const accelerationMps2 =
+    previousSpeedMps !== null
+      ? Math.abs(derivedSpeedMps - previousSpeedMps) / Math.max(1, deltaMs / 1000)
+      : null;
 
   // Ignore tiny hops that are usually stationary GPS drift, not real walking progress.
   if (rawDistanceM < GPS_MIN_DISTANCE_METERS) {
     const nextStationaryPointStreak = stationaryPointStreak + 1;
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
       nextStationaryPointStreak,
       reason:
         nextStationaryPointStreak >= GPS_STATIONARY_CONFIRMATION_POINTS ? "stationary" : "jitter",
@@ -184,48 +293,129 @@ export function filterGpsPoint({
   if (deltaMs < GPS_MIN_TIME_BETWEEN_POINTS_MS && rawDistanceM < GPS_MIN_DISTANCE_METERS * 2) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
-      nextStationaryPointStreak: stationaryPointStreak,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
       reason: "too-frequent",
     };
   }
 
-  const derivedSpeedMps = rawDistanceM / (deltaMs / 1000);
-  const reportedSpeedMps =
-    typeof normalized.speed === "number" && normalized.speed >= 0 ? normalized.speed : 0;
-  const speedForValidation = Math.max(derivedSpeedMps, reportedSpeedMps);
-
   const nextStationaryPointStreak =
-    reportedSpeedMps > 0 && reportedSpeedMps <= GPS_STATIONARY_SPEED_MPS
+    motionState === "stationary"
       ? stationaryPointStreak + 1
       : 0;
 
   if (nextStationaryPointStreak >= GPS_STATIONARY_CONFIRMATION_POINTS) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
       nextStationaryPointStreak,
       reason: "stationary",
     };
+  }
+
+  if (confidence === "low" && rawDistanceM < GPS_MIN_DISTANCE_METERS * 2) {
+    return {
+      accepted: false,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
+      nextStationaryPointStreak,
+      reason: "low-confidence",
+    };
+  }
+
+  if (Math.abs(verticalDeltaM) > GPS_MAX_VERTICAL_SPIKE_METERS && rawDistanceM < GPS_MIN_DISTANCE_METERS * 2) {
+    return {
+      accepted: false,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
+      nextStationaryPointStreak,
+      reason: "vertical-spike",
+    };
+  }
+
+  if (
+    secondLastAcceptedPoint &&
+    rawDistanceM >= GPS_MIN_DISTANCE_METERS * 2 &&
+    confidence !== "high"
+  ) {
+    const previousDistanceM = haversineMeters(secondLastAcceptedPoint, lastAcceptedPoint);
+    if (previousDistanceM >= GPS_MIN_DISTANCE_METERS) {
+      const previousBearing = bearingDegrees(secondLastAcceptedPoint, lastAcceptedPoint);
+      const nextBearing = bearingDegrees(lastAcceptedPoint, normalized);
+      if (bearingDeltaDegrees(previousBearing, nextBearing) > GPS_MAX_DIRECTION_CHANGE_DEGREES) {
+        return {
+          accepted: false,
+          ...missingResult,
+          confidence,
+          rawHorizontalDistanceM: rawDistanceM,
+          verticalDeltaM,
+          derivedSpeedMps,
+          accelerationMps2,
+          motionState,
+          nextStationaryPointStreak,
+          reason: "direction-jump",
+        };
+      }
+    }
   }
 
   // Anything faster than this is more likely a GPS jump than real walking/running movement.
   if (speedForValidation > GPS_MAX_REASONABLE_SPEED_MPS) {
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
-      nextStationaryPointStreak: stationaryPointStreak,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
+      nextStationaryPointStreak,
       reason: "speed-spike",
     };
   }
 
-  const acceptedPoint = smoothPoint(lastAcceptedPoint, normalized);
+  if (
+    accelerationMps2 !== null &&
+    accelerationMps2 > GPS_MAX_REASONABLE_ACCELERATION_MPS2 &&
+    confidence !== "high"
+  ) {
+    return {
+      accepted: false,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
+      nextStationaryPointStreak,
+      reason: "acceleration-spike",
+    };
+  }
+
+  const acceptedPoint = smoothPoint(lastAcceptedPoint, normalized, confidence, motionState);
   const acceptedDistanceM = haversineMeters(lastAcceptedPoint, acceptedPoint);
 
   // Re-check after smoothing so nearly identical accepted points still do not count as movement.
@@ -233,9 +423,13 @@ export function filterGpsPoint({
     const smoothedStationaryStreak = stationaryPointStreak + 1;
     return {
       accepted: false,
-      point: null,
-      distanceDeltaM: 0,
-      timeDeltaMs: 0,
+      ...missingResult,
+      confidence,
+      rawHorizontalDistanceM: rawDistanceM,
+      verticalDeltaM,
+      derivedSpeedMps,
+      accelerationMps2,
+      motionState,
       nextStationaryPointStreak: smoothedStationaryStreak,
       reason:
         smoothedStationaryStreak >= GPS_STATIONARY_CONFIRMATION_POINTS ? "stationary" : "jitter",
@@ -246,6 +440,12 @@ export function filterGpsPoint({
     accepted: true,
     point: acceptedPoint,
     distanceDeltaM: acceptedDistanceM,
+    rawHorizontalDistanceM: rawDistanceM,
+    verticalDeltaM,
+    derivedSpeedMps,
+    accelerationMps2,
+    motionState,
+    confidence,
     timeDeltaMs: deltaMs,
     nextStationaryPointStreak: 0,
     reason: "accepted",
