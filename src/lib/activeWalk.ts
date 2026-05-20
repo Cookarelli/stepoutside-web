@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import type { RoutePoint } from "./store";
+import type { RoutePoint, SessionSource } from "./store";
 
 export type ActiveWalkSnapshot = {
   startedAt: number;
@@ -14,6 +14,15 @@ export type ActiveWalkSnapshot = {
 };
 
 export type CompletedWalkDraft = {
+  id?: string;
+  startedAt?: number;
+  endedAt?: number;
+  durationSec?: number;
+  elapsedTimeSec?: number;
+  movingTimeSec?: number;
+  pausedTimeSec?: number;
+  distanceM?: number;
+  source?: SessionSource;
   routePoints: RoutePoint[];
 };
 
@@ -108,7 +117,32 @@ export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null
         : null;
 
     if (!routePoints) return null;
-    return { routePoints };
+    return {
+      ...(typeof parsed.id === "string" ? { id: parsed.id } : {}),
+      ...(typeof parsed.startedAt === "number" && Number.isFinite(parsed.startedAt)
+        ? { startedAt: parsed.startedAt }
+        : {}),
+      ...(typeof parsed.endedAt === "number" && Number.isFinite(parsed.endedAt)
+        ? { endedAt: parsed.endedAt }
+        : {}),
+      ...(typeof parsed.durationSec === "number" && Number.isFinite(parsed.durationSec)
+        ? { durationSec: parsed.durationSec }
+        : {}),
+      ...(typeof parsed.elapsedTimeSec === "number" && Number.isFinite(parsed.elapsedTimeSec)
+        ? { elapsedTimeSec: parsed.elapsedTimeSec }
+        : {}),
+      ...(typeof parsed.movingTimeSec === "number" && Number.isFinite(parsed.movingTimeSec)
+        ? { movingTimeSec: parsed.movingTimeSec }
+        : {}),
+      ...(typeof parsed.pausedTimeSec === "number" && Number.isFinite(parsed.pausedTimeSec)
+        ? { pausedTimeSec: parsed.pausedTimeSec }
+        : {}),
+      ...(typeof parsed.distanceM === "number" && Number.isFinite(parsed.distanceM)
+        ? { distanceM: parsed.distanceM }
+        : {}),
+      ...(parsed.source === "gps" || parsed.source === "timer" ? { source: parsed.source } : {}),
+      routePoints,
+    };
   } catch {
     return null;
   }

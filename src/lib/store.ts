@@ -19,6 +19,9 @@ export type RoutePoint = {
   speed?: number;
 };
 
+export type RawRoutePoint = RoutePoint;
+export type FilteredRoutePoint = RoutePoint;
+
 export type OutsideSession = {
   id: string;
   startedAt: number;
@@ -46,6 +49,8 @@ export type OutsideSession = {
   sunsetBonus?: boolean;
   paceSecPerMile?: number;
 };
+
+export type SavedActivity = OutsideSession;
 
 export type SummaryStats = {
   totalMinutes: number;
@@ -105,6 +110,14 @@ export const EMPTY_SUMMARY: SummaryStats = {
 
 function finiteNumberOr(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function firstFiniteNumber(candidate: unknown, ...fallbacks: unknown[]): number | undefined {
+  const values = [candidate, ...fallbacks];
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
 }
 
 function clampMin1(n: number): number {
@@ -179,6 +192,49 @@ function normalizeActivityType(value: unknown): ActivityType {
   return value === "hike" ? "hike" : "walk";
 }
 
+function resolveElapsedTimeSec(session: Record<string, unknown>): number {
+  return Math.max(
+    0,
+    finiteNumberOr(
+      firstFiniteNumber(
+        session.elapsedTimeSec,
+        session.elapsedSeconds,
+        session.durationSec,
+        session.durationSeconds
+      ),
+      0
+    )
+  );
+}
+
+function resolveMovingTimeSec(session: Record<string, unknown>): number | undefined {
+  const moving = firstFiniteNumber(session.movingTimeSec, session.movingTimeSeconds);
+  return typeof moving === "number" ? Math.max(0, moving) : undefined;
+}
+
+function resolvePausedTimeSec(session: Record<string, unknown>): number | undefined {
+  const paused = firstFiniteNumber(session.pausedTimeSec, session.pausedSeconds);
+  return typeof paused === "number" ? Math.max(0, paused) : undefined;
+}
+
+function resolveDistanceMeters(session: Record<string, unknown>): number | undefined {
+  const directMeters = firstFiniteNumber(
+    session.distanceM,
+    session.distanceMeters,
+    session.filteredDistanceMeters,
+    session.totalDistance
+  );
+  if (typeof directMeters === "number") return Math.max(0, directMeters);
+
+  const genericDistance = firstFiniteNumber(session.distance);
+  if (typeof genericDistance === "number") return Math.max(0, genericDistance);
+
+  const miles = firstFiniteNumber(session.distanceMiles);
+  if (typeof miles === "number") return Math.max(0, miles * 1609.344);
+
+  return undefined;
+}
+
 function defaultSessionTitle(session: Pick<OutsideSession, "activityType">): string {
   return session.activityType === "hike" ? "Outdoor hike" : "Outdoor walk";
 }
@@ -197,23 +253,23 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
       ? session.routePoints
       : undefined;
   const elevationGain = calculateElevationGain(routePoints);
+  const sessionRecord = session as unknown as Record<string, unknown>;
   const elapsedTimeSec = Math.max(
     0,
-    finiteNumberOr(
-      typeof session.elapsedTimeSec === "number" ? session.elapsedTimeSec : session.durationSec
-    )
+    resolveElapsedTimeSec(sessionRecord)
   );
   const movingTimeSec = Math.max(
     0,
     finiteNumberOr(
-      session.movingTimeSec,
+      resolveMovingTimeSec(sessionRecord),
       calculateMovingTimeSeconds(routePoints) ?? elapsedTimeSec
     )
   );
   const pausedTimeSec = Math.max(
     0,
-    finiteNumberOr(session.pausedTimeSec, Math.max(0, elapsedTimeSec - movingTimeSec))
+    finiteNumberOr(resolvePausedTimeSec(sessionRecord), Math.max(0, elapsedTimeSec - movingTimeSec))
   );
+  const distanceM = resolveDistanceMeters(sessionRecord);
 
   return {
     id: session.id,
@@ -226,8 +282,8 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
     source: session.source === "gps" ? "gps" : "timer",
     title: session.title?.trim() || defaultSessionTitle(session),
     activityType: normalizeActivityType(session.activityType),
-    ...(typeof session.distanceM === "number" && Number.isFinite(session.distanceM)
-      ? { distanceM: Math.max(0, session.distanceM) }
+    ...(typeof distanceM === "number" && Number.isFinite(distanceM)
+      ? { distanceM: Math.max(0, distanceM) }
       : {}),
     ...(typeof session.elevationGainMeters === "number" && Number.isFinite(session.elevationGainMeters)
       ? { elevationGainMeters: Math.max(0, Math.round(session.elevationGainMeters)) }
@@ -256,8 +312,8 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
       : {}),
     ...(typeof session.paceSecPerMile === "number" && Number.isFinite(session.paceSecPerMile)
       ? { paceSecPerMile: session.paceSecPerMile }
-      : computePaceSecPerMile(movingTimeSec, session.distanceM)
-        ? { paceSecPerMile: computePaceSecPerMile(movingTimeSec, session.distanceM) }
+      : computePaceSecPerMile(movingTimeSec, distanceM)
+        ? { paceSecPerMile: computePaceSecPerMile(movingTimeSec, distanceM) }
         : {}),
     ...(routePoints ? { routePoints } : {}),
   };
@@ -414,17 +470,24 @@ async function readSessions(): Promise<OutsideSession[]> {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((session) => {
+        const rawSession = session as unknown as Record<string, unknown>;
         const routePoints = Array.isArray(session?.routePoints)
           ? session.routePoints
               .map((point) => normalizeRoutePoint(point))
               .filter((point): point is RoutePoint => point !== null)
           : undefined;
+        const durationSec = firstFiniteNumber(
+          rawSession.durationSec,
+          rawSession.durationSeconds,
+          rawSession.elapsedTimeSec,
+          rawSession.elapsedSeconds
+        );
 
         if (
           typeof session?.id !== "string" ||
           !Number.isFinite(session?.startedAt) ||
           !Number.isFinite(session?.endedAt) ||
-          !Number.isFinite(session?.durationSec) ||
+          !Number.isFinite(durationSec) ||
           (session?.source !== "timer" && session?.source !== "gps")
         ) {
           return null;
@@ -433,10 +496,11 @@ async function readSessions(): Promise<OutsideSession[]> {
         return {
           ...buildSessionForStorage(
             {
+              ...(rawSession as unknown as OutsideSession),
               id: session.id,
               startedAt: finiteNumberOr(session.startedAt),
               endedAt: finiteNumberOr(session.endedAt),
-              durationSec: Math.max(0, finiteNumberOr(session.durationSec)),
+              durationSec: Math.max(0, finiteNumberOr(durationSec)),
               ...(typeof session.elapsedTimeSec === "number" && Number.isFinite(session.elapsedTimeSec)
                 ? { elapsedTimeSec: session.elapsedTimeSec }
                 : {}),
@@ -585,6 +649,7 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
     return snapshot.docs
       .map((entry) => {
         const remote = entry.data() as Partial<OutsideSession>;
+        const rawRemote = remote as unknown as Record<string, unknown>;
         const routePoints = Array.isArray(remote?.routePoints)
           ? remote.routePoints
               .map((point) => normalizeRoutePoint(point))
@@ -592,16 +657,23 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
           : undefined;
 
         const id = typeof remote.id === "string" ? remote.id : entry.id;
-        if (!id || !Number.isFinite(remote.startedAt) || !Number.isFinite(remote.endedAt) || !Number.isFinite(remote.durationSec)) {
+        const durationSec = firstFiniteNumber(
+          rawRemote.durationSec,
+          rawRemote.durationSeconds,
+          rawRemote.elapsedTimeSec,
+          rawRemote.elapsedSeconds
+        );
+        if (!id || !Number.isFinite(remote.startedAt) || !Number.isFinite(remote.endedAt) || !Number.isFinite(durationSec)) {
           return null;
         }
 
         return buildSessionForStorage(
           {
+            ...(rawRemote as unknown as OutsideSession),
             id,
             startedAt: finiteNumberOr(remote.startedAt),
             endedAt: finiteNumberOr(remote.endedAt),
-            durationSec: finiteNumberOr(remote.durationSec),
+            durationSec: finiteNumberOr(durationSec),
             ...(typeof remote.elapsedTimeSec === "number" && Number.isFinite(remote.elapsedTimeSec)
               ? { elapsedTimeSec: remote.elapsedTimeSec }
               : {}),
@@ -743,18 +815,27 @@ export async function getSessionById(id: string): Promise<OutsideSession | null>
     if (!snapshot.exists()) return local;
 
     const remote = snapshot.data() as Partial<OutsideSession>;
+    const rawRemote = remote as unknown as Record<string, unknown>;
     const routePoints = Array.isArray(remote?.routePoints)
       ? remote.routePoints
           .map((point) => normalizeRoutePoint(point))
           .filter((point): point is RoutePoint => point !== null)
       : undefined;
+    const durationSec = firstFiniteNumber(
+      rawRemote.durationSec,
+      rawRemote.durationSeconds,
+      rawRemote.elapsedTimeSec,
+      rawRemote.elapsedSeconds,
+      local?.durationSec
+    );
 
     const merged = buildSessionForStorage(
       {
+        ...(rawRemote as unknown as OutsideSession),
         id: typeof remote.id === "string" ? remote.id : id,
         startedAt: finiteNumberOr(remote.startedAt, local?.startedAt ?? 0),
         endedAt: finiteNumberOr(remote.endedAt, local?.endedAt ?? 0),
-        durationSec: finiteNumberOr(remote.durationSec, local?.durationSec ?? 0),
+        durationSec: finiteNumberOr(durationSec, local?.durationSec ?? 0),
         elapsedTimeSec: finiteNumberOr(remote.elapsedTimeSec, local?.elapsedTimeSec ?? local?.durationSec ?? 0),
         movingTimeSec: finiteNumberOr(remote.movingTimeSec, local?.movingTimeSec ?? 0),
         pausedTimeSec: finiteNumberOr(remote.pausedTimeSec, local?.pausedTimeSec ?? 0),
@@ -932,14 +1013,17 @@ export async function resetAllData(): Promise<void> {
 /** Returns summary so Complete screen can render streak immediately */
 export async function addCompletedSession(
   session: OutsideSession
-): Promise<{ summary: SummaryStats }> {
+): Promise<{ summary: SummaryStats; session: OutsideSession }> {
   const premiumStatus = await getPremiumStatus();
   const includeRoutePoints = premiumStatus.isPremium;
   const normalized = buildSessionForStorage(session, includeRoutePoints);
   const sessions = await readSessions();
-
-  const exists = sessions.some((s) => s.id === normalized.id);
-  if (!exists) sessions.push(normalized);
+  const existingIndex = sessions.findIndex((s) => s.id === normalized.id);
+  if (existingIndex >= 0) {
+    sessions[existingIndex] = normalized;
+  } else {
+    sessions.push(normalized);
+  }
 
   await writeSessions(sessions);
   const nextSummary = summarizeSessions(sessions);
@@ -950,5 +1034,5 @@ export async function addCompletedSession(
   } catch {
     // Session summaries remain available locally if Firestore sync is unavailable.
   }
-  return { summary: nextSummary };
+  return { summary: nextSummary, session: normalized };
 }

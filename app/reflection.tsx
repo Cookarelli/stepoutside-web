@@ -6,37 +6,28 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { pickReflectionPrompt, saveReflection } from "../src/lib/reflections";
 import { REFLECTION_PROMPTS } from "../src/lib/reflectionPrompts";
+import { getSessionById, type OutsideSession } from "../src/lib/store";
+import { resolveSessionDistanceMeters, resolveSessionElapsedSeconds } from "../src/utils/sessionSummary";
 
 function toBool(value: string | undefined): boolean {
   return value === "true";
-}
-
-function toNumber(value: string | undefined): number {
-  const parsed = Number(value ?? "");
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export default function ReflectionScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     walkId?: string;
-    startedAt?: string;
-    endedAt?: string;
-    durationSec?: string;
-    distanceM?: string;
-    source?: string;
     sunriseBonus?: string;
     sunsetBonus?: string;
   }>();
 
   const walkId = params.walkId ?? "";
-  const durationSec = toNumber(params.durationSec);
-  const distanceM = toNumber(params.distanceM);
   const sunriseBonus = toBool(params.sunriseBonus);
   const sunsetBonus = toBool(params.sunsetBonus);
 
   const [prompt, setPrompt] = useState<string>(REFLECTION_PROMPTS[0]);
   const [promptReady, setPromptReady] = useState(false);
+  const [session, setSession] = useState<OutsideSession | null>(null);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [statusText, setStatusText] = useState("");
@@ -56,16 +47,32 @@ export default function ReflectionScreen() {
     };
   }, [walkId]);
 
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      if (!walkId) {
+        if (active) setSession(null);
+        return;
+      }
+
+      const nextSession = await getSessionById(walkId);
+      if (active) setSession(nextSession);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [walkId]);
+
+  const resolvedDurationSec = resolveSessionElapsedSeconds(session, null);
+  const resolvedDistanceM = resolveSessionDistanceMeters(session, null);
+
   const goToShare = (overrides?: { reflectionText?: string; saveWarning?: string }) => {
     router.replace({
       pathname: "/(tabs)/share" as never,
       params: {
         walkId,
-        startedAt: params.startedAt ?? "",
-        endedAt: params.endedAt ?? "",
-        durationSec: String(durationSec),
-        distanceM: String(distanceM),
-        source: params.source ?? "timer",
         sunriseBonus: String(sunriseBonus),
         sunsetBonus: String(sunsetBonus),
         prompt,
@@ -87,13 +94,20 @@ export default function ReflectionScreen() {
         walkId,
         prompt,
         text: trimmed,
-        durationSec,
-        distanceM,
+        durationSec: resolvedDurationSec,
+        distanceM: resolvedDistanceM,
         sunriseBonus,
         sunsetBonus,
       });
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (__DEV__) {
+        console.log("[reflection] continue", {
+          walkId,
+          durationSec: resolvedDurationSec,
+          distanceM: resolvedDistanceM,
+        });
+      }
       goToShare({
         reflectionText: result.record.text,
         saveWarning: result.warning,
@@ -101,6 +115,13 @@ export default function ReflectionScreen() {
     } catch {
       setStatusText("Couldn’t save that reflection, but you can still keep moving.");
       void Haptics.selectionAsync();
+      if (__DEV__) {
+        console.log("[reflection] save-fallback", {
+          walkId,
+          durationSec: resolvedDurationSec,
+          distanceM: resolvedDistanceM,
+        });
+      }
       goToShare({
         reflectionText: trimmed,
         saveWarning: "Reflection wasn’t saved to storage this time.",
@@ -112,6 +133,13 @@ export default function ReflectionScreen() {
 
   const onSkip = () => {
     void Haptics.selectionAsync();
+    if (__DEV__) {
+      console.log("[reflection] skip", {
+        walkId,
+        durationSec: resolvedDurationSec,
+        distanceM: resolvedDistanceM,
+      });
+    }
     goToShare();
   };
 

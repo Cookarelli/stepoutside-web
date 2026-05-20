@@ -6,24 +6,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { RoutePreview } from "../components/RoutePreview";
 import { getSessionById, saveSessionRouteForLater, type OutsideSession } from "../lib/store";
+import { getPaceDisplay } from "../utils/pace";
+import {
+  formatDistanceMiles,
+  formatDurationClock,
+  formatDurationMinutesLabel,
+  resolveSessionDistanceMeters,
+  resolveSessionElapsedSeconds,
+  resolveSessionMovingSeconds,
+  resolveSessionPausedSeconds,
+} from "../utils/sessionSummary";
 
 function toBool(value: string | undefined): boolean {
   return value === "true";
-}
-
-function toNumber(value: string | undefined): number {
-  const parsed = Number(value ?? "");
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function fmtMinutes(durationSec: number): string {
-  const minutes = Math.max(1, Math.round(durationSec / 60));
-  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-}
-
-function fmtDistance(distanceM: number): string {
-  if (distanceM <= 0) return "";
-  return `${(distanceM / 1609.344).toFixed(2)} miles`;
 }
 
 type PostWalkSummaryScreenProps = {
@@ -34,8 +29,6 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
   const router = useRouter();
   const params = useLocalSearchParams<{
     walkId?: string;
-    durationSec?: string;
-    distanceM?: string;
     sunriseBonus?: string;
     sunsetBonus?: string;
     reflectionText?: string;
@@ -43,8 +36,6 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
   }>();
 
   const walkId = (params.walkId ?? "").trim();
-  const durationSec = toNumber(params.durationSec);
-  const distanceM = toNumber(params.distanceM);
   const sunriseBonus = toBool(params.sunriseBonus);
   const sunsetBonus = toBool(params.sunsetBonus);
   const reflectionText = (params.reflectionText ?? "").trim();
@@ -66,6 +57,9 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
       const nextSession = await getSessionById(walkId);
       if (active) {
         setSession(nextSession);
+        if (__DEV__) {
+          console.log("[summary] received-activity", nextSession);
+        }
       }
     })();
 
@@ -74,12 +68,25 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
     };
   }, [walkId]);
 
+  const resolvedElapsedSeconds = resolveSessionElapsedSeconds(session, null);
+  const resolvedMovingSeconds = resolveSessionMovingSeconds(session, null);
+  const resolvedPausedSeconds = resolveSessionPausedSeconds(session, null);
+  const resolvedDistanceMeters = resolveSessionDistanceMeters(session, null);
   const summaryLine = useMemo(() => {
-    const distancePart = fmtDistance(distanceM);
+    const distancePart = resolvedDistanceMeters > 0 ? formatDistanceMiles(resolvedDistanceMeters, "") : "";
     return distancePart
-      ? `${fmtMinutes(durationSec)} outside • ${distancePart}`
-      : `${fmtMinutes(durationSec)} outside`;
-  }, [distanceM, durationSec]);
+      ? `${formatDurationMinutesLabel(resolvedElapsedSeconds)} outside • ${distancePart.replace(" mi", " miles")}`
+      : `${formatDurationMinutesLabel(resolvedElapsedSeconds)} outside`;
+  }, [resolvedDistanceMeters, resolvedElapsedSeconds]);
+  const resolvedPace = getPaceDisplay({
+    distanceM: resolvedDistanceMeters,
+    elapsedSeconds: resolvedElapsedSeconds,
+    movingSeconds: resolvedMovingSeconds,
+    routePoints: session?.routePoints,
+    preferRolling: false,
+    loadingFallback: "Getting GPS...",
+    emptyFallback: "-- / mi",
+  });
 
   const shareMessage = useMemo(() => {
     const lines = [`I just took ${summaryLine} with Step Outside.`];
@@ -129,6 +136,31 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
         <Text style={styles.eyebrow}>Walk complete</Text>
         <Text style={styles.title}>Let it land.</Text>
         <Text style={styles.summary}>{summaryLine}</Text>
+
+        <View style={styles.metricsRow}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Elapsed</Text>
+            <Text style={styles.metricValue}>{formatDurationClock(resolvedElapsedSeconds)}</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Moving</Text>
+            <Text style={styles.metricValue}>{resolvedMovingSeconds > 0 ? formatDurationClock(resolvedMovingSeconds) : "--"}</Text>
+          </View>
+        </View>
+        <View style={styles.metricsRow}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Distance</Text>
+            <Text style={styles.metricValue}>{formatDistanceMiles(resolvedDistanceMeters)}</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Pace</Text>
+            <Text style={styles.metricValue}>{resolvedPace}</Text>
+          </View>
+        </View>
+        {resolvedPausedSeconds > 0 ? <Text style={styles.subtle}>Paused time: {formatDurationClock(resolvedPausedSeconds)}</Text> : null}
+        {session?.source === "gps" && resolvedDistanceMeters <= 0 && (session?.routePoints?.length ?? 0) < 2 ? (
+          <Text style={styles.subtle}>GPS is still locking in. Keep moving for a more accurate distance.</Text>
+        ) : null}
 
         <View style={styles.chipsRow}>
           {sunriseBonus ? (
@@ -273,6 +305,34 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "800",
     textAlign: "center",
+  },
+  metricsRow: {
+    marginTop: 14,
+    width: "100%",
+    maxWidth: 540,
+    flexDirection: "row",
+    gap: 12,
+  },
+  metricCard: {
+    flex: 1,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: "rgba(255,255,255,0.64)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+  },
+  metricLabel: {
+    color: "rgba(11,15,14,0.5)",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+  },
+  metricValue: {
+    marginTop: 6,
+    color: "#0B0F0E",
+    fontSize: 20,
+    fontWeight: "900",
   },
   chipsRow: {
     marginTop: 16,

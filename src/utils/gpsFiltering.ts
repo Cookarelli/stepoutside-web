@@ -1,20 +1,20 @@
 import type { RoutePoint } from "../lib/store";
 
-// Require at least ~5 meters of horizontal movement before counting progress.
-// This keeps normal outdoor walking from overcounting tiny GPS hops.
-export const GPS_MIN_DISTANCE_METERS = 5;
-// Accuracy worse than 20 meters is too noisy for trustworthy walking distance.
-export const GPS_MAX_ACCURACY_METERS = 20;
-// Step Outside currently tracks walking/hiking, not running mode, so keep the speed ceiling conservative.
-export const GPS_MAX_REASONABLE_SPEED_MPS = 3.0;
-// Points arriving within 4 seconds need more than trivial movement to avoid dot-jitter accumulation.
-export const GPS_MIN_TIME_BETWEEN_POINTS_MS = 4000;
+// Require at least ~4 meters of horizontal movement before counting progress.
+// This is still enough to suppress GPS jitter, but it is forgiving enough for a normal short walk.
+export const GPS_MIN_DISTANCE_METERS = 4;
+// Accuracy worse than 25 meters is too noisy for trustworthy walking distance.
+export const GPS_MAX_ACCURACY_METERS = 25;
+// Keep the speed ceiling generous enough for brisk walking and light jogging without letting GPS spikes through.
+export const GPS_MAX_REASONABLE_SPEED_MPS = 3.8;
+// Points arriving within 3 seconds need more than trivial movement to avoid dot-jitter accumulation.
+export const GPS_MIN_TIME_BETWEEN_POINTS_MS = 3000;
 // Speeds near zero are usually standing still, even if GPS wanders a little bit.
 export const GPS_STATIONARY_SPEED_MPS = 0.4;
 // Require a couple of consecutive "still" samples before treating the user as stationary drift.
 export const GPS_STATIONARY_CONFIRMATION_POINTS = 2;
-// Accuracy above ~14m is often good enough for a map pin, but not ideal for short walking segments.
-export const GPS_LOW_CONFIDENCE_ACCURACY_METERS = 14;
+// Accuracy above ~18m is usable but lower-confidence for short walking segments.
+export const GPS_LOW_CONFIDENCE_ACCURACY_METERS = 18;
 // Abrupt reversals above this threshold are usually bounce or reflection, not a real turn on foot.
 export const GPS_MAX_DIRECTION_CHANGE_DEGREES = 115;
 // Human walking/running acceleration is far lower than most GPS jump artifacts.
@@ -38,6 +38,16 @@ type GpsFilterInput = {
 
 export type MotionState = "stationary" | "walking" | "uncertain";
 export type GpsConfidence = "high" | "medium" | "low";
+export type GpsRejectedReason =
+  | "paused"
+  | "missing_coords"
+  | "poor_accuracy"
+  | "duplicate_timestamp"
+  | "too_close"
+  | "too_fast"
+  | "elevation_spike"
+  | "direction_jump"
+  | "acceleration_spike";
 
 export type GpsFilterResult =
   | {
@@ -66,19 +76,7 @@ export type GpsFilterResult =
       confidence: GpsConfidence;
       timeDeltaMs: 0;
       nextStationaryPointStreak: number;
-      reason:
-        | "paused"
-        | "missing-coordinates"
-        | "accuracy"
-        | "low-confidence"
-        | "non-monotonic-time"
-        | "jitter"
-        | "too-frequent"
-        | "speed-spike"
-        | "stationary"
-        | "direction-jump"
-        | "acceleration-spike"
-        | "vertical-spike";
+      reason: GpsRejectedReason;
     };
 
 export function haversineMeters(a: Pick<RoutePoint, "lat" | "lng">, b: Pick<RoutePoint, "lat" | "lng">): number {
@@ -206,7 +204,7 @@ export function filterGpsPoint({
     return {
       accepted: false,
       ...missingResult,
-      reason: "missing-coordinates",
+      reason: "missing_coords",
     };
   }
 
@@ -221,7 +219,7 @@ export function filterGpsPoint({
       ...missingResult,
       confidence,
       nextStationaryPointStreak: stationaryPointStreak,
-      reason: "accuracy",
+      reason: "poor_accuracy",
     };
   }
 
@@ -249,7 +247,7 @@ export function filterGpsPoint({
       ...missingResult,
       confidence,
       nextStationaryPointStreak: stationaryPointStreak,
-      reason: "non-monotonic-time",
+      reason: "duplicate_timestamp",
     };
   }
 
@@ -288,8 +286,7 @@ export function filterGpsPoint({
       accelerationMps2,
       motionState,
       nextStationaryPointStreak,
-      reason:
-        nextStationaryPointStreak >= GPS_STATIONARY_CONFIRMATION_POINTS ? "stationary" : "jitter",
+      reason: "too_close",
     };
   }
 
@@ -304,7 +301,8 @@ export function filterGpsPoint({
       derivedSpeedMps,
       accelerationMps2,
       motionState,
-      reason: "too-frequent",
+      nextStationaryPointStreak: stationaryPointStreak,
+      reason: "too_close",
     };
   }
 
@@ -324,22 +322,7 @@ export function filterGpsPoint({
       accelerationMps2,
       motionState,
       nextStationaryPointStreak,
-      reason: "stationary",
-    };
-  }
-
-  if (confidence === "low" && rawDistanceM < GPS_MIN_DISTANCE_METERS * 2) {
-    return {
-      accepted: false,
-      ...missingResult,
-      confidence,
-      rawHorizontalDistanceM: rawDistanceM,
-      verticalDeltaM,
-      derivedSpeedMps,
-      accelerationMps2,
-      motionState,
-      nextStationaryPointStreak,
-      reason: "low-confidence",
+      reason: "too_close",
     };
   }
 
@@ -354,7 +337,7 @@ export function filterGpsPoint({
       accelerationMps2,
       motionState,
       nextStationaryPointStreak,
-      reason: "vertical-spike",
+      reason: "elevation_spike",
     };
   }
 
@@ -378,7 +361,7 @@ export function filterGpsPoint({
           accelerationMps2,
           motionState,
           nextStationaryPointStreak,
-          reason: "direction-jump",
+          reason: "direction_jump",
         };
       }
     }
@@ -396,7 +379,7 @@ export function filterGpsPoint({
       accelerationMps2,
       motionState,
       nextStationaryPointStreak,
-      reason: "speed-spike",
+      reason: "too_fast",
     };
   }
 
@@ -415,35 +398,29 @@ export function filterGpsPoint({
       accelerationMps2,
       motionState,
       nextStationaryPointStreak,
-      reason: "acceleration-spike",
+      reason: "acceleration_spike",
     };
   }
 
   const acceptedPoint = smoothPoint(lastAcceptedPoint, normalized, confidence, motionState);
   const acceptedDistanceM = haversineMeters(lastAcceptedPoint, acceptedPoint);
-
-  // Re-check after smoothing so nearly identical accepted points still do not count as movement.
-  if (acceptedDistanceM < GPS_MIN_DISTANCE_METERS) {
-    const smoothedStationaryStreak = stationaryPointStreak + 1;
-    return {
-      accepted: false,
-      ...missingResult,
-      confidence,
-      rawHorizontalDistanceM: rawDistanceM,
-      verticalDeltaM,
-      derivedSpeedMps,
-      accelerationMps2,
-      motionState,
-      nextStationaryPointStreak: smoothedStationaryStreak,
-      reason:
-        smoothedStationaryStreak >= GPS_STATIONARY_CONFIRMATION_POINTS ? "stationary" : "jitter",
-    };
-  }
+  // Smoothing is only for route quality. If a raw point already cleared validation, we should not
+  // throw it away just because the smoothed position lands slightly closer to the prior point.
+  // That edge case can cause short real walks to save as 0.00 mi when watcher updates arrive near
+  // the 5 m OS threshold. In that case, keep the validated raw point as the accepted anchor.
+  const finalAcceptedPoint =
+    acceptedDistanceM < GPS_MIN_DISTANCE_METERS
+      ? normalized
+      : acceptedPoint;
+  const finalAcceptedDistanceM =
+    acceptedDistanceM < GPS_MIN_DISTANCE_METERS
+      ? rawDistanceM
+      : acceptedDistanceM;
 
   return {
     accepted: true,
-    point: acceptedPoint,
-    distanceDeltaM: acceptedDistanceM,
+    point: finalAcceptedPoint,
+    distanceDeltaM: finalAcceptedDistanceM,
     rawHorizontalDistanceM: rawDistanceM,
     verticalDeltaM,
     derivedSpeedMps,
@@ -454,4 +431,23 @@ export function filterGpsPoint({
     nextStationaryPointStreak: 0,
     reason: "accepted",
   };
+}
+
+export function calculateAcceptedRouteDistanceMeters(routePoints?: RoutePoint[] | null): number {
+  if (!Array.isArray(routePoints) || routePoints.length < 2) return 0;
+
+  let totalMeters = 0;
+
+  for (let index = 1; index < routePoints.length; index += 1) {
+    const previous = routePoints[index - 1];
+    const current = routePoints[index];
+    if (!previous || !current) continue;
+
+    const horizontalDistanceM = haversineMeters(previous, current);
+    if (!Number.isFinite(horizontalDistanceM) || horizontalDistanceM <= 0) continue;
+
+    totalMeters += horizontalDistanceM;
+  }
+
+  return totalMeters;
 }

@@ -8,32 +8,20 @@ import { RoutePreview } from "../src/components/RoutePreview";
 import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
 import { getPremiumStatus } from "../src/lib/pro";
 import { evaluateSolarBonus } from "../src/lib/solarBonus";
-import { addCompletedSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
-
-function minutesFromDuration(durationSec: number): number {
-  return Math.max(1, Math.round(durationSec / 60));
-}
-
-function fmtNiceMinutes(min: number): string {
-  return min === 1 ? "1 minute" : `${min} minutes`;
-}
-
-function fmtClock(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${String(r).padStart(2, "0")}`;
-}
-
-function fmtDistance(distanceM: number): string {
-  if (!Number.isFinite(distanceM) || distanceM <= 0) return "0.00 mi";
-  return `${(distanceM / 1609.344).toFixed(2)} mi`;
-}
+import { addCompletedSession, type OutsideSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
+import {
+  formatDistanceMiles,
+  formatDurationClock,
+  formatDurationMinutesLabel,
+  resolveSessionDistanceMeters,
+  resolveSessionElapsedSeconds,
+} from "../src/utils/sessionSummary";
 
 export default function CompleteScreen() {
   const router = useRouter();
 
   const params = useLocalSearchParams<{
+    walkId?: string;
     startedAt?: string;
     endedAt?: string;
     durationSec?: string;
@@ -43,69 +31,139 @@ export default function CompleteScreen() {
     source?: string;
   }>();
 
-  const startedAt = Number(params.startedAt ?? "");
-  const endedAt = Number(params.endedAt ?? "");
-  const durationSec = Number(params.durationSec ?? "");
-  const movingTimeSec = Number(params.movingTimeSec ?? "");
-  const pausedTimeSec = Number(params.pausedTimeSec ?? "");
-  const distanceM = Number(params.distanceM ?? "0");
-  const source: SessionSource = params.source === "gps" ? "gps" : "timer";
-
-  const valid =
-    Number.isFinite(startedAt) &&
-    Number.isFinite(endedAt) &&
-    Number.isFinite(durationSec) &&
-    durationSec > 0;
-
-  const counts = valid && durationSec >= 10;
-
-  const saveKey = `${startedAt}-${endedAt}-${durationSec}-${Math.round(
-    Number.isFinite(distanceM) ? distanceM : 0
-  )}-${source}`;
+  const paramWalkId = (params.walkId ?? "").trim();
+  const paramStartedAt = Number(params.startedAt ?? "");
+  const paramEndedAt = Number(params.endedAt ?? "");
+  const paramDurationSec = Number(params.durationSec ?? "");
+  const paramMovingTimeSec = Number(params.movingTimeSec ?? "");
+  const paramPausedTimeSec = Number(params.pausedTimeSec ?? "");
+  const paramDistanceM = Number(params.distanceM ?? "0");
+  const paramSource: SessionSource = params.source === "gps" ? "gps" : "timer";
 
   const [saving, setSaving] = useState(true);
-  const [minutes, setMinutes] = useState(0);
   const [summary, setSummary] = useState<SummaryStats | null>(null);
   const [errorText, setErrorText] = useState("");
   const [sunriseBonus, setSunriseBonus] = useState(false);
   const [sunsetBonus, setSunsetBonus] = useState(false);
   const [lockedBonusTeaser, setLockedBonusTeaser] = useState(false);
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
+  const [savedSession, setSavedSession] = useState<OutsideSession | null>(null);
+  const [resolvedWalkId, setResolvedWalkId] = useState(paramWalkId);
+  const [resolvedStartedAt, setResolvedStartedAt] = useState(paramStartedAt);
+  const [resolvedEndedAt, setResolvedEndedAt] = useState(paramEndedAt);
+  const [resolvedDurationSec, setResolvedDurationSec] = useState(paramDurationSec);
+  const [resolvedMovingTimeSec, setResolvedMovingTimeSec] = useState(paramMovingTimeSec);
+  const [resolvedPausedTimeSec, setResolvedPausedTimeSec] = useState(paramPausedTimeSec);
+  const [resolvedDistanceM, setResolvedDistanceM] = useState(paramDistanceM);
+  const [resolvedSource, setResolvedSource] = useState<SessionSource>(paramSource);
+  const resolvedValid =
+    Number.isFinite(resolvedStartedAt) &&
+    Number.isFinite(resolvedEndedAt) &&
+    Number.isFinite(resolvedDurationSec) &&
+    resolvedDurationSec > 0;
+  const fallbackSession: Partial<OutsideSession> = {
+    id: resolvedWalkId,
+    startedAt: resolvedStartedAt,
+    endedAt: resolvedEndedAt,
+    durationSec: resolvedDurationSec,
+    elapsedTimeSec: resolvedDurationSec,
+    movingTimeSec: resolvedMovingTimeSec,
+    pausedTimeSec: resolvedPausedTimeSec,
+    distanceM: resolvedDistanceM,
+    source: resolvedSource,
+    routePoints,
+  };
+  const displaySession = savedSession ?? fallbackSession;
+  const displayElapsedSeconds = resolveSessionElapsedSeconds(savedSession, fallbackSession);
+  const displayDistanceMeters = resolveSessionDistanceMeters(savedSession, fallbackSession);
 
   const lastSaveKeyRef = useRef<string | null>(null);
   const didHapticRef = useRef(false);
 
   useEffect(() => {
     (async () => {
-      if (!valid) {
-        await clearCompletedWalkDraft();
-        setSaving(false);
-        return;
-      }
-
-      if (!counts) {
-        await clearCompletedWalkDraft();
-        setSaving(false);
-        setErrorText("Walks under 10 seconds don’t count yet.");
-        return;
-      }
-
-      if (lastSaveKeyRef.current === saveKey) {
-        setSaving(false);
-        return;
-      }
-      lastSaveKeyRef.current = saveKey;
-
       try {
         setErrorText("");
         setSaving(true);
-
-        const mins = minutesFromDuration(durationSec);
-        setMinutes(mins);
-
-        const id = `${startedAt}-${endedAt}`;
         const walkDraft = await getCompletedWalkDraft();
-        const draftRoutePoints = walkDraft?.routePoints ?? [];
+        const draftMatchesParams =
+          Boolean(
+            walkDraft &&
+              ((walkDraft.id && walkDraft.id === paramWalkId) ||
+                (walkDraft.startedAt === paramStartedAt && walkDraft.endedAt === paramEndedAt))
+          );
+        const startedAt = draftMatchesParams ? Number(walkDraft?.startedAt ?? paramStartedAt) : paramStartedAt;
+        const endedAt = draftMatchesParams ? Number(walkDraft?.endedAt ?? paramEndedAt) : paramEndedAt;
+        const durationSec = draftMatchesParams ? Number(walkDraft?.durationSec ?? paramDurationSec) : paramDurationSec;
+        const movingTimeSec = draftMatchesParams
+          ? Number(walkDraft?.movingTimeSec ?? paramMovingTimeSec)
+          : paramMovingTimeSec;
+        const pausedTimeSec = draftMatchesParams
+          ? Number(walkDraft?.pausedTimeSec ?? paramPausedTimeSec)
+          : paramPausedTimeSec;
+        const distanceM = draftMatchesParams ? Number(walkDraft?.distanceM ?? paramDistanceM) : paramDistanceM;
+        const source: SessionSource =
+          draftMatchesParams && (walkDraft?.source === "gps" || walkDraft?.source === "timer")
+            ? walkDraft.source
+            : paramSource;
+        const walkId =
+          draftMatchesParams && typeof walkDraft?.id === "string" && walkDraft.id.trim()
+            ? walkDraft.id.trim()
+            : paramWalkId || `${startedAt}-${endedAt}`;
+        const draftRoutePoints = draftMatchesParams ? walkDraft?.routePoints ?? [] : [];
+
+        const valid =
+          Number.isFinite(startedAt) &&
+          Number.isFinite(endedAt) &&
+          Number.isFinite(durationSec) &&
+          durationSec > 0;
+        const counts = valid && durationSec >= 10;
+        const saveKey = `${walkId}-${durationSec}-${Math.round(Number.isFinite(distanceM) ? distanceM : 0)}-${source}`;
+
+        setResolvedWalkId(walkId);
+        setResolvedStartedAt(startedAt);
+        setResolvedEndedAt(endedAt);
+        setResolvedDurationSec(durationSec);
+        setResolvedMovingTimeSec(movingTimeSec);
+        setResolvedPausedTimeSec(pausedTimeSec);
+        setResolvedDistanceM(distanceM);
+        setResolvedSource(source);
+        setRoutePoints(draftRoutePoints);
+
+        if (__DEV__) {
+          console.log("[complete] resolved-handoff", {
+            paramWalkId,
+            walkId,
+            liveElapsedSeconds: durationSec,
+            liveMovingSeconds: movingTimeSec,
+            pausedSeconds: pausedTimeSec,
+            rawRoutePointCount: walkDraft?.routePoints?.length ?? 0,
+            acceptedRoutePointCount: draftRoutePoints.length,
+            filteredDistanceMeters: distanceM,
+            source,
+            usedDraft: draftMatchesParams,
+          });
+        }
+
+        if (!valid) {
+          await clearCompletedWalkDraft();
+          setSaving(false);
+          return;
+        }
+
+        if (!counts) {
+          await clearCompletedWalkDraft();
+          setSaving(false);
+          setErrorText("Walks under 10 seconds don’t count yet.");
+          return;
+        }
+
+        if (lastSaveKeyRef.current === saveKey) {
+          setSaving(false);
+          return;
+        }
+        lastSaveKeyRef.current = saveKey;
+
         const premiumStatus = await getPremiumStatus();
         const solarBonus = await evaluateSolarBonus({
           startedAt,
@@ -116,10 +174,9 @@ export default function CompleteScreen() {
         setSunriseBonus(solarBonus.isSunriseBonus);
         setSunsetBonus(solarBonus.isSunsetBonus);
         setLockedBonusTeaser(Boolean(solarBonus.bonusType) && !premiumStatus.isPremium);
-        setRoutePoints(draftRoutePoints);
 
         const result = await addCompletedSession({
-          id,
+          id: walkId,
           startedAt,
           endedAt,
           durationSec,
@@ -143,6 +200,16 @@ export default function CompleteScreen() {
         await clearCompletedWalkDraft();
 
         setSummary(result.summary);
+        setSavedSession(result.session);
+
+        if (__DEV__) {
+          console.log("[complete] saved-session", {
+            savedActivityId: walkId,
+            savedDistanceMiles: Number(((Math.max(0, distanceM) / 1609.344) || 0).toFixed(2)),
+            savedDistanceMeters: Math.max(0, distanceM),
+            routePointCount: draftRoutePoints.length,
+          });
+        }
 
         if (!didHapticRef.current) {
           didHapticRef.current = true;
@@ -156,14 +223,13 @@ export default function CompleteScreen() {
         setSaving(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saveKey]);
+  }, [paramDistanceM, paramDurationSec, paramEndedAt, paramMovingTimeSec, paramPausedTimeSec, paramSource, paramStartedAt, paramWalkId]);
 
   const headline = useMemo(() => {
-    if (!valid) return "Go back and start a walk.";
-    if (!counts) return "Almost.";
+    if (!resolvedValid) return "Go back and start a walk.";
+    if (resolvedDurationSec < 10) return "Almost.";
     return "This counts.";
-  }, [valid, counts]);
+  }, [resolvedDurationSec, resolvedValid]);
 
   const streakLine = useMemo(() => {
     if (!summary) return "";
@@ -173,12 +239,12 @@ export default function CompleteScreen() {
   }, [summary]);
 
   const continueLabel = useMemo(() => {
-    if (!valid) return "BACK HOME";
+    if (!resolvedValid) return "BACK HOME";
     return saving ? "SAVING…" : "CONTINUE";
-  }, [saving, valid]);
+  }, [resolvedValid, saving]);
 
   const goNext = () => {
-    if (!valid) {
+    if (!resolvedValid) {
       router.replace("/(tabs)");
       return;
     }
@@ -186,17 +252,9 @@ export default function CompleteScreen() {
     router.push({
       pathname: "/reflection" as never,
       params: {
-        walkId: `${startedAt}-${endedAt}`,
-        startedAt: String(startedAt),
-        endedAt: String(endedAt),
-        durationSec: String(durationSec),
-        movingTimeSec: String(Number.isFinite(movingTimeSec) ? Math.max(0, Math.round(movingTimeSec)) : 0),
-        pausedTimeSec: String(Number.isFinite(pausedTimeSec) ? Math.max(0, Math.round(pausedTimeSec)) : 0),
-        distanceM: String(Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0),
-        source,
+        walkId: resolvedWalkId || `${resolvedStartedAt}-${resolvedEndedAt}`,
         sunriseBonus: String(sunriseBonus),
         sunsetBonus: String(sunsetBonus),
-        routePointCount: String(routePoints.length),
       },
     } as never);
   };
@@ -209,33 +267,37 @@ export default function CompleteScreen() {
 
         <Text style={styles.headline}>{headline}</Text>
 
-        {valid ? (
+        {resolvedValid ? (
           <>
             <Text style={styles.big}>
-              {fmtNiceMinutes(minutes || minutesFromDuration(durationSec))}
+              {formatDurationMinutesLabel(displayElapsedSeconds || resolvedDurationSec)}
             </Text>
 
             <View style={styles.metricsRow}>
               <View style={styles.metricCard}>
                 <Text style={styles.metricK}>Time</Text>
-                <Text style={styles.metricV}>{fmtClock(durationSec)}</Text>
+                <Text style={styles.metricV}>{formatDurationClock(displayElapsedSeconds)}</Text>
               </View>
               <View style={styles.metricCard}>
                 <Text style={styles.metricK}>Distance</Text>
-                <Text style={styles.metricV}>{fmtDistance(distanceM)}</Text>
+                <Text style={styles.metricV}>{formatDistanceMiles(displayDistanceMeters)}</Text>
               </View>
             </View>
 
-            {routePoints.length > 1 ? (
+            {displaySession.source === "gps" && displayDistanceMeters <= 0 && (displaySession.routePoints?.length ?? 0) < 2 ? (
+              <Text style={styles.routeNote}>GPS is still locking in. Keep moving for a more accurate distance.</Text>
+            ) : null}
+
+            {(displaySession.routePoints?.length ?? 0) > 1 ? (
               <View style={styles.routeWrap}>
-                <RoutePreview points={routePoints} title="Captured route" subtitle="Saved from this walk" />
+                <RoutePreview points={displaySession.routePoints ?? []} title="Captured route" subtitle="Saved from this walk" />
               </View>
             ) : null}
 
             <Text style={styles.sub}>
               {saving ? "Saving your walk…" : errorText ? errorText : streakLine || "Streak updated."}
             </Text>
-            {!saving && routePoints.length > 1 ? (
+            {!saving && (displaySession.routePoints?.length ?? 0) > 1 ? (
               <Text style={styles.routeNote}>Route captured for this walk.</Text>
             ) : null}
             {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise Bonus earned</Text> : null}
@@ -253,10 +315,10 @@ export default function CompleteScreen() {
             void Haptics.selectionAsync();
             goNext();
           }}
-          disabled={saving && valid}
+          disabled={saving && resolvedValid}
           style={({ pressed }) => [
             styles.btnPrimary,
-            saving && valid ? styles.btnDisabled : null,
+            saving && resolvedValid ? styles.btnDisabled : null,
             pressed ? { opacity: 0.9 } : null,
           ]}
         >

@@ -13,7 +13,13 @@ import {
   setCompletedWalkDraft,
 } from "../src/lib/activeWalk";
 import type { RoutePoint } from "../src/lib/store";
-import { type MotionState, filterGpsPoint, haversineMeters } from "../src/utils/gpsFiltering";
+import {
+  calculateAcceptedRouteDistanceMeters,
+  type GpsRejectedReason,
+  type MotionState,
+  filterGpsPoint,
+  haversineMeters,
+} from "../src/utils/gpsFiltering";
 import { calculateMovingTimeSeconds, getPaceMetrics } from "../src/utils/pace";
 
 type PermissionState = "unknown" | "granted" | "denied";
@@ -40,10 +46,23 @@ function fmtDebugNumber(value?: number | null, digits = 1): string {
   return value.toFixed(digits);
 }
 
+function formatDistanceLabel(options: {
+  permission: PermissionState;
+  distanceM: number;
+  acceptedPointCount: number;
+}): string {
+  const { permission, distanceM, acceptedPointCount } = options;
+  if (permission === "denied") return `${(distanceM / 1609.344).toFixed(2)} mi`;
+  if (distanceM > 0) return `${(distanceM / 1609.344).toFixed(2)} mi`;
+  if (acceptedPointCount < 2) return "Locking...";
+  return "0.00 mi";
+}
+
 type GpsDebugState = {
   rawPointCount: number;
   acceptedPointCount: number;
   rejectedPointCount: number;
+  rejectedCountsByReason: Partial<Record<GpsRejectedReason, number>>;
   latestAccuracy: number | null;
   latestSpeed: number | null;
   latestHorizontalDistanceM: number;
@@ -63,6 +82,7 @@ const EMPTY_GPS_DEBUG_STATE: GpsDebugState = {
   rawPointCount: 0,
   acceptedPointCount: 0,
   rejectedPointCount: 0,
+  rejectedCountsByReason: {},
   latestAccuracy: null,
   latestSpeed: null,
   latestHorizontalDistanceM: 0,
@@ -130,6 +150,15 @@ export default function Walk() {
     });
   }, [distanceM, elapsedSec, movingSec, permission]);
   const pace = paceMetrics.display;
+  const distanceLabel = useMemo(
+    () =>
+      formatDistanceLabel({
+        permission,
+        distanceM,
+        acceptedPointCount: gpsDebug.acceptedPointCount,
+      }),
+    [distanceM, gpsDebug.acceptedPointCount, permission]
+  );
 
   const logWalk = useCallback((message: string, details?: Record<string, unknown>) => {
     if (details) {
@@ -399,6 +428,10 @@ export default function Walk() {
               setGpsDebugSafe((current) => ({
                 ...current,
                 rejectedPointCount: current.rejectedPointCount + 1,
+                rejectedCountsByReason: {
+                  ...current.rejectedCountsByReason,
+                  [filtered.reason]: (current.rejectedCountsByReason[filtered.reason] ?? 0) + 1,
+                },
                 latestHorizontalDistanceM: filtered.rawHorizontalDistanceM,
                 latestVerticalChangeM: filtered.verticalDeltaM,
                 movingTimeSeconds: movingSecRef.current,
@@ -616,16 +649,44 @@ export default function Walk() {
     }
   }, [logWalk]);
 
-  const setCompletedWalkDraftSafe = useCallback(async (routePoints: RoutePoint[], reason: string) => {
-    try {
-      await setCompletedWalkDraft({ routePoints });
-      logWalk("completed draft saved", { reason, points: routePoints.length });
-      return true;
-    } catch (error) {
-      console.error("[walk] failed to save completed draft", error);
-      return false;
-    }
-  }, [logWalk]);
+  const setCompletedWalkDraftSafe = useCallback(
+    async (
+      draft: {
+        id: string;
+        startedAt: number;
+        endedAt: number;
+        durationSec: number;
+        elapsedTimeSec: number;
+        movingTimeSec: number;
+        pausedTimeSec: number;
+        distanceM: number;
+        source: SessionSource;
+        routePoints: RoutePoint[];
+      },
+      reason: string
+    ) => {
+      try {
+        await setCompletedWalkDraft(draft);
+        logWalk("completed draft saved", {
+          reason,
+          id: draft.id,
+          points: draft.routePoints.length,
+          elapsedTimeSec: draft.elapsedTimeSec,
+          movingTimeSec: draft.movingTimeSec,
+          pausedTimeSec: draft.pausedTimeSec,
+          distanceM: draft.distanceM,
+        });
+        if (__DEV__) {
+          console.log("[walk] completed-draft", draft);
+        }
+        return true;
+      } catch (error) {
+        console.error("[walk] failed to save completed draft", error);
+        return false;
+      }
+    },
+    [logWalk]
+  );
 
   const persistActiveWalk = useCallback(
     async (
@@ -867,7 +928,11 @@ export default function Walk() {
       const finalElapsed = syncElapsedFromClock();
       const finalPaused = getPausedNow();
       const finalMoving = Math.max(0, movingSecRef.current);
-      const finalDistance = Math.max(0, Math.round(distanceRef.current));
+      const recalculatedDistance = calculateAcceptedRouteDistanceMeters(routePoints);
+      const finalDistance = Math.max(
+        0,
+        Math.round(distanceRef.current > 0 ? distanceRef.current : recalculatedDistance)
+      );
 
       elapsedBeforeRunRef.current = getActiveElapsedNow();
       runStartedAtRef.current = null;
@@ -880,6 +945,7 @@ export default function Walk() {
 
       const startedAt = startedAtRef.current ?? Date.now();
       const endedAt = Date.now();
+      const walkId = `${startedAt}-${endedAt}`;
       startedAtRef.current = null;
 
       // Guard: only count sessions >= 10 seconds
@@ -890,7 +956,35 @@ export default function Walk() {
         return;
       }
 
-      const savedDraft = await setCompletedWalkDraftSafe(routePoints, "stop");
+      const completedDraft = {
+        id: walkId,
+        startedAt,
+        endedAt,
+        durationSec: finalElapsed,
+        elapsedTimeSec: finalElapsed,
+        movingTimeSec: finalMoving,
+        pausedTimeSec: finalPaused,
+        distanceM: finalDistance,
+        source,
+        routePoints,
+      };
+
+      if (__DEV__) {
+        console.log("[walk] stop-summary", {
+          walkId,
+          elapsedSeconds: finalElapsed,
+          movingSeconds: finalMoving,
+          pausedSeconds: finalPaused,
+          rawRoutePointCount: routePoints.length,
+          acceptedRoutePointCount: routePoints.length,
+          filteredDistanceMeters: finalDistance,
+          rawDistanceMeters: gpsDebug.totalRawDistanceM,
+          rejectedCountsByReason: gpsDebug.rejectedCountsByReason,
+          source,
+        });
+      }
+
+      const savedDraft = await setCompletedWalkDraftSafe(completedDraft, "stop");
       if (!savedDraft) {
         await resetWalkState("stop draft failed");
         Alert.alert("Couldn’t save walk", "Please try again.");
@@ -908,6 +1002,7 @@ export default function Walk() {
           pausedTimeSec: String(finalPaused),
           distanceM: String(finalDistance),
           source,
+          walkId,
           routePointCount: String(routePoints.length),
           ...(Number.isFinite(endLat) && Number.isFinite(endLng)
             ? { endLat: String(endLat), endLng: String(endLng) }
@@ -1076,6 +1171,7 @@ export default function Walk() {
           rawPointCount: routePointsRef.current.length,
           acceptedPointCount: routePointsRef.current.length,
           rejectedPointCount: 0,
+          rejectedCountsByReason: {},
           latestAccuracy: routePointsRef.current.at(-1)?.accuracy ?? null,
           latestSpeed: routePointsRef.current.at(-1)?.speed ?? null,
           latestHorizontalDistanceM: 0,
@@ -1199,7 +1295,7 @@ export default function Walk() {
         <View style={styles.metrics}>
           <View style={styles.metric}>
             <Text style={styles.metricK}>Distance</Text>
-            <Text style={styles.metricV}>{(distanceM / 1609.344).toFixed(2)} mi</Text>
+            <Text style={styles.metricV}>{distanceLabel}</Text>
           </View>
           <View style={styles.metric}>
             <Text style={styles.metricK}>Pace</Text>
@@ -1210,6 +1306,8 @@ export default function Walk() {
 
       {permission === "denied" ? (
         <Text style={styles.warn}>Location is off, so this walk will track time only.</Text>
+      ) : phase === "tracking" && distanceM <= 0 && gpsDebug.acceptedPointCount < 2 ? (
+        <Text style={styles.warn}>GPS is still locking in. Keep moving for a more accurate distance.</Text>
       ) : null}
 
       {!restored ? (
@@ -1254,6 +1352,9 @@ export default function Walk() {
             <Text style={styles.debugRow}>Raw GPS points: {gpsDebug.rawPointCount}</Text>
             <Text style={styles.debugRow}>Accepted GPS points: {gpsDebug.acceptedPointCount}</Text>
             <Text style={styles.debugRow}>Rejected GPS points: {gpsDebug.rejectedPointCount}</Text>
+            <Text style={styles.debugRow}>
+              Reject reasons: {JSON.stringify(gpsDebug.rejectedCountsByReason)}
+            </Text>
             <Text style={styles.debugRow}>Latest accuracy: {fmtDebugNumber(gpsDebug.latestAccuracy)} m</Text>
             <Text style={styles.debugRow}>Latest speed: {fmtDebugNumber(gpsDebug.latestSpeed)} m/s</Text>
             <Text style={styles.debugRow}>Latest horizontal: {fmtMeters(gpsDebug.latestHorizontalDistanceM)}</Text>

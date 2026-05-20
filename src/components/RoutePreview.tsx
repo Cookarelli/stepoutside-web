@@ -3,10 +3,10 @@ import { Platform, StyleSheet, Text, View } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 
 import { ENV } from "../../env";
-import type { RoutePoint } from "../lib/store";
+import type { DisplayRoutePoint, FilteredRoutePoint } from "../types/routes";
 
 type RoutePreviewProps = {
-  points: RoutePoint[];
+  points: FilteredRoutePoint[];
   title?: string;
   subtitle?: string;
 };
@@ -25,22 +25,17 @@ type PreviewSegment = {
   angle: number;
 };
 
-type MapCoordinate = {
-  latitude: number;
-  longitude: number;
-};
-
 const PREVIEW_WIDTH = 280;
 const PREVIEW_HEIGHT = 160;
 const PREVIEW_PADDING = 16;
 const MAP_HEIGHT = 210;
 const MAX_MAP_POINTS = 120;
 
-function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
+function samplePoints(points: FilteredRoutePoint[], maxPoints: number): FilteredRoutePoint[] {
   if (points.length <= maxPoints) return points;
 
   const lastIndex = points.length - 1;
-  const sampled: RoutePoint[] = [];
+  const sampled: FilteredRoutePoint[] = [];
   for (let index = 0; index < maxPoints; index += 1) {
     const sourceIndex = Math.round((index / (maxPoints - 1)) * lastIndex);
     sampled.push(points[sourceIndex] ?? points[lastIndex]);
@@ -48,13 +43,13 @@ function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
   return sampled;
 }
 
-function smoothRoutePoints(points: RoutePoint[], passes = 2): RoutePoint[] {
+function smoothRoutePoints(points: FilteredRoutePoint[], passes = 2): FilteredRoutePoint[] {
   if (points.length < 3) return points;
 
   let next = samplePoints(points, MAX_MAP_POINTS);
 
   for (let pass = 0; pass < passes; pass += 1) {
-    const smoothed: RoutePoint[] = [next[0]];
+    const smoothed: FilteredRoutePoint[] = [next[0]];
 
     for (let index = 0; index < next.length - 1; index += 1) {
       const current = next[index];
@@ -84,7 +79,16 @@ function smoothRoutePoints(points: RoutePoint[], passes = 2): RoutePoint[] {
   return next;
 }
 
-function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
+function buildDisplayRoutePoints(points: FilteredRoutePoint[]): DisplayRoutePoint[] {
+  // Map rendering is display-only. Do not use this for distance or pace calculations.
+  // We intentionally smooth and sample a cloned route array here so saved routePoints remain untouched.
+  return smoothRoutePoints(points).map((point) => ({
+    latitude: point.lat,
+    longitude: point.lng,
+  }));
+}
+
+function buildPreviewPoints(points: FilteredRoutePoint[]): PreviewPoint[] {
   const sampled = samplePoints(points, 32);
   const lats = sampled.map((point) => point.lat);
   const lngs = sampled.map((point) => point.lng);
@@ -176,7 +180,7 @@ function buildSegments(points: PreviewPoint[]): PreviewSegment[] {
   return segments;
 }
 
-function describeSignal(points: RoutePoint[]): string {
+function describeSignal(points: FilteredRoutePoint[]): string {
   const accuracies = points
     .map((point) => point.accuracy)
     .filter((accuracy): accuracy is number => typeof accuracy === "number" && Number.isFinite(accuracy));
@@ -202,20 +206,14 @@ function createMapStyle() {
   ];
 }
 
-function NativeRouteMap({ points }: { points: RoutePoint[] }) {
+function NativeRouteMap({ points, useGoogleProvider }: { points: DisplayRoutePoint[]; useGoogleProvider: boolean }) {
   const mapRef = useRef<MapView | null>(null);
-  const supportsGoogleMap = Platform.OS !== "web" && Boolean(ENV.MAPS.googleMapsApiKey);
-
-  const displayPoints = useMemo(() => smoothRoutePoints(points), [points]);
-  const coordinates = useMemo<MapCoordinate[]>(
-    () => displayPoints.map((point) => ({ latitude: point.lat, longitude: point.lng })),
-    [displayPoints]
-  );
-  const start = coordinates[0];
-  const end = coordinates[coordinates.length - 1];
+  const coordinates = points;
+  const start = points[0];
+  const end = points[points.length - 1];
 
   useEffect(() => {
-    if (!supportsGoogleMap || !mapRef.current || coordinates.length < 2) return;
+    if (!mapRef.current || coordinates.length < 2) return;
 
     const timeout = setTimeout(() => {
       try {
@@ -234,9 +232,9 @@ function NativeRouteMap({ points }: { points: RoutePoint[] }) {
     }, 0);
 
     return () => clearTimeout(timeout);
-  }, [coordinates, supportsGoogleMap]);
+  }, [coordinates]);
 
-  if (!supportsGoogleMap || coordinates.length < 2) {
+  if (coordinates.length < 2) {
     return null;
   }
 
@@ -245,7 +243,7 @@ function NativeRouteMap({ points }: { points: RoutePoint[] }) {
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFill}
-        provider={PROVIDER_GOOGLE}
+        provider={useGoogleProvider ? PROVIDER_GOOGLE : undefined}
         customMapStyle={createMapStyle()}
         mapType={Platform.OS === "android" ? "terrain" : "standard"}
         loadingEnabled
@@ -258,6 +256,7 @@ function NativeRouteMap({ points }: { points: RoutePoint[] }) {
         showsBuildings={false}
         showsIndoorLevelPicker={false}
       >
+        {/* Map rendering is display-only. Do not use this for distance or pace calculations. */}
         <Polyline
           coordinates={coordinates}
           strokeColor="#255E36"
@@ -273,7 +272,7 @@ function NativeRouteMap({ points }: { points: RoutePoint[] }) {
   );
 }
 
-function FallbackRoutePreview({ points }: { points: RoutePoint[] }) {
+function FallbackRoutePreview({ points }: { points: FilteredRoutePoint[] }) {
   const previewPoints = useMemo(() => {
     if (points.length < 2) return [];
     return smoothPreviewPoints(buildPreviewPoints(points));
@@ -322,7 +321,9 @@ function FallbackRoutePreview({ points }: { points: RoutePoint[] }) {
 
 export function RoutePreview({ points, title = "Your route", subtitle = "Captured from this walk" }: RoutePreviewProps) {
   const signalLabel = useMemo(() => describeSignal(points), [points]);
-  const useGoogleMap = Platform.OS !== "web" && Boolean(ENV.MAPS.googleMapsApiKey) && points.length >= 2;
+  const displayRoutePoints = useMemo(() => buildDisplayRoutePoints(points), [points]);
+  const useNativeMap = Platform.OS !== "web" && displayRoutePoints.length >= 2;
+  const useGoogleMap = useNativeMap && Boolean(ENV.MAPS.googleMapsApiKey);
 
   if (points.length < 2) {
     return null;
@@ -342,18 +343,24 @@ export function RoutePreview({ points, title = "Your route", subtitle = "Capture
         <View style={styles.metaChip}>
           <Text style={styles.metaChipText}>{points.length} points</Text>
         </View>
-        {useGoogleMap ? (
+        {useNativeMap ? (
           <View style={styles.metaChip}>
-            <Text style={styles.metaChipText}>Google map view</Text>
+            <Text style={styles.metaChipText}>{useGoogleMap ? "Google map view" : "Native map view"}</Text>
           </View>
         ) : null}
       </View>
 
-      {useGoogleMap ? <NativeRouteMap points={points} /> : <FallbackRoutePreview points={points} />}
+      {useNativeMap ? (
+        <NativeRouteMap points={displayRoutePoints} useGoogleProvider={useGoogleMap} />
+      ) : (
+        <FallbackRoutePreview points={points} />
+      )}
 
       <Text style={styles.footnote}>
-        {useGoogleMap
-          ? "Map visuals are enhanced with Google Maps when a key is configured. GPS accuracy still comes from Step Outside tracking."
+        {useNativeMap
+          ? useGoogleMap
+            ? "Map visuals are enhanced with Google Maps when a key is configured. GPS accuracy still comes from Step Outside tracking."
+            : "Map rendering is display-only. Tracking distance and pace still come from Step Outside GPS filtering."
           : "A simple preview of the path you took."}
       </Text>
     </View>

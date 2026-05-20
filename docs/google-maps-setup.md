@@ -22,6 +22,11 @@ This project reads it from:
 - [env.ts](/Users/stevencook/dev/client-production/step-outside-v2/env.ts)
 - [app.config.ts](/Users/stevencook/dev/client-production/step-outside-v2/app.config.ts)
 
+At build time, [app.config.ts](/Users/stevencook/dev/client-production/step-outside-v2/app.config.ts) conditionally injects the SDK 54 native config fields:
+
+- `ios.config.googleMapsApiKey`
+- `android.config.googleMaps.apiKey`
+
 ## Local setup
 
 Add the key to your local `.env` or `.env.local` file:
@@ -41,6 +46,12 @@ eas env:create --name EXPO_PUBLIC_GOOGLE_MAPS_API_KEY --value your_google_maps_a
 ```
 
 Or add it through the Expo dashboard / EAS project environment UI if you prefer.
+
+Important:
+
+- this value must be available during the native build, not just at runtime
+- after adding or changing it, rebuild the iOS/Android app binary
+- if the variable is missing, the native Google Maps provider is not configured, and Step Outside falls back to the default native provider or custom preview
 
 Make sure the variable is available to the build profile you use for:
 
@@ -81,7 +92,8 @@ After adding or changing the key, rebuild the Android app binary.
 
 If `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` is missing:
 
-- Step Outside gracefully falls back to the existing custom route preview
+- Step Outside still tries to render the route with the native default map provider on supported devices
+- if a native map provider is unavailable, it falls back to the custom preview
 - the app still builds and runs
 - GPS tracking, pace, and distance still work normally
 
