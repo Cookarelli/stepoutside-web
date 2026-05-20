@@ -1,22 +1,24 @@
 import type { RoutePoint } from "../lib/store";
 
-export const GPS_MIN_DISTANCE_METERS = 3;
-// Accuracy worse than 25 meters is too noisy for trustworthy walking distance.
-export const GPS_MAX_ACCURACY_METERS = 25;
-// 5.5 m/s is roughly a 4:53 mile pace, generous enough for short run bursts but not GPS spikes.
-export const GPS_MAX_REASONABLE_SPEED_MPS = 5.5;
-// Points arriving within 3 seconds need more than trivial movement to avoid dot-jitter accumulation.
-export const GPS_MIN_TIME_BETWEEN_POINTS_MS = 3000;
+// Require at least ~5 meters of horizontal movement before counting progress.
+// This keeps normal outdoor walking from overcounting tiny GPS hops.
+export const GPS_MIN_DISTANCE_METERS = 5;
+// Accuracy worse than 20 meters is too noisy for trustworthy walking distance.
+export const GPS_MAX_ACCURACY_METERS = 20;
+// Step Outside currently tracks walking/hiking, not running mode, so keep the speed ceiling conservative.
+export const GPS_MAX_REASONABLE_SPEED_MPS = 3.0;
+// Points arriving within 4 seconds need more than trivial movement to avoid dot-jitter accumulation.
+export const GPS_MIN_TIME_BETWEEN_POINTS_MS = 4000;
 // Speeds near zero are usually standing still, even if GPS wanders a little bit.
 export const GPS_STATIONARY_SPEED_MPS = 0.4;
 // Require a couple of consecutive "still" samples before treating the user as stationary drift.
 export const GPS_STATIONARY_CONFIRMATION_POINTS = 2;
-// Accuracy above ~18m is often good enough for a map pin, but not ideal for short walking segments.
-export const GPS_LOW_CONFIDENCE_ACCURACY_METERS = 18;
+// Accuracy above ~14m is often good enough for a map pin, but not ideal for short walking segments.
+export const GPS_LOW_CONFIDENCE_ACCURACY_METERS = 14;
 // Abrupt reversals above this threshold are usually bounce or reflection, not a real turn on foot.
 export const GPS_MAX_DIRECTION_CHANGE_DEGREES = 115;
 // Human walking/running acceleration is far lower than most GPS jump artifacts.
-export const GPS_MAX_REASONABLE_ACCELERATION_MPS2 = 2.6;
+export const GPS_MAX_REASONABLE_ACCELERATION_MPS2 = 2.2;
 // Large one-step altitude swings usually indicate GPS/barometer noise rather than terrain.
 export const GPS_MAX_VERTICAL_SPIKE_METERS = 12;
 // Speeds above this are confidently "moving" for a walking/hiking activity.
@@ -251,6 +253,8 @@ export function filterGpsPoint({
     };
   }
 
+  // Horizontal distance comes from latitude/longitude only. Vertical altitude changes are tracked
+  // separately and must never inflate walking pace or distance.
   const rawDistanceM = haversineMeters(lastAcceptedPoint, normalized);
   const verticalDeltaM =
     typeof normalized.altitude === "number" && typeof lastAcceptedPoint.altitude === "number"

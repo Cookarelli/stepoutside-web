@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { doc, setDoc } from "firebase/firestore";
 
 import { auth, db } from "./firebase";
+import { REFLECTION_PROMPTS, type ReflectionPrompt } from "./reflectionPrompts";
 
 export type ReflectionAiStatus = "pending" | "complete" | "error";
 
@@ -37,14 +38,7 @@ export type SaveReflectionResult = {
 };
 
 const LOCAL_REFLECTIONS_KEY = "stepoutside:v2:reflections";
-
-export const REFLECTION_PROMPTS = [
-  "What felt a little lighter by the end of this walk?",
-  "What did you notice once your pace slowed down?",
-  "What do you want to carry from this walk into the rest of your day?",
-  "What felt grounded or steady while you were outside?",
-  "What are you leaving behind after this walk?",
-] as const;
+const LAST_REFLECTION_PROMPT_INDEX_KEY = "stepoutside:v2:lastReflectionPromptIndex";
 
 function createReflectionId(walkId: string, createdAt: number): string {
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -146,7 +140,7 @@ function buildReflectionRecord(input: SaveReflectionInput): ReflectionRecord {
   };
 }
 
-export function pickReflectionPrompt(seed: string | number): string {
+function hashSeed(seed: string | number): number {
   const source = String(seed);
   let hash = 0;
 
@@ -155,7 +149,41 @@ export function pickReflectionPrompt(seed: string | number): string {
     hash |= 0;
   }
 
-  return REFLECTION_PROMPTS[Math.abs(hash) % REFLECTION_PROMPTS.length] ?? REFLECTION_PROMPTS[0];
+  return Math.abs(hash);
+}
+
+async function getLastPromptIndex(): Promise<number | null> {
+  try {
+    const raw = await AsyncStorage.getItem(LAST_REFLECTION_PROMPT_INDEX_KEY);
+    const parsed = Number(raw ?? "");
+    if (Number.isInteger(parsed) && parsed >= 0 && parsed < REFLECTION_PROMPTS.length) {
+      return parsed;
+    }
+  } catch {
+    // Ignore prompt-state read failures and fall back to deterministic selection.
+  }
+
+  return null;
+}
+
+async function setLastPromptIndex(index: number): Promise<void> {
+  try {
+    await AsyncStorage.setItem(LAST_REFLECTION_PROMPT_INDEX_KEY, String(index));
+  } catch {
+    // Keep reflection selection resilient even if prompt-state persistence fails.
+  }
+}
+
+export async function pickReflectionPrompt(seed: string | number): Promise<ReflectionPrompt> {
+  const baseIndex = hashSeed(seed) % REFLECTION_PROMPTS.length;
+  const lastPromptIndex = await getLastPromptIndex();
+  const nextIndex =
+    lastPromptIndex !== null && lastPromptIndex === baseIndex
+      ? (baseIndex + 1) % REFLECTION_PROMPTS.length
+      : baseIndex;
+
+  await setLastPromptIndex(nextIndex);
+  return REFLECTION_PROMPTS[nextIndex] ?? REFLECTION_PROMPTS[0];
 }
 
 export async function getLocalReflections(): Promise<ReflectionRecord[]> {
@@ -164,6 +192,10 @@ export async function getLocalReflections(): Promise<ReflectionRecord[]> {
 
 export async function saveReflection(input: SaveReflectionInput): Promise<SaveReflectionResult> {
   const record = buildReflectionRecord(input);
+  const promptIndex = REFLECTION_PROMPTS.findIndex((prompt) => prompt === record.prompt);
+  if (promptIndex >= 0) {
+    await setLastPromptIndex(promptIndex);
+  }
   const currentUser = auth.currentUser;
 
   if (!currentUser?.uid) {

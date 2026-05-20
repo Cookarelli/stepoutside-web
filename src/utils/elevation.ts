@@ -12,6 +12,9 @@ export function calculateElevationGain(routePoints?: RoutePoint[] | null): {
 } | null {
   if (!Array.isArray(routePoints) || routePoints.length < 2) return null;
 
+  // Elevation gain is metadata only. It is intentionally calculated separately so vertical movement
+  // never inflates horizontal pace or distance in walking/hiking summaries.
+
   let totalGainMeters = 0;
   let lastAltitude: number | null = null;
   let seenAltitudePoint = false;

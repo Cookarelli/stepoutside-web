@@ -39,7 +39,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="steps"
         options={{
-          title: "Steps",
+          title: "Walk",
           tabBarIcon: ({ color, size }) => <Ionicons name="walk" size={size} color={color} />,
         }}
       />
@@ -51,6 +51,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen name="explore" options={{ href: null }} />
+      <Tabs.Screen name="share" options={{ href: null }} />
     </Tabs>
   );
 }

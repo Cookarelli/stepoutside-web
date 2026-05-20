@@ -1,6 +1,8 @@
-import React, { useMemo } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useRef } from "react";
+import { Platform, StyleSheet, Text, View } from "react-native";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 
+import { ENV } from "../../env";
 import type { RoutePoint } from "../lib/store";
 
 type RoutePreviewProps = {
@@ -23,9 +25,16 @@ type PreviewSegment = {
   angle: number;
 };
 
+type MapCoordinate = {
+  latitude: number;
+  longitude: number;
+};
+
 const PREVIEW_WIDTH = 280;
 const PREVIEW_HEIGHT = 160;
 const PREVIEW_PADDING = 16;
+const MAP_HEIGHT = 210;
+const MAX_MAP_POINTS = 120;
 
 function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
   if (points.length <= maxPoints) return points;
@@ -37,6 +46,42 @@ function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
     sampled.push(points[sourceIndex] ?? points[lastIndex]);
   }
   return sampled;
+}
+
+function smoothRoutePoints(points: RoutePoint[], passes = 2): RoutePoint[] {
+  if (points.length < 3) return points;
+
+  let next = samplePoints(points, MAX_MAP_POINTS);
+
+  for (let pass = 0; pass < passes; pass += 1) {
+    const smoothed: RoutePoint[] = [next[0]];
+
+    for (let index = 0; index < next.length - 1; index += 1) {
+      const current = next[index];
+      const following = next[index + 1];
+      if (!current || !following) continue;
+
+      smoothed.push({
+        ...current,
+        lat: current.lat * 0.75 + following.lat * 0.25,
+        lng: current.lng * 0.75 + following.lng * 0.25,
+      });
+      smoothed.push({
+        ...following,
+        lat: current.lat * 0.25 + following.lat * 0.75,
+        lng: current.lng * 0.25 + following.lng * 0.75,
+      });
+    }
+
+    const last = next[next.length - 1];
+    if (last) {
+      smoothed.push(last);
+    }
+
+    next = smoothed;
+  }
+
+  return next;
 }
 
 function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
@@ -122,7 +167,7 @@ function buildSegments(points: PreviewPoint[]): PreviewSegment[] {
 
     segments.push({
       left: previous.x + dx / 2 - width / 2,
-      top: previous.y + dy / 2 - 1.25,
+      top: previous.y + dy / 2 - 1.75,
       width,
       angle,
     });
@@ -145,15 +190,141 @@ function describeSignal(points: RoutePoint[]): string {
   return "Conservative GPS";
 }
 
-export function RoutePreview({ points, title = "Your route", subtitle = "Captured from this walk" }: RoutePreviewProps) {
+function createMapStyle() {
+  return [
+    { featureType: "poi", stylers: [{ visibility: "off" }] },
+    { featureType: "transit", stylers: [{ visibility: "off" }] },
+    { featureType: "road", elementType: "geometry", stylers: [{ saturation: -35 }, { lightness: 8 }] },
+    { featureType: "road", elementType: "labels", stylers: [{ saturation: -60 }] },
+    { featureType: "landscape", elementType: "geometry", stylers: [{ saturation: -15 }, { lightness: 8 }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#C9DCCB" }] },
+    { featureType: "administrative", elementType: "labels", stylers: [{ visibility: "simplified" }] },
+  ];
+}
+
+function NativeRouteMap({ points }: { points: RoutePoint[] }) {
+  const mapRef = useRef<MapView | null>(null);
+  const supportsGoogleMap = Platform.OS !== "web" && Boolean(ENV.MAPS.googleMapsApiKey);
+
+  const displayPoints = useMemo(() => smoothRoutePoints(points), [points]);
+  const coordinates = useMemo<MapCoordinate[]>(
+    () => displayPoints.map((point) => ({ latitude: point.lat, longitude: point.lng })),
+    [displayPoints]
+  );
+  const start = coordinates[0];
+  const end = coordinates[coordinates.length - 1];
+
+  useEffect(() => {
+    if (!supportsGoogleMap || !mapRef.current || coordinates.length < 2) return;
+
+    const timeout = setTimeout(() => {
+      try {
+        mapRef.current?.fitToCoordinates(coordinates, {
+          edgePadding: {
+            top: 28,
+            right: 28,
+            bottom: 28,
+            left: 28,
+          },
+          animated: false,
+        });
+      } catch {
+        // Keep the map usable even if fit bounds is unavailable in a given preview environment.
+      }
+    }, 0);
+
+    return () => clearTimeout(timeout);
+  }, [coordinates, supportsGoogleMap]);
+
+  if (!supportsGoogleMap || coordinates.length < 2) {
+    return null;
+  }
+
+  return (
+    <View style={styles.mapFrame}>
+      <MapView
+        ref={mapRef}
+        style={StyleSheet.absoluteFill}
+        provider={PROVIDER_GOOGLE}
+        customMapStyle={createMapStyle()}
+        mapType={Platform.OS === "android" ? "terrain" : "standard"}
+        loadingEnabled
+        toolbarEnabled={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
+        scrollEnabled={false}
+        zoomEnabled={false}
+        showsCompass={false}
+        showsBuildings={false}
+        showsIndoorLevelPicker={false}
+      >
+        <Polyline
+          coordinates={coordinates}
+          strokeColor="#255E36"
+          strokeWidth={4}
+          lineCap="round"
+          lineJoin="round"
+          geodesic
+        />
+        {start ? <Marker coordinate={start} pinColor="#F2B541" /> : null}
+        {end ? <Marker coordinate={end} pinColor="#255E36" /> : null}
+      </MapView>
+    </View>
+  );
+}
+
+function FallbackRoutePreview({ points }: { points: RoutePoint[] }) {
   const previewPoints = useMemo(() => {
     if (points.length < 2) return [];
     return smoothPreviewPoints(buildPreviewPoints(points));
   }, [points]);
   const segments = useMemo(() => buildSegments(previewPoints), [previewPoints]);
-  const signalLabel = useMemo(() => describeSignal(points), [points]);
 
   if (previewPoints.length < 2) {
+    return null;
+  }
+
+  return (
+    <View style={styles.previewFrame}>
+      {segments.map((segment, index) => (
+        <View
+          key={`segment-${index}`}
+          style={[
+            styles.segment,
+            {
+              left: segment.left,
+              top: segment.top,
+              width: segment.width,
+              transform: [{ rotate: `${segment.angle}deg` }],
+            },
+          ]}
+        />
+      ))}
+      {previewPoints
+        .filter((point) => point.isStart || point.isEnd)
+        .map((point, index) => (
+          <View
+            key={`${point.x}-${point.y}-${index}`}
+            style={[
+              styles.dot,
+              point.isStart ? styles.startDot : null,
+              point.isEnd ? styles.endDot : null,
+              {
+                left: point.x - (point.isStart || point.isEnd ? 4.5 : 2.5),
+                top: point.y - (point.isStart || point.isEnd ? 4.5 : 2.5),
+              },
+            ]}
+          />
+        ))}
+    </View>
+  );
+}
+
+export function RoutePreview({ points, title = "Your route", subtitle = "Captured from this walk" }: RoutePreviewProps) {
+  const signalLabel = useMemo(() => describeSignal(points), [points]);
+  const useGoogleMap = Platform.OS !== "web" && Boolean(ENV.MAPS.googleMapsApiKey) && points.length >= 2;
+
+  if (points.length < 2) {
     return null;
   }
 
@@ -171,42 +342,20 @@ export function RoutePreview({ points, title = "Your route", subtitle = "Capture
         <View style={styles.metaChip}>
           <Text style={styles.metaChipText}>{points.length} points</Text>
         </View>
+        {useGoogleMap ? (
+          <View style={styles.metaChip}>
+            <Text style={styles.metaChipText}>Google map view</Text>
+          </View>
+        ) : null}
       </View>
 
-      <View style={styles.previewFrame}>
-        {segments.map((segment, index) => (
-          <View
-            key={`segment-${index}`}
-            style={[
-              styles.segment,
-              {
-                left: segment.left,
-                top: segment.top,
-                width: segment.width,
-                transform: [{ rotate: `${segment.angle}deg` }],
-              },
-            ]}
-          />
-        ))}
-        {previewPoints
-          .filter((point) => point.isStart || point.isEnd)
-          .map((point, index) => (
-          <View
-            key={`${point.x}-${point.y}-${index}`}
-            style={[
-              styles.dot,
-              point.isStart ? styles.startDot : null,
-              point.isEnd ? styles.endDot : null,
-              {
-                left: point.x - (point.isStart || point.isEnd ? 4.5 : 2.5),
-                top: point.y - (point.isStart || point.isEnd ? 4.5 : 2.5),
-              },
-            ]}
-          />
-        ))}
-      </View>
+      {useGoogleMap ? <NativeRouteMap points={points} /> : <FallbackRoutePreview points={points} />}
 
-      <Text style={styles.footnote}>A simple preview of the path you took.</Text>
+      <Text style={styles.footnote}>
+        {useGoogleMap
+          ? "Map visuals are enhanced with Google Maps when a key is configured. GPS accuracy still comes from Step Outside tracking."
+          : "A simple preview of the path you took."}
+      </Text>
     </View>
   );
 }
@@ -253,6 +402,16 @@ const styles = StyleSheet.create({
     color: "rgba(11,15,14,0.58)",
     fontSize: 12,
     fontWeight: "700",
+  },
+  mapFrame: {
+    width: "100%",
+    height: MAP_HEIGHT,
+    alignSelf: "center",
+    borderRadius: 18,
+    backgroundColor: "rgba(37,94,54,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.14)",
+    overflow: "hidden",
   },
   previewFrame: {
     width: PREVIEW_WIDTH,

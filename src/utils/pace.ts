@@ -9,7 +9,7 @@ import {
 
 export const PACE_MIN_DISTANCE_MILES = 0.05;
 const MAX_MOVING_GAP_MS = 15000;
-const DEFAULT_ROLLING_PACE_WINDOW_MS = 25000;
+const DEFAULT_ROLLING_PACE_WINDOW_MS = 30000;
 
 // Validation examples:
 // 0.30 miles in 239 seconds = about 13:17 / mi
@@ -153,10 +153,16 @@ export function getPaceMetrics(options: {
       : null) ??
     calculateMovingTimeSeconds(routePoints) ??
     elapsedSeconds;
+  // Pace is always based on horizontal GPS distance only. Elevation gain is stored separately
+  // for metadata and display, and is never added into pace or distance calculations.
   const rawPaceMinutesPerMile = calculatePaceMinutesPerMile(distanceMiles, effectiveSeconds);
   const rollingPaceMinutesPerMile = calculateRollingPaceMinutesPerMile(routePoints, rollingWindowMs);
+  const conservativeRollingPaceMinutesPerMile =
+    rawPaceMinutesPerMile !== null && rollingPaceMinutesPerMile !== null
+      ? Math.max(rawPaceMinutesPerMile, rollingPaceMinutesPerMile)
+      : rollingPaceMinutesPerMile ?? rawPaceMinutesPerMile;
   const preferredPaceMinutesPerMile =
-    preferRolling ? rollingPaceMinutesPerMile ?? rawPaceMinutesPerMile : rawPaceMinutesPerMile;
+    preferRolling ? conservativeRollingPaceMinutesPerMile : rawPaceMinutesPerMile;
 
   const fallback =
     preferredPaceMinutesPerMile === null &&

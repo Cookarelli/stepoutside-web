@@ -1,10 +1,11 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { pickReflectionPrompt, saveReflection } from "../src/lib/reflections";
+import { REFLECTION_PROMPTS } from "../src/lib/reflectionPrompts";
 
 function toBool(value: string | undefined): boolean {
   return value === "true";
@@ -33,15 +34,31 @@ export default function ReflectionScreen() {
   const distanceM = toNumber(params.distanceM);
   const sunriseBonus = toBool(params.sunriseBonus);
   const sunsetBonus = toBool(params.sunsetBonus);
-  const prompt = useMemo(() => pickReflectionPrompt(walkId || Date.now()), [walkId]);
 
+  const [prompt, setPrompt] = useState<string>(REFLECTION_PROMPTS[0]);
+  const [promptReady, setPromptReady] = useState(false);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [statusText, setStatusText] = useState("");
 
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      const nextPrompt = await pickReflectionPrompt(walkId || Date.now());
+      if (!active) return;
+      setPrompt(nextPrompt);
+      setPromptReady(true);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [walkId]);
+
   const goToShare = (overrides?: { reflectionText?: string; saveWarning?: string }) => {
     router.replace({
-      pathname: "/share" as never,
+      pathname: "/(tabs)/share" as never,
       params: {
         walkId,
         startedAt: params.startedAt ?? "",
@@ -60,7 +77,7 @@ export default function ReflectionScreen() {
 
   const onContinue = async () => {
     const trimmed = text.trim();
-    if (!trimmed || saving) return;
+    if (!trimmed || saving || !promptReady) return;
 
     setSaving(true);
     setStatusText("");
@@ -113,7 +130,7 @@ export default function ReflectionScreen() {
           <View style={styles.card}>
             <Text style={styles.eyebrow}>After your walk</Text>
             <Text style={styles.title}>Pause for a second</Text>
-            <Text style={styles.prompt}>{prompt}</Text>
+            <Text style={styles.prompt}>{promptReady ? prompt : "Taking a second to find your next prompt…"}</Text>
 
             <TextInput
               value={text}
@@ -134,10 +151,10 @@ export default function ReflectionScreen() {
         <View style={styles.footerActions}>
           <Pressable
             onPress={() => void onContinue()}
-            disabled={saving || text.trim().length === 0}
+            disabled={saving || text.trim().length === 0 || !promptReady}
             style={({ pressed }) => [
               styles.primaryBtn,
-              saving || text.trim().length === 0 ? styles.btnDisabled : null,
+              saving || text.trim().length === 0 || !promptReady ? styles.btnDisabled : null,
               pressed ? { opacity: 0.94 } : null,
             ]}
           >
