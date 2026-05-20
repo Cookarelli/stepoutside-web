@@ -13,26 +13,17 @@ import {
   setCompletedWalkDraft,
 } from "../src/lib/activeWalk";
 import type { RoutePoint } from "../src/lib/store";
-
-type LatLng = { lat: number; lng: number };
+import { filterGpsPoint, haversineMeters } from "../src/utils/gpsFiltering";
+import { calculateMovingTimeSeconds, getPaceDisplay } from "../src/utils/pace";
 
 type PermissionState = "unknown" | "granted" | "denied";
 
 type SessionSource = "gps" | "timer";
 
-function haversineMeters(a: LatLng, b: LatLng): number {
-  const R = 6371000;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const s =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
-  const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-  return R * c;
-}
+const WALKING_GPS_ACCURACY =
+  Location.Accuracy.BestForNavigation ?? Location.Accuracy.Highest;
+const WALKING_GPS_TIME_INTERVAL_MS = 4000;
+const WALKING_GPS_DISTANCE_INTERVAL_METERS = 5;
 
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -40,19 +31,42 @@ function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function formatPace(distanceM: number, elapsedSec: number): string {
-  if (distanceM < 25 || elapsedSec < 15) return "";
-
-  const miles = distanceM / 1609.344;
-  if (!Number.isFinite(miles) || miles <= 0) return "";
-
-  const totalSecondsPerMile = Math.round(elapsedSec / miles);
-  if (!Number.isFinite(totalSecondsPerMile) || totalSecondsPerMile <= 0) return "";
-
-  const mm = Math.floor(totalSecondsPerMile / 60);
-  const ss = totalSecondsPerMile % 60;
-  return `${mm}:${String(ss).padStart(2, "0")} / mi`;
+function fmtMeters(distanceM: number): string {
+  return `${distanceM.toFixed(1)} m`;
 }
+
+function fmtDebugNumber(value?: number | null, digits = 1): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return value.toFixed(digits);
+}
+
+type GpsDebugState = {
+  rawPointCount: number;
+  acceptedPointCount: number;
+  rejectedPointCount: number;
+  latestAccuracy: number | null;
+  latestSpeed: number | null;
+  totalFilteredDistanceM: number;
+  totalRawDistanceM: number;
+  movingTimeSeconds: number;
+  pausedTimeSeconds: number;
+  currentPace: string;
+  lastRejectedReason: string;
+};
+
+const EMPTY_GPS_DEBUG_STATE: GpsDebugState = {
+  rawPointCount: 0,
+  acceptedPointCount: 0,
+  rejectedPointCount: 0,
+  latestAccuracy: null,
+  latestSpeed: null,
+  totalFilteredDistanceM: 0,
+  totalRawDistanceM: 0,
+  movingTimeSeconds: 0,
+  pausedTimeSeconds: 0,
+  currentPace: "-- / mi",
+  lastRejectedReason: "none",
+};
 
 export default function Walk() {
   const router = useRouter();
@@ -62,8 +76,11 @@ export default function Walk() {
   const [phase, setPhase] = useState<"idle" | "tracking" | "paused" | "saving" | "completed">("idle");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceM, setDistanceM] = useState(0);
+  const [movingSec, setMovingSec] = useState(0);
+  const [pausedSec, setPausedSec] = useState(0);
   const [restored, setRestored] = useState(false);
   const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | "stop" | null>(null);
+  const [gpsDebug, setGpsDebug] = useState<GpsDebugState>(EMPTY_GPS_DEBUG_STATE);
 
   const mountedRef = useRef(true);
   const restoredRef = useRef(false);
@@ -76,18 +93,31 @@ export default function Walk() {
   const restoringRef = useRef(false);
   const elapsedBeforeRunRef = useRef(0);
   const runStartedAtRef = useRef<number | null>(null);
+  const pausedTotalSecRef = useRef(0);
+  const pausedStartedAtRef = useRef<number | null>(null);
   const distanceRef = useRef(0);
+  const movingSecRef = useRef(0);
   const routePointsRef = useRef<RoutePoint[]>([]);
   const hadGpsPointsRef = useRef(false);
+  const stationaryPointStreakRef = useRef(0);
+  const awaitingResumeAnchorRef = useRef(false);
 
-  const lastPointRef = useRef<LatLng | null>(null);
+  const lastPointRef = useRef<RoutePoint | null>(null);
+  const lastRawPointRef = useRef<RoutePoint | null>(null);
   const subRef = useRef<Location.LocationSubscription | null>(null);
   const locationGenerationRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const pace = useMemo(() => {
-    return formatPace(distanceM, elapsedSec);
-  }, [distanceM, elapsedSec]);
+    return getPaceDisplay({
+      distanceM,
+      elapsedSeconds: elapsedSec,
+      movingSeconds: movingSec,
+      routePoints: routePointsRef.current,
+      loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+      emptyFallback: "-- / mi",
+    });
+  }, [distanceM, elapsedSec, movingSec, permission]);
 
   const logWalk = useCallback((message: string, details?: Record<string, unknown>) => {
     if (details) {
@@ -114,6 +144,23 @@ export default function Walk() {
     if (mountedRef.current) {
       setDistanceM(next);
     }
+  }, []);
+
+  const setMovingSafe = useCallback((next: number) => {
+    if (mountedRef.current) {
+      setMovingSec(next);
+    }
+  }, []);
+
+  const setPausedSafe = useCallback((next: number) => {
+    if (mountedRef.current) {
+      setPausedSec(next);
+    }
+  }, []);
+
+  const setGpsDebugSafe = useCallback((next: GpsDebugState | ((current: GpsDebugState) => GpsDebugState)) => {
+    if (!__DEV__ || !mountedRef.current) return;
+    setGpsDebug(next);
   }, []);
 
   const setRestoredSafe = useCallback((next: boolean) => {
@@ -246,7 +293,7 @@ export default function Walk() {
   }, [permission, refreshPermission, requestPerms]);
 
   const stopGps = useCallback(
-    (reason: string) => {
+    (reason: string, options?: { preserveLastPoint?: boolean }) => {
       locationGenerationRef.current += 1;
       if (subRef.current) {
         try {
@@ -256,38 +303,62 @@ export default function Walk() {
         }
       }
       subRef.current = null;
-      lastPointRef.current = null;
+      if (!options?.preserveLastPoint) {
+        lastPointRef.current = null;
+      }
+      if (!options?.preserveLastPoint) {
+        lastRawPointRef.current = null;
+      }
       logWalk("gps stopped", { reason });
     },
     [logWalk]
   );
 
+  const getActiveElapsedNow = useCallback(() => {
+    if (!runStartedAtRef.current) return elapsedBeforeRunRef.current;
+    return elapsedBeforeRunRef.current + Math.max(0, Math.floor((Date.now() - runStartedAtRef.current) / 1000));
+  }, []);
+
+  const getPausedNow = useCallback(() => {
+    const livePaused =
+      pausedStartedAtRef.current ? Math.max(0, Math.floor((Date.now() - pausedStartedAtRef.current) / 1000)) : 0;
+    return pausedTotalSecRef.current + livePaused;
+  }, []);
+
   const startGps = useCallback(
-    async (reason: string) => {
-      stopGps(`restart before ${reason}`);
+    async (reason: string, options?: { preserveLastPoint?: boolean }) => {
+      stopGps(`restart before ${reason}`, { preserveLastPoint: options?.preserveLastPoint });
       const generation = locationGenerationRef.current;
       logWalk("gps starting", { reason, generation });
 
       try {
         const subscription = await Location.watchPositionAsync(
           {
-            accuracy: Location.Accuracy.BestForNavigation,
-            timeInterval: 1000,
-            distanceInterval: 3,
+            // Use the best foreground accuracy available so walking routes stay usable on iPhone.
+            // If BestForNavigation is unavailable in a platform build, fall back to Highest.
+            accuracy: WALKING_GPS_ACCURACY,
+            // Walking and hiking do not need 1-second GPS polling. A 4-second cadence is steadier,
+            // reduces battery drain, and avoids overcounting from rapid jitter.
+            timeInterval: WALKING_GPS_TIME_INTERVAL_MS,
+            // Require about 5 meters of movement before the OS wakes the watcher again.
+            // This is a better fit for walking than tiny 3-meter jumps.
+            distanceInterval: WALKING_GPS_DISTANCE_INTERVAL_METERS,
+            // Let Android surface location-settings prompts when device services are off.
+            // This keeps the permission flow friendlier without changing iOS review behavior.
+            mayShowUserSettingsDialog: true,
           },
           (pos) => {
             if (!mountedRef.current || locationGenerationRef.current !== generation || phaseRef.current !== "tracking") {
               return;
             }
 
-            const accuracy = pos.coords.accuracy ?? Number.POSITIVE_INFINITY;
-            if (accuracy > 35) return;
-
-            const point: RoutePoint = {
+            const nextPoint: RoutePoint = {
               lat: pos.coords.latitude,
               lng: pos.coords.longitude,
               t: pos.timestamp || Date.now(),
-              ...(Number.isFinite(accuracy) ? { accuracy } : {}),
+              ...(typeof pos.coords.accuracy === "number" && Number.isFinite(pos.coords.accuracy)
+                ? { accuracy: pos.coords.accuracy }
+                : {}),
               ...(typeof pos.coords.altitude === "number" && Number.isFinite(pos.coords.altitude)
                 ? { altitude: pos.coords.altitude }
                 : {}),
@@ -295,24 +366,88 @@ export default function Walk() {
                 ? { speed: pos.coords.speed }
                 : {}),
             };
-            const p = { lat: point.lat, lng: point.lng };
-            const last = lastPointRef.current;
-
-            if (last) {
-              const d = haversineMeters(last, p);
-              // Ignore jitter smaller than a few steps and large GPS spikes.
-              if (d >= 2 && d < 80) {
-                const nextDistance = distanceRef.current + d;
-                distanceRef.current = nextDistance;
-                routePointsRef.current = [...routePointsRef.current, point];
-                hadGpsPointsRef.current = routePointsRef.current.length > 1;
-                setDistanceSafe(nextDistance);
-              }
-            } else {
-              routePointsRef.current = [...routePointsRef.current, point];
+            const rawDistanceDeltaM = lastRawPointRef.current ? haversineMeters(lastRawPointRef.current, nextPoint) : 0;
+            lastRawPointRef.current = nextPoint;
+            setGpsDebugSafe((current) => ({
+              ...current,
+              rawPointCount: current.rawPointCount + 1,
+              latestAccuracy: typeof nextPoint.accuracy === "number" ? nextPoint.accuracy : null,
+              latestSpeed: typeof nextPoint.speed === "number" ? nextPoint.speed : null,
+              totalRawDistanceM: current.totalRawDistanceM + Math.max(0, rawDistanceDeltaM),
+            }));
+            const filtered = filterGpsPoint({
+              point: nextPoint,
+              lastAcceptedPoint: lastPointRef.current,
+              isTracking: phaseRef.current === "tracking",
+              stationaryPointStreak: stationaryPointStreakRef.current,
+            });
+            stationaryPointStreakRef.current = filtered.nextStationaryPointStreak;
+            if (!filtered.accepted) {
+              setGpsDebugSafe((current) => ({
+                ...current,
+                rejectedPointCount: current.rejectedPointCount + 1,
+                movingTimeSeconds: movingSecRef.current,
+                pausedTimeSeconds: getPausedNow(),
+                currentPace: pace,
+                lastRejectedReason: filtered.reason,
+              }));
+              return;
             }
 
-            lastPointRef.current = p;
+            const shouldAnchorWithoutDistance = awaitingResumeAnchorRef.current && lastPointRef.current !== null;
+            lastPointRef.current = filtered.point;
+            stationaryPointStreakRef.current = 0;
+
+            if (
+              routePointsRef.current.length === 0 ||
+              routePointsRef.current[routePointsRef.current.length - 1]?.t !== filtered.point.t
+            ) {
+              routePointsRef.current = [...routePointsRef.current, filtered.point];
+            }
+
+            if (shouldAnchorWithoutDistance) {
+              awaitingResumeAnchorRef.current = false;
+              hadGpsPointsRef.current = routePointsRef.current.length > 1;
+              setGpsDebugSafe((current) => ({
+                ...current,
+                acceptedPointCount: current.acceptedPointCount + 1,
+                totalFilteredDistanceM: distanceRef.current,
+                movingTimeSeconds: movingSecRef.current,
+                pausedTimeSeconds: getPausedNow(),
+                currentPace: pace,
+              }));
+              return;
+            }
+
+            awaitingResumeAnchorRef.current = false;
+            hadGpsPointsRef.current = routePointsRef.current.length > 1;
+
+            if (filtered.distanceDeltaM > 0) {
+              const nextDistance = distanceRef.current + filtered.distanceDeltaM;
+              distanceRef.current = nextDistance;
+              setDistanceSafe(nextDistance);
+
+              const nextMovingSec = movingSecRef.current + Math.max(1, Math.round(filtered.timeDeltaMs / 1000));
+              movingSecRef.current = nextMovingSec;
+              setMovingSafe(nextMovingSec);
+            }
+
+            setGpsDebugSafe((current) => ({
+              ...current,
+              acceptedPointCount: current.acceptedPointCount + 1,
+              totalFilteredDistanceM: distanceRef.current,
+              movingTimeSeconds: movingSecRef.current,
+              pausedTimeSeconds: getPausedNow(),
+              currentPace: getPaceDisplay({
+                distanceM: distanceRef.current,
+                elapsedSeconds: getActiveElapsedNow() + getPausedNow(),
+                movingSeconds: movingSecRef.current,
+                routePoints: routePointsRef.current,
+                loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+                emptyFallback: "-- / mi",
+              }),
+              lastRejectedReason: current.lastRejectedReason,
+            }));
           }
         );
 
@@ -333,19 +468,20 @@ export default function Walk() {
         return false;
       }
     },
-    [logWalk, setDistanceSafe, stopGps]
+    [getActiveElapsedNow, getPausedNow, logWalk, pace, permission, setDistanceSafe, setGpsDebugSafe, setMovingSafe, stopGps]
   );
 
   const getElapsedNow = useCallback(() => {
-    if (!runStartedAtRef.current) return elapsedBeforeRunRef.current;
-    return elapsedBeforeRunRef.current + Math.max(0, Math.floor((Date.now() - runStartedAtRef.current) / 1000));
-  }, []);
+    return getActiveElapsedNow() + getPausedNow();
+  }, [getActiveElapsedNow, getPausedNow]);
 
   const syncElapsedFromClock = useCallback(() => {
     const nextElapsed = getElapsedNow();
+    const nextPaused = getPausedNow();
     setElapsedSafe(nextElapsed);
+    setPausedSafe(nextPaused);
     return nextElapsed;
-  }, [getElapsedNow, setElapsedSafe]);
+  }, [getElapsedNow, getPausedNow, setElapsedSafe, setPausedSafe]);
 
   const stopTimer = useCallback(
     (reason: string) => {
@@ -417,7 +553,16 @@ export default function Walk() {
   }, [logWalk]);
 
   const persistActiveWalk = useCallback(
-    async (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean; routePoints: RoutePoint[] }>) => {
+    async (
+      overrides?: Partial<{
+        elapsedSec: number;
+        movingTimeSec: number;
+        pausedTimeSec: number;
+        distanceM: number;
+        running: boolean;
+        routePoints: RoutePoint[];
+      }>
+    ) => {
       const startedAt = startedAtRef.current;
       if (!startedAt) return false;
 
@@ -425,6 +570,8 @@ export default function Walk() {
         await setActiveWalkSnapshot({
           startedAt,
           elapsedSec: overrides?.elapsedSec ?? getElapsedNow(),
+          movingTimeSec: overrides?.movingTimeSec ?? movingSecRef.current,
+          pausedTimeSec: overrides?.pausedTimeSec ?? getPausedNow(),
           distanceM: overrides?.distanceM ?? distanceRef.current,
           routePoints: overrides?.routePoints ?? routePointsRef.current,
           running: overrides?.running ?? phaseRef.current === "tracking",
@@ -436,7 +583,7 @@ export default function Walk() {
         return false;
       }
     },
-    [getElapsedNow]
+    [getElapsedNow, getPausedNow]
   );
 
   const clearScheduledPersist = useCallback(() => {
@@ -447,7 +594,16 @@ export default function Walk() {
   }, []);
 
   const schedulePersist = useCallback(
-    (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean; routePoints: RoutePoint[] }>) => {
+    (
+      overrides?: Partial<{
+        elapsedSec: number;
+        movingTimeSec: number;
+        pausedTimeSec: number;
+        distanceM: number;
+        running: boolean;
+        routePoints: RoutePoint[];
+      }>
+    ) => {
       if (
         restoringRef.current ||
         !startedAtRef.current ||
@@ -479,15 +635,24 @@ export default function Walk() {
     startedAtRef.current = null;
     elapsedBeforeRunRef.current = 0;
     runStartedAtRef.current = null;
+    pausedTotalSecRef.current = 0;
+    pausedStartedAtRef.current = null;
     distanceRef.current = 0;
+    movingSecRef.current = 0;
     routePointsRef.current = [];
     hadGpsPointsRef.current = false;
+    stationaryPointStreakRef.current = 0;
+    awaitingResumeAnchorRef.current = false;
     lastPointRef.current = null;
+    lastRawPointRef.current = null;
     setElapsedSafe(0);
     setDistanceSafe(0);
+    setMovingSafe(0);
+    setPausedSafe(0);
+    setGpsDebugSafe(EMPTY_GPS_DEBUG_STATE);
     transitionTo("idle", reason);
     await clearActiveWalkSnapshotSafe(reason);
-  }, [clearActiveWalkSnapshotSafe, clearScheduledPersist, setDistanceSafe, setElapsedSafe, stopGps, stopTimer, transitionTo]);
+  }, [clearActiveWalkSnapshotSafe, clearScheduledPersist, setDistanceSafe, setElapsedSafe, setGpsDebugSafe, setMovingSafe, setPausedSafe, stopGps, stopTimer, transitionTo]);
 
   useEffect(() => {
     return () => {
@@ -507,15 +672,31 @@ export default function Walk() {
       startedAtRef.current = Date.now();
       elapsedBeforeRunRef.current = 0;
       runStartedAtRef.current = Date.now();
+      pausedTotalSecRef.current = 0;
+      pausedStartedAtRef.current = null;
       setElapsedSafe(0);
       setDistanceSafe(0);
+      setMovingSafe(0);
+      setPausedSafe(0);
       distanceRef.current = 0;
+      movingSecRef.current = 0;
       lastPointRef.current = null;
+      lastRawPointRef.current = null;
       routePointsRef.current = [];
       hadGpsPointsRef.current = false;
+      stationaryPointStreakRef.current = 0;
+      awaitingResumeAnchorRef.current = false;
+      setGpsDebugSafe(EMPTY_GPS_DEBUG_STATE);
 
       transitionTo("tracking", "start");
-      await persistActiveWalk({ elapsedSec: 0, distanceM: 0, routePoints: [], running: true });
+      await persistActiveWalk({
+        elapsedSec: 0,
+        movingTimeSec: 0,
+        pausedTimeSec: 0,
+        distanceM: 0,
+        routePoints: [],
+        running: true,
+      });
       startTimer("start");
 
       if (ok) {
@@ -537,13 +718,23 @@ export default function Walk() {
     void Haptics.selectionAsync();
     try {
       const nextElapsed = syncElapsedFromClock();
-      elapsedBeforeRunRef.current = nextElapsed;
+      const nextPaused = getPausedNow();
+      elapsedBeforeRunRef.current = getActiveElapsedNow();
       runStartedAtRef.current = null;
       setElapsedSafe(nextElapsed);
+      pausedStartedAtRef.current = Date.now();
+      pausedTotalSecRef.current = nextPaused;
+      setPausedSafe(nextPaused);
       stopTimer("pause");
-      stopGps("pause");
+      stopGps("pause", { preserveLastPoint: true });
+      awaitingResumeAnchorRef.current = true;
       transitionTo("paused", "pause");
-      await persistActiveWalk({ elapsedSec: nextElapsed, running: false });
+      await persistActiveWalk({
+        elapsedSec: nextElapsed,
+        movingTimeSec: movingSecRef.current,
+        pausedTimeSec: nextPaused,
+        running: false,
+      });
     } catch (error) {
       console.error("[walk] pause failed", error);
       Alert.alert("Couldn’t pause walk", "The walk was left in a safe state. Please try again.");
@@ -557,20 +748,30 @@ export default function Walk() {
     void Haptics.selectionAsync();
     try {
       const ok = await ensureLocationPermission();
-
-      elapsedBeforeRunRef.current = getElapsedNow();
+      const accumulatedPaused = getPausedNow();
+      pausedTotalSecRef.current = accumulatedPaused;
+      pausedStartedAtRef.current = null;
+      setPausedSafe(accumulatedPaused);
       runStartedAtRef.current = Date.now();
       transitionTo("tracking", "resume");
-      await persistActiveWalk({ elapsedSec: elapsedBeforeRunRef.current, running: true });
+      await persistActiveWalk({
+        elapsedSec: getElapsedNow(),
+        movingTimeSec: movingSecRef.current,
+        pausedTimeSec: accumulatedPaused,
+        running: true,
+      });
       startTimer("resume");
 
       if (ok) {
-        await startGps("resume");
+        awaitingResumeAnchorRef.current = true;
+        await startGps("resume", { preserveLastPoint: true });
       }
     } catch (error) {
       console.error("[walk] resume failed", error);
+      pausedStartedAtRef.current = Date.now();
       stopTimer("resume failed");
-      stopGps("resume failed");
+      stopGps("resume failed", { preserveLastPoint: true });
+      awaitingResumeAnchorRef.current = true;
       transitionTo("paused", "resume failed");
       Alert.alert("Couldn’t resume walk", "Please try again.");
     } finally {
@@ -589,10 +790,14 @@ export default function Walk() {
       const endLng = lastPointRef.current?.lng;
       const routePoints = [...routePointsRef.current];
       const finalElapsed = syncElapsedFromClock();
+      const finalPaused = getPausedNow();
+      const finalMoving = Math.max(0, movingSecRef.current);
       const finalDistance = Math.max(0, Math.round(distanceRef.current));
 
-      elapsedBeforeRunRef.current = finalElapsed;
+      elapsedBeforeRunRef.current = getActiveElapsedNow();
       runStartedAtRef.current = null;
+      pausedStartedAtRef.current = null;
+      pausedTotalSecRef.current = finalPaused;
       clearScheduledPersist();
       stopTimer("stop");
       stopGps("stop");
@@ -624,6 +829,8 @@ export default function Walk() {
           startedAt: String(startedAt),
           endedAt: String(endedAt),
           durationSec: String(finalElapsed),
+          movingTimeSec: String(finalMoving),
+          pausedTimeSec: String(finalPaused),
           distanceM: String(finalDistance),
           source,
           routePointCount: String(routePoints.length),
@@ -737,42 +944,86 @@ export default function Walk() {
         if (!snapshot) {
           elapsedBeforeRunRef.current = 0;
           runStartedAtRef.current = null;
+          pausedTotalSecRef.current = 0;
+          pausedStartedAtRef.current = null;
           distanceRef.current = 0;
+          movingSecRef.current = 0;
           routePointsRef.current = [];
           hadGpsPointsRef.current = false;
+          stationaryPointStreakRef.current = 0;
+          awaitingResumeAnchorRef.current = false;
+          lastRawPointRef.current = null;
           transitionTo("idle", "restore empty");
           setElapsedSafe(0);
           setDistanceSafe(0);
+          setMovingSafe(0);
+          setPausedSafe(0);
+          setGpsDebugSafe(EMPTY_GPS_DEBUG_STATE);
           return;
         }
 
         startedAtRef.current = snapshot.startedAt;
+        const restoredPausedSec = Math.max(0, snapshot.pausedTimeSec ?? 0);
+        const restoredMovingSec =
+          Math.max(0, snapshot.movingTimeSec ?? 0) || calculateMovingTimeSeconds(snapshot.routePoints ?? []) || 0;
         const recoveredElapsed =
           snapshot.running
             ? snapshot.elapsedSec + Math.max(0, Math.round((Date.now() - snapshot.updatedAt) / 1000))
             : snapshot.elapsedSec;
 
-        elapsedBeforeRunRef.current = snapshot.running ? snapshot.elapsedSec : recoveredElapsed;
+        elapsedBeforeRunRef.current = Math.max(
+          0,
+          (snapshot.running ? snapshot.elapsedSec : recoveredElapsed) - restoredPausedSec
+        );
         runStartedAtRef.current = snapshot.running ? snapshot.updatedAt : null;
+        pausedTotalSecRef.current = restoredPausedSec;
+        pausedStartedAtRef.current = snapshot.running ? null : snapshot.updatedAt;
         distanceRef.current = snapshot.distanceM;
         routePointsRef.current = snapshot.routePoints ?? [];
+        movingSecRef.current = restoredMovingSec;
         hadGpsPointsRef.current = routePointsRef.current.length > 1;
+        stationaryPointStreakRef.current = 0;
+        awaitingResumeAnchorRef.current = !snapshot.running && routePointsRef.current.length > 0;
         setElapsedSafe(recoveredElapsed);
         setDistanceSafe(snapshot.distanceM);
+        setMovingSafe(movingSecRef.current);
+        setPausedSafe(snapshot.running ? restoredPausedSec : getPausedNow());
 
         if (routePointsRef.current.length > 0) {
           const last = routePointsRef.current[routePointsRef.current.length - 1];
           if (last) {
-            lastPointRef.current = { lat: last.lat, lng: last.lng };
+            lastPointRef.current = last;
+            lastRawPointRef.current = last;
           }
         }
+
+        setGpsDebugSafe({
+          rawPointCount: routePointsRef.current.length,
+          acceptedPointCount: routePointsRef.current.length,
+          rejectedPointCount: 0,
+          latestAccuracy: routePointsRef.current.at(-1)?.accuracy ?? null,
+          latestSpeed: routePointsRef.current.at(-1)?.speed ?? null,
+          totalFilteredDistanceM: snapshot.distanceM,
+          totalRawDistanceM: snapshot.distanceM,
+          movingTimeSeconds: movingSecRef.current,
+          pausedTimeSeconds: snapshot.running ? restoredPausedSec : getPausedNow(),
+          currentPace: getPaceDisplay({
+            distanceM: snapshot.distanceM,
+            elapsedSeconds: recoveredElapsed,
+            movingSeconds: movingSecRef.current,
+            routePoints: routePointsRef.current,
+            loadingFallback: permission === "denied" ? "-- / mi" : "Getting GPS...",
+            emptyFallback: "-- / mi",
+          }),
+          lastRejectedReason: "none",
+        });
 
         if (snapshot.running) {
           transitionTo("tracking", "restore tracking");
           startTimer("restore");
           const ok = await refreshPermission();
           if (!cancelled && ok) {
-            await startGps("restore");
+            await startGps("restore", { preserveLastPoint: true });
           }
         } else {
           transitionTo("paused", "restore paused");
@@ -791,7 +1042,7 @@ export default function Walk() {
     return () => {
       cancelled = true;
     };
-  }, [logWalk, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
+  }, [getPausedNow, logWalk, permission, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setGpsDebugSafe, setMovingSafe, setPausedSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
 
   useEffect(() => {
     if (restoringRef.current || !startedAtRef.current) return;
@@ -817,7 +1068,7 @@ export default function Walk() {
     phase === "tracking"
       ? "Walk in progress. Pause when you want a breather."
       : phase === "paused"
-        ? "Your walk is paused. Resume when you're ready."
+        ? `Your walk is paused. ${fmtTime(pausedSec)} paused so far.`
         : phase === "saving"
           ? "Saving your walk now."
           : permission === "denied"
@@ -855,7 +1106,7 @@ export default function Walk() {
           </View>
           <View style={styles.metric}>
             <Text style={styles.metricK}>Pace</Text>
-            <Text style={styles.metricV}>{pace || "—"}</Text>
+            <Text style={styles.metricV}>{pace}</Text>
           </View>
         </View>
       </View>
@@ -898,6 +1149,25 @@ export default function Walk() {
           <Text style={styles.controlHint}>{statusText}</Text>
         </View>
       )}
+
+      {__DEV__ ? (
+        <View style={styles.debugCard}>
+          <Text style={styles.debugTitle}>GPS Debug</Text>
+          <View style={styles.debugGrid}>
+            <Text style={styles.debugRow}>Raw GPS points: {gpsDebug.rawPointCount}</Text>
+            <Text style={styles.debugRow}>Accepted GPS points: {gpsDebug.acceptedPointCount}</Text>
+            <Text style={styles.debugRow}>Rejected GPS points: {gpsDebug.rejectedPointCount}</Text>
+            <Text style={styles.debugRow}>Latest accuracy: {fmtDebugNumber(gpsDebug.latestAccuracy)} m</Text>
+            <Text style={styles.debugRow}>Latest speed: {fmtDebugNumber(gpsDebug.latestSpeed)} m/s</Text>
+            <Text style={styles.debugRow}>Filtered distance: {fmtMeters(gpsDebug.totalFilteredDistanceM)}</Text>
+            <Text style={styles.debugRow}>Raw distance: {fmtMeters(gpsDebug.totalRawDistanceM)}</Text>
+            <Text style={styles.debugRow}>Moving time: {fmtTime(gpsDebug.movingTimeSeconds)}</Text>
+            <Text style={styles.debugRow}>Paused time: {fmtTime(gpsDebug.pausedTimeSeconds)}</Text>
+            <Text style={styles.debugRow}>Current pace: {gpsDebug.currentPace}</Text>
+            <Text style={styles.debugRow}>Last reject: {gpsDebug.lastRejectedReason}</Text>
+          </View>
+        </View>
+      ) : null}
 
       <Pressable
         style={[styles.btnEnd, !canStop ? { opacity: 0.5 } : null]}
@@ -1057,6 +1327,33 @@ const styles = StyleSheet.create({
   loadingText: {
     color: "rgba(11,15,14,0.7)",
     fontWeight: "800",
+  },
+  debugCard: {
+    width: "100%",
+    maxWidth: 380,
+    marginTop: 16,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: "rgba(11,15,14,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  debugTitle: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  debugGrid: {
+    marginTop: 10,
+    gap: 6,
+  },
+  debugRow: {
+    color: "rgba(255,255,255,0.86)",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
   },
   controlsStack: {
     marginTop: 22,

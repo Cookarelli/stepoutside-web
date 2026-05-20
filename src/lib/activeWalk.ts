@@ -6,6 +6,8 @@ export type ActiveWalkSnapshot = {
   startedAt: number;
   elapsedSec: number;
   distanceM: number;
+  movingTimeSec?: number;
+  pausedTimeSec?: number;
   routePoints?: RoutePoint[];
   running: boolean;
   updatedAt: number;
@@ -55,6 +57,12 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
       startedAt: parsed.startedAt,
       elapsedSec: parsed.elapsedSec,
       distanceM: parsed.distanceM,
+      ...(typeof parsed.movingTimeSec === "number" && Number.isFinite(parsed.movingTimeSec)
+        ? { movingTimeSec: parsed.movingTimeSec }
+        : {}),
+      ...(typeof parsed.pausedTimeSec === "number" && Number.isFinite(parsed.pausedTimeSec)
+        ? { pausedTimeSec: parsed.pausedTimeSec }
+        : {}),
       ...(routePoints ? { routePoints } : {}),
       running: parsed.running,
       updatedAt: parsed.updatedAt,
