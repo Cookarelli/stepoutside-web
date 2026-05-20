@@ -37,6 +37,8 @@ export default function CompleteScreen() {
     startedAt?: string;
     endedAt?: string;
     durationSec?: string;
+    movingTimeSec?: string;
+    pausedTimeSec?: string;
     distanceM?: string;
     source?: string;
   }>();
@@ -44,6 +46,8 @@ export default function CompleteScreen() {
   const startedAt = Number(params.startedAt ?? "");
   const endedAt = Number(params.endedAt ?? "");
   const durationSec = Number(params.durationSec ?? "");
+  const movingTimeSec = Number(params.movingTimeSec ?? "");
+  const pausedTimeSec = Number(params.pausedTimeSec ?? "");
   const distanceM = Number(params.distanceM ?? "0");
   const source: SessionSource = params.source === "gps" ? "gps" : "timer";
 
@@ -119,6 +123,9 @@ export default function CompleteScreen() {
           startedAt,
           endedAt,
           durationSec,
+          elapsedTimeSec: durationSec,
+          movingTimeSec: Number.isFinite(movingTimeSec) ? Math.max(0, Math.round(movingTimeSec)) : undefined,
+          pausedTimeSec: Number.isFinite(pausedTimeSec) ? Math.max(0, Math.round(pausedTimeSec)) : undefined,
           source,
           title: source === "gps" ? "Tracked outdoor walk" : "Outdoor walk",
           activityType: "walk",
@@ -183,6 +190,8 @@ export default function CompleteScreen() {
         startedAt: String(startedAt),
         endedAt: String(endedAt),
         durationSec: String(durationSec),
+        movingTimeSec: String(Number.isFinite(movingTimeSec) ? Math.max(0, Math.round(movingTimeSec)) : 0),
+        pausedTimeSec: String(Number.isFinite(pausedTimeSec) ? Math.max(0, Math.round(pausedTimeSec)) : 0),
         distanceM: String(Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0),
         source,
         sunriseBonus: String(sunriseBonus),

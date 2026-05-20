@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
+import { calculateElevationGain } from "../utils/elevation";
+import { calculateMovingTimeSeconds, calculatePaceMinutesPerMile } from "../utils/pace";
 
 import { auth, db } from "./firebase";
 import { getPremiumStatus } from "./pro";
@@ -22,11 +24,16 @@ export type OutsideSession = {
   startedAt: number;
   endedAt: number;
   durationSec: number;
+  elapsedTimeSec?: number;
+  movingTimeSec?: number;
+  pausedTimeSec?: number;
   source: SessionSource;
   title?: string;
   activityType?: ActivityType;
   /** Optional GPS distance (meters) */
   distanceM?: number;
+  elevationGainMeters?: number;
+  elevationGainFeet?: number;
   routePoints?: RoutePoint[];
   savedRouteAt?: number;
   shareIntentAt?: number;
@@ -179,8 +186,9 @@ function defaultSessionTitle(session: Pick<OutsideSession, "activityType">): str
 function computePaceSecPerMile(durationSec: number, distanceM?: number): number | undefined {
   if (typeof distanceM !== "number" || !Number.isFinite(distanceM) || distanceM < 25) return undefined;
   const miles = distanceM / 1609.344;
-  if (miles <= 0) return undefined;
-  return Math.max(1, Math.round(durationSec / miles));
+  const minutesPerMile = calculatePaceMinutesPerMile(miles, durationSec);
+  if (minutesPerMile === null) return undefined;
+  return Math.max(1, Math.round(minutesPerMile * 60));
 }
 
 function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boolean): OutsideSession {
@@ -188,18 +196,49 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
     includeRoutePoints && Array.isArray(session.routePoints) && session.routePoints.length > 1
       ? session.routePoints
       : undefined;
+  const elevationGain = calculateElevationGain(routePoints);
+  const elapsedTimeSec = Math.max(
+    0,
+    finiteNumberOr(
+      typeof session.elapsedTimeSec === "number" ? session.elapsedTimeSec : session.durationSec
+    )
+  );
+  const movingTimeSec = Math.max(
+    0,
+    finiteNumberOr(
+      session.movingTimeSec,
+      calculateMovingTimeSeconds(routePoints) ?? elapsedTimeSec
+    )
+  );
+  const pausedTimeSec = Math.max(
+    0,
+    finiteNumberOr(session.pausedTimeSec, Math.max(0, elapsedTimeSec - movingTimeSec))
+  );
 
   return {
     id: session.id,
     startedAt: finiteNumberOr(session.startedAt),
     endedAt: finiteNumberOr(session.endedAt),
-    durationSec: Math.max(0, finiteNumberOr(session.durationSec)),
+    durationSec: elapsedTimeSec,
+    elapsedTimeSec,
+    movingTimeSec,
+    pausedTimeSec,
     source: session.source === "gps" ? "gps" : "timer",
     title: session.title?.trim() || defaultSessionTitle(session),
     activityType: normalizeActivityType(session.activityType),
     ...(typeof session.distanceM === "number" && Number.isFinite(session.distanceM)
       ? { distanceM: Math.max(0, session.distanceM) }
       : {}),
+    ...(typeof session.elevationGainMeters === "number" && Number.isFinite(session.elevationGainMeters)
+      ? { elevationGainMeters: Math.max(0, Math.round(session.elevationGainMeters)) }
+      : elevationGain
+        ? { elevationGainMeters: elevationGain.elevationGainMeters }
+        : {}),
+    ...(typeof session.elevationGainFeet === "number" && Number.isFinite(session.elevationGainFeet)
+      ? { elevationGainFeet: Math.max(0, Math.round(session.elevationGainFeet)) }
+      : elevationGain
+        ? { elevationGainFeet: elevationGain.elevationGainFeet }
+        : {}),
     ...(typeof session.isSunriseBonus === "boolean" ? { isSunriseBonus: session.isSunriseBonus } : {}),
     ...(typeof session.isSunsetBonus === "boolean" ? { isSunsetBonus: session.isSunsetBonus } : {}),
     ...(session.bonusType === "sunrise" || session.bonusType === "sunset" ? { bonusType: session.bonusType } : {}),
@@ -217,8 +256,8 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
       : {}),
     ...(typeof session.paceSecPerMile === "number" && Number.isFinite(session.paceSecPerMile)
       ? { paceSecPerMile: session.paceSecPerMile }
-      : computePaceSecPerMile(session.durationSec, session.distanceM)
-        ? { paceSecPerMile: computePaceSecPerMile(session.durationSec, session.distanceM) }
+      : computePaceSecPerMile(movingTimeSec, session.distanceM)
+        ? { paceSecPerMile: computePaceSecPerMile(movingTimeSec, session.distanceM) }
         : {}),
     ...(routePoints ? { routePoints } : {}),
   };
@@ -398,11 +437,26 @@ async function readSessions(): Promise<OutsideSession[]> {
               startedAt: finiteNumberOr(session.startedAt),
               endedAt: finiteNumberOr(session.endedAt),
               durationSec: Math.max(0, finiteNumberOr(session.durationSec)),
+              ...(typeof session.elapsedTimeSec === "number" && Number.isFinite(session.elapsedTimeSec)
+                ? { elapsedTimeSec: session.elapsedTimeSec }
+                : {}),
+              ...(typeof session.movingTimeSec === "number" && Number.isFinite(session.movingTimeSec)
+                ? { movingTimeSec: session.movingTimeSec }
+                : {}),
+              ...(typeof session.pausedTimeSec === "number" && Number.isFinite(session.pausedTimeSec)
+                ? { pausedTimeSec: session.pausedTimeSec }
+                : {}),
               source: session.source,
               title: typeof session.title === "string" ? session.title : undefined,
               activityType: normalizeActivityType(session.activityType),
           ...(typeof session.distanceM === "number" && Number.isFinite(session.distanceM)
             ? { distanceM: Math.max(0, session.distanceM) }
+            : {}),
+          ...(typeof session.elevationGainMeters === "number" && Number.isFinite(session.elevationGainMeters)
+            ? { elevationGainMeters: Math.max(0, session.elevationGainMeters) }
+            : {}),
+          ...(typeof session.elevationGainFeet === "number" && Number.isFinite(session.elevationGainFeet)
+            ? { elevationGainFeet: Math.max(0, session.elevationGainFeet) }
             : {}),
           ...(typeof session.isSunriseBonus === "boolean" ? { isSunriseBonus: session.isSunriseBonus } : {}),
           ...(typeof session.isSunsetBonus === "boolean" ? { isSunsetBonus: session.isSunsetBonus } : {}),
@@ -463,6 +517,26 @@ function mergeSessionLists(localSessions: OutsideSession[], remoteSessions: Outs
             typeof remote.distanceM === "number" && Number.isFinite(remote.distanceM)
               ? remote.distanceM
               : existing?.distanceM,
+          elevationGainMeters:
+            typeof remote.elevationGainMeters === "number" && Number.isFinite(remote.elevationGainMeters)
+              ? remote.elevationGainMeters
+              : existing?.elevationGainMeters,
+          elevationGainFeet:
+            typeof remote.elevationGainFeet === "number" && Number.isFinite(remote.elevationGainFeet)
+              ? remote.elevationGainFeet
+              : existing?.elevationGainFeet,
+          elapsedTimeSec:
+            typeof remote.elapsedTimeSec === "number" && Number.isFinite(remote.elapsedTimeSec)
+              ? remote.elapsedTimeSec
+              : existing?.elapsedTimeSec,
+          movingTimeSec:
+            typeof remote.movingTimeSec === "number" && Number.isFinite(remote.movingTimeSec)
+              ? remote.movingTimeSec
+              : existing?.movingTimeSec,
+          pausedTimeSec:
+            typeof remote.pausedTimeSec === "number" && Number.isFinite(remote.pausedTimeSec)
+              ? remote.pausedTimeSec
+              : existing?.pausedTimeSec,
           isSunriseBonus:
             typeof remote.isSunriseBonus === "boolean" ? remote.isSunriseBonus : existing?.isSunriseBonus,
           isSunsetBonus:
@@ -528,11 +602,26 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
             startedAt: finiteNumberOr(remote.startedAt),
             endedAt: finiteNumberOr(remote.endedAt),
             durationSec: finiteNumberOr(remote.durationSec),
+            ...(typeof remote.elapsedTimeSec === "number" && Number.isFinite(remote.elapsedTimeSec)
+              ? { elapsedTimeSec: remote.elapsedTimeSec }
+              : {}),
+            ...(typeof remote.movingTimeSec === "number" && Number.isFinite(remote.movingTimeSec)
+              ? { movingTimeSec: remote.movingTimeSec }
+              : {}),
+            ...(typeof remote.pausedTimeSec === "number" && Number.isFinite(remote.pausedTimeSec)
+              ? { pausedTimeSec: remote.pausedTimeSec }
+              : {}),
             source: remote.source === "gps" ? "gps" : "timer",
             title: typeof remote.title === "string" ? remote.title : undefined,
             activityType: normalizeActivityType(remote.activityType),
             ...(typeof remote.distanceM === "number" && Number.isFinite(remote.distanceM)
               ? { distanceM: remote.distanceM }
+              : {}),
+            ...(typeof remote.elevationGainMeters === "number" && Number.isFinite(remote.elevationGainMeters)
+              ? { elevationGainMeters: remote.elevationGainMeters }
+              : {}),
+            ...(typeof remote.elevationGainFeet === "number" && Number.isFinite(remote.elevationGainFeet)
+              ? { elevationGainFeet: remote.elevationGainFeet }
               : {}),
             ...(typeof remote.isSunriseBonus === "boolean" ? { isSunriseBonus: remote.isSunriseBonus } : {}),
             ...(typeof remote.isSunsetBonus === "boolean" ? { isSunsetBonus: remote.isSunsetBonus } : {}),
@@ -666,10 +755,17 @@ export async function getSessionById(id: string): Promise<OutsideSession | null>
         startedAt: finiteNumberOr(remote.startedAt, local?.startedAt ?? 0),
         endedAt: finiteNumberOr(remote.endedAt, local?.endedAt ?? 0),
         durationSec: finiteNumberOr(remote.durationSec, local?.durationSec ?? 0),
+        elapsedTimeSec: finiteNumberOr(remote.elapsedTimeSec, local?.elapsedTimeSec ?? local?.durationSec ?? 0),
+        movingTimeSec: finiteNumberOr(remote.movingTimeSec, local?.movingTimeSec ?? 0),
+        pausedTimeSec: finiteNumberOr(remote.pausedTimeSec, local?.pausedTimeSec ?? 0),
         source: remote.source === "gps" || remote.source === "timer" ? remote.source : local?.source ?? "timer",
         title: typeof remote.title === "string" ? remote.title : local?.title,
         activityType: normalizeActivityType(remote.activityType ?? local?.activityType),
         distanceM: finiteNumberOr(remote.distanceM, local?.distanceM ?? 0),
+        elevationGainMeters:
+          finiteNumberOr(remote.elevationGainMeters, local?.elevationGainMeters ?? 0) || undefined,
+        elevationGainFeet:
+          finiteNumberOr(remote.elevationGainFeet, local?.elevationGainFeet ?? 0) || undefined,
         isSunriseBonus:
           typeof remote.isSunriseBonus === "boolean" ? remote.isSunriseBonus : local?.isSunriseBonus,
         isSunsetBonus:

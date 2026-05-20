@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { RoutePreview } from "../src/components/RoutePreview";
 import { getSessionById, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../src/lib/store";
+import { getPaceDisplay } from "../src/utils/pace";
 
 function fmtDate(ts: number): string {
   return new Date(ts).toLocaleString(undefined, {
@@ -22,9 +23,30 @@ function fmtMinutes(durationSec: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+function fmtClockDuration(durationSec: number): string {
+  const totalSeconds = Math.max(0, Math.round(durationSec));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function fmtDistance(distanceM?: number): string {
   if (!distanceM || distanceM <= 0) return "Distance unavailable";
   return `${(distanceM / 1609.344).toFixed(2)} mi`;
+}
+
+function getElevationGainLabel(session: OutsideSession): string {
+  if (typeof session.elevationGainFeet === "number" && Number.isFinite(session.elevationGainFeet)) {
+    return `Elevation Gain: ${Math.max(0, Math.round(session.elevationGainFeet))} ft`;
+  }
+
+  return "Elevation data unavailable";
 }
 
 function buildMapsUrl(session: OutsideSession): string | null {
@@ -70,6 +92,20 @@ export default function SavedRouteScreen() {
   const mapsUrl = useMemo(() => (session ? buildMapsUrl(session) : null), [session]);
   const earnedSunriseBonus = session ? hasSunriseBonus(session) : false;
   const earnedSunsetBonus = session ? hasSunsetBonus(session) : false;
+  const paceLabel = useMemo(
+    () =>
+      session
+        ? getPaceDisplay({
+            distanceM: session.distanceM,
+            elapsedSeconds: session.durationSec,
+            movingSeconds: session.movingTimeSec,
+            routePoints: session.routePoints,
+            loadingFallback: "-- / mi",
+            emptyFallback: "-- / mi",
+          })
+        : "-- / mi",
+    [session]
+  );
   const lockedBonusTeaser =
     session?.bonusType && !earnedSunriseBonus && !earnedSunsetBonus
       ? "Premium unlocks sunrise and sunset bonus achievements."
@@ -88,8 +124,17 @@ export default function SavedRouteScreen() {
         {!loading && session ? (
           <>
             <Text style={styles.sub}>
-              {fmtMinutes(session.durationSec)} • {fmtDistance(session.distanceM)}
+              {fmtMinutes(session.durationSec)} • {fmtDistance(session.distanceM)} • {paceLabel}
             </Text>
+            <Text style={styles.detailSub}>
+              Elapsed {fmtClockDuration(session.elapsedTimeSec ?? session.durationSec)}
+              {typeof session.movingTimeSec === "number" && session.movingTimeSec > 0
+                ? ` • Moving ${fmtClockDuration(session.movingTimeSec)}`
+                : ""}
+            </Text>
+            {session.source === "gps" && session.routePoints && session.routePoints.length > 1 ? (
+              <Text style={styles.detailSub}>{getElevationGainLabel(session)}</Text>
+            ) : null}
 
             <View style={styles.metaRow}>
               <View style={styles.metaChip}>
@@ -201,6 +246,13 @@ const styles = StyleSheet.create({
     color: "rgba(11,15,14,0.68)",
     fontSize: 15,
     lineHeight: 22,
+    fontWeight: "700",
+  },
+  detailSub: {
+    marginTop: 6,
+    color: "rgba(11,15,14,0.56)",
+    fontSize: 13,
+    lineHeight: 20,
     fontWeight: "700",
   },
   metaRow: {
