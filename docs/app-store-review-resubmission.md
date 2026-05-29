@@ -15,6 +15,18 @@ Update **App Review Notes** to include this exact note:
 
 ```text
 The subscription paywall now displays the subscription title, monthly duration, price, renewal disclosure, Privacy Policy link, Terms of Use link, and Restore Purchases button.
+Account deletion is available at Profile → Settings → Delete Account. Sign in with the demo account, open Profile, choose Delete Account, confirm deletion.
+```
+
+If Apple needs a demo login for review, append this:
+
+```text
+Demo account:
+Email: [ADD DEMO EMAIL]
+Password: [ADD DEMO PASSWORD]
+
+Account deletion path:
+Profile → Settings → Delete Account → Permanently Delete My Account
 ```
 
 ## 2. Subscription promotional image check
@@ -70,5 +82,6 @@ Before resubmitting:
 - Confirm `Terms of Use` opens successfully
 - Confirm `Restore Purchases` is visible
 - Confirm no broken subscription promotional image remains attached
+- Confirm App Review Notes include the in-app account deletion path
 - Confirm App Store Description includes the required Terms and Privacy lines
 - Confirm App Review Notes include the subscription compliance note above

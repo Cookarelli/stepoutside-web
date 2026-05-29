@@ -12,27 +12,24 @@ import {
   setActiveWalkSnapshot,
   setCompletedWalkDraft,
 } from "../src/lib/activeWalk";
+import { ENV } from "../env";
+import {
+  computeGpsStrength,
+  evaluateGpsPoint,
+  formatWalkingPace,
+  GPS_WARMUP_SECONDS,
+  type GpsAcceptanceStats,
+  type GpsIgnoreReason,
+  updateGpsStats,
+} from "../src/lib/gpsTracking";
+import { PREMIUM, alpha } from "../src/lib/premiumTheme";
 import type { RoutePoint } from "../src/lib/store";
-
-type LatLng = { lat: number; lng: number };
 
 type PermissionState = "unknown" | "granted" | "denied";
 
 type SessionSource = "gps" | "timer";
-
-function haversineMeters(a: LatLng, b: LatLng): number {
-  const R = 6371000;
-  const toRad = (x: number) => (x * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const s =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
-  const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-  return R * c;
-}
+type WalkPhase = "idle" | "countdown" | "tracking" | "paused" | "saving" | "completed";
+type GpsUiState = "idle" | "primed" | "finding" | "live";
 
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -40,34 +37,27 @@ function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function formatPace(distanceM: number, elapsedSec: number): string {
-  if (distanceM < 25 || elapsedSec < 15) return "";
-
-  const miles = distanceM / 1609.344;
-  if (!Number.isFinite(miles) || miles <= 0) return "";
-
-  const totalSecondsPerMile = Math.round(elapsedSec / miles);
-  if (!Number.isFinite(totalSecondsPerMile) || totalSecondsPerMile <= 0) return "";
-
-  const mm = Math.floor(totalSecondsPerMile / 60);
-  const ss = totalSecondsPerMile % 60;
-  return `${mm}:${String(ss).padStart(2, "0")} / mi`;
-}
-
 export default function Walk() {
   const router = useRouter();
   const SNAPSHOT_PERSIST_DEBOUNCE_MS = 4000;
 
+  useEffect(() => {
+    console.log("[boot] walk screen mounted");
+  }, []);
+
   const [permission, setPermission] = useState<PermissionState>("unknown");
-  const [phase, setPhase] = useState<"idle" | "tracking" | "paused" | "saving" | "completed">("idle");
+  const [phase, setPhase] = useState<WalkPhase>("idle");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceM, setDistanceM] = useState(0);
+  const [movingDurationSec, setMovingDurationSec] = useState(0);
   const [restored, setRestored] = useState(false);
   const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | "stop" | null>(null);
+  const [countdownSec, setCountdownSec] = useState(0);
+  const [gpsUiState, setGpsUiState] = useState<GpsUiState>("idle");
 
   const mountedRef = useRef(true);
   const restoredRef = useRef(false);
-  const phaseRef = useRef<"idle" | "tracking" | "paused" | "saving" | "completed">("idle");
+  const phaseRef = useRef<WalkPhase>("idle");
   const busyActionRef = useRef<"start" | "pause" | "resume" | "stop" | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,18 +66,32 @@ export default function Walk() {
   const restoringRef = useRef(false);
   const elapsedBeforeRunRef = useRef(0);
   const runStartedAtRef = useRef<number | null>(null);
+  const pausedDurationSecRef = useRef(0);
+  const pauseStartedAtRef = useRef<number | null>(null);
+  const movingDurationSecRef = useRef(0);
   const distanceRef = useRef(0);
+  const rawRoutePointsRef = useRef<RoutePoint[]>([]);
   const routePointsRef = useRef<RoutePoint[]>([]);
   const hadGpsPointsRef = useRef(false);
+  const firstAcceptedElapsedRef = useRef<number | null>(null);
+  const gpsIgnoreCountsRef = useRef<Partial<Record<GpsIgnoreReason, number>>>({});
+  const gpsStatsRef = useRef<GpsAcceptanceStats>({
+    rawPoints: 0,
+    acceptedDistancePoints: 0,
+    ignoredPoints: 0,
+    lastIgnoredReason: null,
+    averageAccuracy: null,
+    gpsStrength: "Weak GPS",
+  });
 
-  const lastPointRef = useRef<LatLng | null>(null);
+  const lastPointRef = useRef<RoutePoint | null>(null);
   const subRef = useRef<Location.LocationSubscription | null>(null);
   const locationGenerationRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const pace = useMemo(() => {
-    return formatPace(distanceM, elapsedSec);
-  }, [distanceM, elapsedSec]);
+    return formatWalkingPace(distanceM, movingDurationSec);
+  }, [distanceM, movingDurationSec]);
 
   const logWalk = useCallback((message: string, details?: Record<string, unknown>) => {
     if (details) {
@@ -97,6 +101,47 @@ export default function Walk() {
 
     console.log(`[walk] ${message}`);
   }, []);
+
+  const logGps = useCallback((message: string, details?: Record<string, unknown>) => {
+    if (!__DEV__ || !ENV.DEV.gpsDebug) return;
+
+    if (details) {
+      console.log(`[GPS] ${message}`, details);
+      return;
+    }
+
+    console.log(`[GPS] ${message}`);
+  }, []);
+
+  const logPace = useCallback((movingSeconds: number, confirmedDistanceMeters: number) => {
+    if (!__DEV__) return;
+
+    console.log("[PACE]", {
+      movingSeconds,
+      distanceMiles: Number((confirmedDistanceMeters / 1609.344).toFixed(3)),
+      pace: formatWalkingPace(confirmedDistanceMeters, movingSeconds) ?? "Warming up",
+    });
+  }, []);
+
+  const trackIgnoredPoint = useCallback(
+    (reason: GpsIgnoreReason, accuracy: number | null, deltaMeters: number | null, speedMps: number | null) => {
+      gpsIgnoreCountsRef.current = {
+        ...gpsIgnoreCountsRef.current,
+        [reason]: (gpsIgnoreCountsRef.current[reason] ?? 0) + 1,
+      };
+      gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, false, reason);
+      logGps("ignored", {
+        reason,
+        accuracy,
+        deltaMeters: deltaMeters === null ? null : Number(deltaMeters.toFixed(2)),
+        speedMps: speedMps === null ? null : Number(speedMps.toFixed(2)),
+        rawPoints: gpsStatsRef.current.rawPoints,
+        ignoredPoints: gpsStatsRef.current.ignoredPoints,
+        gpsStrength: gpsStatsRef.current.gpsStrength,
+      });
+    },
+    [logGps]
+  );
 
   const setPermissionSafe = useCallback((next: PermissionState) => {
     if (mountedRef.current) {
@@ -116,6 +161,12 @@ export default function Walk() {
     }
   }, []);
 
+  const setMovingDurationSafe = useCallback((next: number) => {
+    if (mountedRef.current) {
+      setMovingDurationSec(next);
+    }
+  }, []);
+
   const setRestoredSafe = useCallback((next: boolean) => {
     restoredRef.current = next;
     if (mountedRef.current) {
@@ -130,13 +181,27 @@ export default function Walk() {
     }
   }, []);
 
+  const setCountdownSafe = useCallback((next: number) => {
+    if (mountedRef.current) {
+      setCountdownSec(next);
+    }
+  }, []);
+
+  const setGpsUiStateSafe = useCallback((next: GpsUiState) => {
+    if (mountedRef.current) {
+      setGpsUiState(next);
+    }
+  }, []);
+
   const canTransitionTo = useCallback(
-    (current: "idle" | "tracking" | "paused" | "saving" | "completed", next: "idle" | "tracking" | "paused" | "saving" | "completed") => {
+    (current: WalkPhase, next: WalkPhase) => {
       if (current === next) return true;
 
       switch (current) {
         case "idle":
-          return next === "tracking";
+          return next === "countdown" || next === "tracking";
+        case "countdown":
+          return next === "tracking" || next === "idle";
         case "tracking":
           return next === "paused" || next === "saving" || next === "idle";
         case "paused":
@@ -153,7 +218,7 @@ export default function Walk() {
   );
 
   const transitionTo = useCallback(
-    (next: "idle" | "tracking" | "paused" | "saving" | "completed", reason: string) => {
+    (next: WalkPhase, reason: string) => {
       const current = phaseRef.current;
       if (!canTransitionTo(current, next)) {
         console.warn(`[walk] invalid transition ${current} -> ${next}`, { reason });
@@ -178,7 +243,7 @@ export default function Walk() {
   const beginAction = useCallback(
     (
       action: "start" | "pause" | "resume" | "stop",
-      allowedPhases: ("idle" | "tracking" | "paused" | "saving" | "completed")[]
+      allowedPhases: WalkPhase[]
     ) => {
       if (!restoredRef.current) {
         logWalk(`blocked ${action}`, { reason: "not restored" });
@@ -212,28 +277,124 @@ export default function Walk() {
   const refreshPermission = useCallback(async () => {
     try {
       const res = await Location.getForegroundPermissionsAsync();
-      const nextPermission: PermissionState = res.status === "granted" ? "granted" : "denied";
+      const nextPermission: PermissionState =
+        res.status === "granted"
+          ? "granted"
+          : res.status === "denied"
+            ? "denied"
+            : "unknown";
+      logWalk("permission refreshed", {
+        status: res.status,
+        canAskAgain: res.canAskAgain,
+        mappedPermission: nextPermission,
+      });
       setPermissionSafe(nextPermission);
       return nextPermission === "granted";
     } catch (error) {
       console.error("[walk] failed to refresh permission", error);
-      setPermissionSafe("denied");
+      setPermissionSafe("unknown");
       return false;
     }
-  }, [setPermissionSafe]);
+  }, [logWalk, setPermissionSafe]);
 
   const requestPerms = useCallback(async () => {
     try {
       const res = await Location.requestForegroundPermissionsAsync();
       const ok = res.status === "granted";
+      logWalk("permission requested", {
+        status: res.status,
+        canAskAgain: res.canAskAgain,
+        granted: ok,
+      });
       setPermissionSafe(ok ? "granted" : "denied");
       return ok;
     } catch (error) {
       console.error("[walk] failed to request permission", error);
-      setPermissionSafe("denied");
+      setPermissionSafe("unknown");
       return false;
     }
-  }, [setPermissionSafe]);
+  }, [logWalk, setPermissionSafe]);
+
+  const buildRoutePoint = useCallback(
+    (
+      coords: Pick<Location.LocationObjectCoords, "latitude" | "longitude" | "accuracy" | "altitude" | "speed">,
+      timestamp: number
+    ): RoutePoint => ({
+      lat: coords.latitude,
+      lng: coords.longitude,
+      t: timestamp || Date.now(),
+      ...(typeof coords.accuracy === "number" && Number.isFinite(coords.accuracy) ? { accuracy: coords.accuracy } : {}),
+      ...(typeof coords.altitude === "number" && Number.isFinite(coords.altitude) ? { altitude: coords.altitude } : {}),
+      ...(typeof coords.speed === "number" && Number.isFinite(coords.speed) ? { speed: coords.speed } : {}),
+    }),
+    []
+  );
+
+  const acceptAnchorPoint = useCallback(
+    (point: RoutePoint, source: "watch" | "fresh-start-fix") => {
+      const accuracy =
+        typeof point.accuracy === "number" && Number.isFinite(point.accuracy) ? point.accuracy : null;
+
+      gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, true, null);
+      routePointsRef.current = routePointsRef.current.length === 0 ? [point] : routePointsRef.current;
+      lastPointRef.current = point;
+      if (firstAcceptedElapsedRef.current === null) {
+        firstAcceptedElapsedRef.current =
+          runStartedAtRef.current === null
+            ? elapsedBeforeRunRef.current
+            : elapsedBeforeRunRef.current + Math.max(0, Math.floor((Date.now() - runStartedAtRef.current) / 1000));
+      }
+      setGpsUiStateSafe("live");
+      logGps("accepted", {
+        kind: source === "watch" ? "anchor" : "seeded_anchor",
+        accuracy,
+        gpsStrength: gpsStatsRef.current.gpsStrength,
+      });
+    },
+    [logGps, setGpsUiStateSafe]
+  );
+
+  const wait = useCallback((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), []);
+
+  const getAcceptableLastKnownPoint = useCallback(async () => {
+    try {
+      const lastKnown = await Location.getLastKnownPositionAsync();
+      if (!lastKnown) return null;
+
+      const point = buildRoutePoint(lastKnown.coords, lastKnown.timestamp || Date.now());
+      const result = evaluateGpsPoint(point, null);
+      if (!result.accepted) {
+        return null;
+      }
+
+      return point;
+    } catch (error) {
+      console.warn("[walk] failed to read last known location", error);
+      return null;
+    }
+  }, [buildRoutePoint]);
+
+  const getFreshStartingPoint = useCallback(async () => {
+    try {
+      const locationOrNull = await Promise.race<Location.LocationObject | null>([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation }),
+        wait((GPS_WARMUP_SECONDS + 1) * 1000).then(() => null),
+      ]);
+
+      if (!locationOrNull) return null;
+
+      const point = buildRoutePoint(locationOrNull.coords, locationOrNull.timestamp || Date.now());
+      const result = evaluateGpsPoint(point, null);
+      if (!result.accepted) {
+        return null;
+      }
+
+      return point;
+    } catch (error) {
+      console.warn("[walk] failed to read fresh start fix", error);
+      return null;
+    }
+  }, [buildRoutePoint, wait]);
 
   const ensureLocationPermission = useCallback(async () => {
     if (permission === "granted") return true;
@@ -263,10 +424,17 @@ export default function Walk() {
   );
 
   const startGps = useCallback(
-    async (reason: string) => {
+    async (reason: string, seededPoint?: RoutePoint | null) => {
       stopGps(`restart before ${reason}`);
       const generation = locationGenerationRef.current;
       logWalk("gps starting", { reason, generation });
+
+      if (seededPoint) {
+        routePointsRef.current = [seededPoint];
+        acceptAnchorPoint(seededPoint, "fresh-start-fix");
+      } else if (permission !== "denied") {
+        setGpsUiStateSafe("finding");
+      }
 
       try {
         const subscription = await Location.watchPositionAsync(
@@ -280,39 +448,66 @@ export default function Walk() {
               return;
             }
 
-            const accuracy = pos.coords.accuracy ?? Number.POSITIVE_INFINITY;
-            if (accuracy > 35) return;
+            const point = buildRoutePoint(pos.coords, pos.timestamp || Date.now());
+            rawRoutePointsRef.current = [...rawRoutePointsRef.current, point];
+            logGps("raw point", {
+              lat: Number(point.lat.toFixed(6)),
+              lng: Number(point.lng.toFixed(6)),
+              accuracy: point.accuracy ?? null,
+              speed: typeof pos.coords.speed === "number" && Number.isFinite(pos.coords.speed)
+                ? Number(pos.coords.speed.toFixed(2))
+                : null,
+              heading: typeof pos.coords.heading === "number" && Number.isFinite(pos.coords.heading)
+                ? Number(pos.coords.heading.toFixed(1))
+                : null,
+              altitude: typeof pos.coords.altitude === "number" && Number.isFinite(pos.coords.altitude)
+                ? Number(pos.coords.altitude.toFixed(1))
+                : null,
+              timestamp: point.t,
+            });
 
-            const point: RoutePoint = {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              t: pos.timestamp || Date.now(),
-              ...(Number.isFinite(accuracy) ? { accuracy } : {}),
-              ...(typeof pos.coords.altitude === "number" && Number.isFinite(pos.coords.altitude)
-                ? { altitude: pos.coords.altitude }
-                : {}),
-              ...(typeof pos.coords.speed === "number" && Number.isFinite(pos.coords.speed)
-                ? { speed: pos.coords.speed }
-                : {}),
-            };
-            const p = { lat: point.lat, lng: point.lng };
-            const last = lastPointRef.current;
+            const accuracy =
+              typeof point.accuracy === "number" && Number.isFinite(point.accuracy) ? point.accuracy : null;
+            const result = evaluateGpsPoint(point, lastPointRef.current);
 
-            if (last) {
-              const d = haversineMeters(last, p);
-              // Ignore jitter smaller than a few steps and large GPS spikes.
-              if (d >= 2 && d < 80) {
-                const nextDistance = distanceRef.current + d;
-                distanceRef.current = nextDistance;
-                routePointsRef.current = [...routePointsRef.current, point];
-                hadGpsPointsRef.current = routePointsRef.current.length > 1;
-                setDistanceSafe(nextDistance);
-              }
-            } else {
-              routePointsRef.current = [...routePointsRef.current, point];
+            if (!result.accepted) {
+              trackIgnoredPoint(result.reason, accuracy, result.deltaMeters, result.speedMps);
+              return;
             }
 
-            lastPointRef.current = p;
+            gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, true, null);
+
+            if (result.kind === "anchor") {
+              acceptAnchorPoint(point, "watch");
+              return;
+            }
+
+            const nextDistance = distanceRef.current + result.deltaMeters;
+            const nextMovingDuration = movingDurationSecRef.current + Math.max(0, Math.round(result.deltaTimeSec));
+            distanceRef.current = nextDistance;
+            movingDurationSecRef.current = nextMovingDuration;
+            routePointsRef.current = [...routePointsRef.current, point];
+            hadGpsPointsRef.current = routePointsRef.current.length > 1;
+            lastPointRef.current = point;
+            setGpsUiStateSafe("live");
+            setDistanceSafe(nextDistance);
+            setMovingDurationSafe(nextMovingDuration);
+            logGps("accepted", {
+              deltaMeters: Number(result.deltaMeters.toFixed(2)),
+              deltaTimeSec: Number(result.deltaTimeSec.toFixed(2)),
+              speedMps: result.speedMps === null ? null : Number(result.speedMps.toFixed(2)),
+              accuracy,
+              acceptedPoints: gpsStatsRef.current.acceptedDistancePoints,
+              averageAccuracy:
+                gpsStatsRef.current.averageAccuracy === null
+                  ? null
+                  : Number(gpsStatsRef.current.averageAccuracy.toFixed(1)),
+              gpsStrength: gpsStatsRef.current.gpsStrength,
+            });
+            logWalk("distance updated", {
+              distanceMeters: Math.round(nextDistance),
+              distanceMiles: Number((nextDistance / 1609.344).toFixed(3)),
+            });
           }
         );
 
@@ -333,13 +528,23 @@ export default function Walk() {
         return false;
       }
     },
-    [logWalk, setDistanceSafe, stopGps]
+    [acceptAnchorPoint, buildRoutePoint, logGps, logWalk, permission, setDistanceSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, trackIgnoredPoint]
   );
 
   const getElapsedNow = useCallback(() => {
     if (!runStartedAtRef.current) return elapsedBeforeRunRef.current;
     return elapsedBeforeRunRef.current + Math.max(0, Math.floor((Date.now() - runStartedAtRef.current) / 1000));
   }, []);
+
+  const getPausedDurationNow = useCallback(() => {
+    const pauseStartedAt = pauseStartedAtRef.current;
+    if (pauseStartedAt === null) return pausedDurationSecRef.current;
+    return pausedDurationSecRef.current + Math.max(0, Math.floor((Date.now() - pauseStartedAt) / 1000));
+  }, []);
+
+  const getTotalElapsedNow = useCallback(() => {
+    return getElapsedNow() + getPausedDurationNow();
+  }, [getElapsedNow, getPausedDurationNow]);
 
   const syncElapsedFromClock = useCallback(() => {
     const nextElapsed = getElapsedNow();
@@ -417,7 +622,17 @@ export default function Walk() {
   }, [logWalk]);
 
   const persistActiveWalk = useCallback(
-    async (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean; routePoints: RoutePoint[] }>) => {
+    async (
+      overrides?: Partial<{
+        elapsedSec: number;
+        distanceM: number;
+        movingDurationSec: number;
+        pausedDurationSec: number;
+        pauseStartedAt: number | null;
+        running: boolean;
+        routePoints: RoutePoint[];
+      }>
+    ) => {
       const startedAt = startedAtRef.current;
       if (!startedAt) return false;
 
@@ -426,6 +641,10 @@ export default function Walk() {
           startedAt,
           elapsedSec: overrides?.elapsedSec ?? getElapsedNow(),
           distanceM: overrides?.distanceM ?? distanceRef.current,
+          movingDurationSec: overrides?.movingDurationSec ?? movingDurationSecRef.current,
+          pausedDurationSec: overrides?.pausedDurationSec ?? getPausedDurationNow(),
+          pauseStartedAt:
+            overrides && "pauseStartedAt" in overrides ? overrides.pauseStartedAt ?? null : pauseStartedAtRef.current,
           routePoints: overrides?.routePoints ?? routePointsRef.current,
           running: overrides?.running ?? phaseRef.current === "tracking",
           updatedAt: Date.now(),
@@ -436,7 +655,7 @@ export default function Walk() {
         return false;
       }
     },
-    [getElapsedNow]
+    [getElapsedNow, getPausedDurationNow]
   );
 
   const clearScheduledPersist = useCallback(() => {
@@ -447,7 +666,17 @@ export default function Walk() {
   }, []);
 
   const schedulePersist = useCallback(
-    (overrides?: Partial<{ elapsedSec: number; distanceM: number; running: boolean; routePoints: RoutePoint[] }>) => {
+    (
+      overrides?: Partial<{
+        elapsedSec: number;
+        distanceM: number;
+        movingDurationSec: number;
+        pausedDurationSec: number;
+        pauseStartedAt: number | null;
+        running: boolean;
+        routePoints: RoutePoint[];
+      }>
+    ) => {
       if (
         restoringRef.current ||
         !startedAtRef.current ||
@@ -479,15 +708,32 @@ export default function Walk() {
     startedAtRef.current = null;
     elapsedBeforeRunRef.current = 0;
     runStartedAtRef.current = null;
+    pausedDurationSecRef.current = 0;
+    pauseStartedAtRef.current = null;
+    movingDurationSecRef.current = 0;
     distanceRef.current = 0;
+    rawRoutePointsRef.current = [];
     routePointsRef.current = [];
     hadGpsPointsRef.current = false;
+    firstAcceptedElapsedRef.current = null;
     lastPointRef.current = null;
+    gpsStatsRef.current = {
+      rawPoints: 0,
+      acceptedDistancePoints: 0,
+      ignoredPoints: 0,
+      lastIgnoredReason: null,
+      averageAccuracy: null,
+      gpsStrength: "Weak GPS",
+    };
+    gpsIgnoreCountsRef.current = {};
+    setCountdownSafe(0);
+    setGpsUiStateSafe("idle");
     setElapsedSafe(0);
     setDistanceSafe(0);
+    setMovingDurationSafe(0);
     transitionTo("idle", reason);
     await clearActiveWalkSnapshotSafe(reason);
-  }, [clearActiveWalkSnapshotSafe, clearScheduledPersist, setDistanceSafe, setElapsedSafe, stopGps, stopTimer, transitionTo]);
+  }, [clearActiveWalkSnapshotSafe, clearScheduledPersist, setCountdownSafe, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, stopTimer, transitionTo]);
 
   useEffect(() => {
     return () => {
@@ -500,26 +746,68 @@ export default function Walk() {
     if (!beginAction("start", ["idle"])) return;
     void Haptics.selectionAsync();
     try {
-      const ok = await ensureLocationPermission();
       await clearCompletedWalkDraftSafe("start");
       await resetWalkState("start");
+      transitionTo("countdown", "start warmup");
+
+      const permissionPromise = ensureLocationPermission();
+      const warmupPromise = (async () => {
+        const ok = await permissionPromise;
+        if (!ok) return { lastKnownPoint: null as RoutePoint | null, freshPoint: null as RoutePoint | null };
+
+        const lastKnownPoint = await getAcceptableLastKnownPoint();
+        if (lastKnownPoint) {
+          setGpsUiStateSafe("primed");
+        }
+
+        const freshPoint = await getFreshStartingPoint();
+        return { lastKnownPoint, freshPoint };
+      })();
+
+      for (let countdown = GPS_WARMUP_SECONDS; countdown >= 1; countdown -= 1) {
+        setCountdownSafe(countdown);
+        await wait(1000);
+      }
+      setCountdownSafe(0);
+
+      const ok = await permissionPromise;
+      const { lastKnownPoint, freshPoint } = await warmupPromise;
 
       startedAtRef.current = Date.now();
       elapsedBeforeRunRef.current = 0;
       runStartedAtRef.current = Date.now();
+      pausedDurationSecRef.current = 0;
+      pauseStartedAtRef.current = null;
+      movingDurationSecRef.current = 0;
       setElapsedSafe(0);
       setDistanceSafe(0);
+      setMovingDurationSafe(0);
       distanceRef.current = 0;
       lastPointRef.current = null;
+      rawRoutePointsRef.current = freshPoint ? [freshPoint] : [];
       routePointsRef.current = [];
       hadGpsPointsRef.current = false;
+      firstAcceptedElapsedRef.current = null;
+
+      if (ok) {
+        setGpsUiStateSafe(freshPoint ? "live" : lastKnownPoint ? "primed" : "finding");
+      }
 
       transitionTo("tracking", "start");
-      await persistActiveWalk({ elapsedSec: 0, distanceM: 0, routePoints: [], running: true });
+      logWalk("walk started", { gpsEnabled: ok, hasFreshStartingPoint: Boolean(freshPoint) });
+      await persistActiveWalk({
+        elapsedSec: 0,
+        distanceM: 0,
+        movingDurationSec: 0,
+        pausedDurationSec: 0,
+        pauseStartedAt: null,
+        routePoints: [],
+        running: true,
+      });
       startTimer("start");
 
       if (ok) {
-        await startGps("start");
+        await startGps("start", freshPoint);
       }
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -539,11 +827,20 @@ export default function Walk() {
       const nextElapsed = syncElapsedFromClock();
       elapsedBeforeRunRef.current = nextElapsed;
       runStartedAtRef.current = null;
+      pauseStartedAtRef.current = Date.now();
       setElapsedSafe(nextElapsed);
       stopTimer("pause");
       stopGps("pause");
+      setGpsUiStateSafe(permission === "denied" ? "idle" : firstAcceptedElapsedRef.current === null ? "finding" : "live");
       transitionTo("paused", "pause");
-      await persistActiveWalk({ elapsedSec: nextElapsed, running: false });
+      logWalk("walk paused", { elapsedSeconds: nextElapsed });
+      await persistActiveWalk({
+        elapsedSec: nextElapsed,
+        pausedDurationSec: pausedDurationSecRef.current,
+        pauseStartedAt: pauseStartedAtRef.current,
+        movingDurationSec: movingDurationSecRef.current,
+        running: false,
+      });
     } catch (error) {
       console.error("[walk] pause failed", error);
       Alert.alert("Couldn’t pause walk", "The walk was left in a safe state. Please try again.");
@@ -560,8 +857,22 @@ export default function Walk() {
 
       elapsedBeforeRunRef.current = getElapsedNow();
       runStartedAtRef.current = Date.now();
+      if (pauseStartedAtRef.current !== null) {
+        pausedDurationSecRef.current = getPausedDurationNow();
+      }
+      pauseStartedAtRef.current = null;
+      if (ok) {
+        setGpsUiStateSafe(firstAcceptedElapsedRef.current === null ? "finding" : "live");
+      }
       transitionTo("tracking", "resume");
-      await persistActiveWalk({ elapsedSec: elapsedBeforeRunRef.current, running: true });
+      logWalk("walk resumed", { elapsedSeconds: elapsedBeforeRunRef.current, gpsEnabled: ok });
+      await persistActiveWalk({
+        elapsedSec: elapsedBeforeRunRef.current,
+        pausedDurationSec: pausedDurationSecRef.current,
+        pauseStartedAt: null,
+        movingDurationSec: movingDurationSecRef.current,
+        running: true,
+      });
       startTimer("resume");
 
       if (ok) {
@@ -589,10 +900,35 @@ export default function Walk() {
       const endLng = lastPointRef.current?.lng;
       const routePoints = [...routePointsRef.current];
       const finalElapsed = syncElapsedFromClock();
+      const finalPausedDuration = getPausedDurationNow();
+      const finalTotalElapsed = getTotalElapsedNow();
+      const finalMovingElapsed = movingDurationSecRef.current;
       const finalDistance = Math.max(0, Math.round(distanceRef.current));
+      logWalk("walk ended", {
+        elapsedSeconds: finalElapsed,
+        pausedSeconds: finalPausedDuration,
+        totalElapsedSeconds: finalTotalElapsed,
+        movingTimeSeconds: finalMovingElapsed,
+        distanceMeters: finalDistance,
+        distanceMiles: Number((finalDistance / 1609.344).toFixed(3)),
+        pace: formatWalkingPace(finalDistance, finalMovingElapsed) ?? "Warming up",
+        source,
+        rawPoints: rawRoutePointsRef.current.length,
+        acceptedPoints: gpsStatsRef.current.acceptedDistancePoints,
+        ignoredPoints: gpsStatsRef.current.ignoredPoints,
+        lastIgnoredReason: gpsStatsRef.current.lastIgnoredReason,
+        averageAccuracy:
+          gpsStatsRef.current.averageAccuracy === null
+            ? null
+            : Number(gpsStatsRef.current.averageAccuracy.toFixed(1)),
+        gpsStrength: gpsStatsRef.current.gpsStrength,
+        ignoredReasonCounts: gpsIgnoreCountsRef.current,
+      });
 
       elapsedBeforeRunRef.current = finalElapsed;
       runStartedAtRef.current = null;
+      pausedDurationSecRef.current = finalPausedDuration;
+      pauseStartedAtRef.current = null;
       clearScheduledPersist();
       stopTimer("stop");
       stopGps("stop");
@@ -624,6 +960,10 @@ export default function Walk() {
           startedAt: String(startedAt),
           endedAt: String(endedAt),
           durationSec: String(finalElapsed),
+          activeDurationSec: String(finalElapsed),
+          pausedDurationSec: String(finalPausedDuration),
+          totalElapsedSec: String(finalTotalElapsed),
+          movingDurationSec: String(finalMovingElapsed),
           distanceM: String(finalDistance),
           source,
           routePointCount: String(routePoints.length),
@@ -737,12 +1077,19 @@ export default function Walk() {
         if (!snapshot) {
           elapsedBeforeRunRef.current = 0;
           runStartedAtRef.current = null;
+          pausedDurationSecRef.current = 0;
+          pauseStartedAtRef.current = null;
+          movingDurationSecRef.current = 0;
           distanceRef.current = 0;
+          rawRoutePointsRef.current = [];
           routePointsRef.current = [];
           hadGpsPointsRef.current = false;
+          firstAcceptedElapsedRef.current = null;
+          setGpsUiStateSafe("idle");
           transitionTo("idle", "restore empty");
           setElapsedSafe(0);
           setDistanceSafe(0);
+          setMovingDurationSafe(0);
           return;
         }
 
@@ -754,20 +1101,42 @@ export default function Walk() {
 
         elapsedBeforeRunRef.current = snapshot.running ? snapshot.elapsedSec : recoveredElapsed;
         runStartedAtRef.current = snapshot.running ? snapshot.updatedAt : null;
+        pausedDurationSecRef.current = snapshot.pausedDurationSec ?? 0;
+        pauseStartedAtRef.current = snapshot.running ? null : snapshot.pauseStartedAt ?? null;
+        movingDurationSecRef.current = snapshot.movingDurationSec ?? 0;
         distanceRef.current = snapshot.distanceM;
+        rawRoutePointsRef.current = snapshot.routePoints ?? [];
         routePointsRef.current = snapshot.routePoints ?? [];
         hadGpsPointsRef.current = routePointsRef.current.length > 1;
+        firstAcceptedElapsedRef.current = routePointsRef.current.length > 0 ? 0 : null;
+        const accuracies = routePointsRef.current
+          .map((point) => point.accuracy)
+          .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+        const averageAccuracy =
+          accuracies.length > 0
+            ? accuracies.reduce((sum, value) => sum + value, 0) / accuracies.length
+            : null;
+        gpsStatsRef.current = {
+          rawPoints: routePointsRef.current.length,
+          acceptedDistancePoints: Math.max(0, routePointsRef.current.length - 1),
+          ignoredPoints: 0,
+          lastIgnoredReason: null,
+          averageAccuracy,
+          gpsStrength: computeGpsStrength(averageAccuracy, Math.max(0, routePointsRef.current.length - 1)),
+        };
         setElapsedSafe(recoveredElapsed);
         setDistanceSafe(snapshot.distanceM);
+        setMovingDurationSafe(movingDurationSecRef.current);
 
         if (routePointsRef.current.length > 0) {
           const last = routePointsRef.current[routePointsRef.current.length - 1];
           if (last) {
-            lastPointRef.current = { lat: last.lat, lng: last.lng };
+            lastPointRef.current = last;
           }
         }
 
         if (snapshot.running) {
+          setGpsUiStateSafe(routePointsRef.current.length > 0 ? "live" : "finding");
           transitionTo("tracking", "restore tracking");
           startTimer("restore");
           const ok = await refreshPermission();
@@ -775,6 +1144,7 @@ export default function Walk() {
             await startGps("restore");
           }
         } else {
+          setGpsUiStateSafe(routePointsRef.current.length > 0 ? "live" : "idle");
           transitionTo("paused", "restore paused");
         }
       } catch (error) {
@@ -791,7 +1161,7 @@ export default function Walk() {
     return () => {
       cancelled = true;
     };
-  }, [logWalk, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
+  }, [logWalk, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
 
   useEffect(() => {
     if (restoringRef.current || !startedAtRef.current) return;
@@ -799,12 +1169,22 @@ export default function Walk() {
     schedulePersist();
   }, [distanceM, elapsedSec, phase, schedulePersist]);
 
+  useEffect(() => {
+    if (phase !== "tracking" && phase !== "paused") return;
+    if (elapsedSec > 0 && elapsedSec % 15 === 0) {
+      logWalk("elapsed seconds", { elapsedSeconds: elapsedSec });
+    }
+    logPace(movingDurationSec, distanceM);
+  }, [distanceM, elapsedSec, logPace, logWalk, movingDurationSec, phase]);
+
   const hasActiveSession = phase !== "idle";
   const startResumeLabel =
     busyAction === "start"
       ? "STARTING…"
       : busyAction === "resume"
         ? "RESUMING…"
+        : phase === "countdown"
+          ? "GET READY…"
         : phase === "paused"
           ? "RESUME"
           : phase === "tracking"
@@ -813,8 +1193,21 @@ export default function Walk() {
   const canStartOrResume = restored && busyAction === null && (phase === "idle" || phase === "paused");
   const canPause = restored && busyAction === null && phase === "tracking";
   const canStop = restored && busyAction === null && (phase === "tracking" || phase === "paused");
+  const hasGpsAnchor = firstAcceptedElapsedRef.current !== null;
+  const paceLabel =
+    permission === "denied"
+      ? "--"
+      : phase === "countdown"
+        ? "--"
+        : !hasGpsAnchor
+          ? "Finding GPS…"
+          : pace ?? "Warming up";
   const statusText =
-    phase === "tracking"
+    phase === "countdown"
+      ? "Starting in a moment while we wake up GPS."
+      : phase === "tracking" && permission !== "denied" && !hasGpsAnchor
+        ? "Finding a reliable GPS starting point. Distance begins as soon as the first accurate fix arrives."
+      : phase === "tracking"
       ? "Walk in progress. Pause when you want a breather."
       : phase === "paused"
         ? "Your walk is paused. Resume when you're ready."
@@ -833,18 +1226,38 @@ export default function Walk() {
         <View style={styles.sessionHeader}>
           <View style={styles.sessionPill}>
             <Text style={styles.sessionPillText}>
-              {phase === "tracking" ? "Walk live" : phase === "paused" ? "Paused" : phase === "saving" ? "Saving" : "Ready"}
+              {phase === "countdown"
+                ? "Get ready"
+                : phase === "tracking"
+                  ? "Walk live"
+                  : phase === "paused"
+                    ? "Paused"
+                    : phase === "saving"
+                      ? "Saving"
+                      : "Ready"}
             </Text>
           </View>
-          <Text style={styles.sessionHint}>{permission === "denied" ? "Timer mode" : "GPS mode"}</Text>
+          <Text style={styles.sessionHint}>
+            {permission === "denied"
+              ? "Timer mode"
+              : gpsUiState === "primed"
+                ? "GPS primed"
+                : gpsUiState === "finding"
+                  ? "Finding GPS…"
+                  : "GPS mode"}
+          </Text>
         </View>
 
         <Text style={styles.title}>Walk</Text>
-        <Text style={styles.sub}>Elapsed</Text>
-        <Text style={styles.big}>{fmtTime(elapsedSec)}</Text>
+        <Text style={styles.sub}>{phase === "countdown" ? "Starting in" : "Elapsed"}</Text>
+        <Text style={styles.big}>{phase === "countdown" ? String(countdownSec || GPS_WARMUP_SECONDS) : fmtTime(elapsedSec)}</Text>
         <Text style={styles.sessionSupport}>
-          {permission === "denied"
+          {phase === "countdown"
+            ? "A quick 3-2-1 while we prep your walk and check location."
+            : permission === "denied"
             ? "Timer mode is active. Turn location back on anytime for route and distance."
+            : !hasGpsAnchor
+              ? "We’re looking for the first reliable GPS fix. Distance starts after that point is locked."
             : "Keep your phone with you and Step Outside will track route, distance, and pace."}
         </Text>
 
@@ -855,7 +1268,7 @@ export default function Walk() {
           </View>
           <View style={styles.metric}>
             <Text style={styles.metricK}>Pace</Text>
-            <Text style={styles.metricV}>{pace || "—"}</Text>
+            <Text style={styles.metricV}>{paceLabel}</Text>
           </View>
         </View>
       </View>
@@ -866,7 +1279,7 @@ export default function Walk() {
 
       {!restored ? (
         <View style={styles.loadingState}>
-          <ActivityIndicator color="#F2B541" />
+          <ActivityIndicator color={PREMIUM.colors.gold} />
           <Text style={styles.loadingText}>Loading walk…</Text>
         </View>
       ) : (
@@ -948,10 +1361,10 @@ export default function Walk() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: PREMIUM.colors.cream,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: PREMIUM.spacing.screen,
     paddingVertical: 18,
     overflow: "hidden",
   },
@@ -962,7 +1375,7 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.08),
   },
   bgGlowBottom: {
     position: "absolute",
@@ -971,22 +1384,19 @@ const styles = StyleSheet.create({
     width: 210,
     height: 210,
     borderRadius: 999,
-    backgroundColor: "rgba(242,181,65,0.12)",
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.14),
   },
   sessionCard: {
     width: "100%",
     maxWidth: 380,
-    borderRadius: 30,
-    paddingHorizontal: 22,
-    paddingTop: 18,
-    paddingBottom: 22,
-    backgroundColor: "rgba(255,255,255,0.88)",
+    borderRadius: PREMIUM.radius.hero,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 24,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.84),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
+    borderColor: PREMIUM.colors.line,
+    ...PREMIUM.shadow.hero,
   },
   sessionHeader: {
     flexDirection: "row",
@@ -997,29 +1407,29 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.1)",
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.1),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: PREMIUM.colors.lineStrong,
   },
   sessionPillText: {
-    color: "#255E36",
+    color: PREMIUM.colors.forest,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.3,
   },
   sessionHint: {
-    color: "rgba(11,15,14,0.46)",
+    color: PREMIUM.colors.textSoft,
     fontSize: 12,
     fontWeight: "800",
   },
-  title: { fontSize: 26, fontWeight: "900", color: "#0B0F0E" },
-  sub: { marginTop: 10, fontSize: 14, fontWeight: "800", color: "rgba(11,15,14,0.65)" },
-  big: { marginTop: 8, fontSize: 60, fontWeight: "900", color: "#255E36", letterSpacing: -1.2 },
+  title: { fontSize: 32, lineHeight: 38, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
+  sub: { marginTop: 12, fontSize: 13, fontWeight: "800", color: PREMIUM.colors.textMuted, letterSpacing: 0.6, textTransform: "uppercase" },
+  big: { marginTop: 8, fontSize: 62, fontWeight: "800", color: PREMIUM.colors.forest, letterSpacing: -1.8, fontFamily: PREMIUM.type.serifFamily },
   sessionSupport: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
-    fontSize: 13,
-    lineHeight: 18,
+    color: PREMIUM.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: "700",
     maxWidth: 280,
   },
@@ -1029,25 +1439,25 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(248,244,238,0.9)",
+    borderRadius: PREMIUM.radius.lg,
+    backgroundColor: alpha(PREMIUM.colors.cream, 0.96),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: PREMIUM.colors.line,
     alignItems: "center",
   },
-  metricK: { fontSize: 13, fontWeight: "800", color: "rgba(11,15,14,0.58)" },
-  metricV: { marginTop: 6, fontSize: 17, fontWeight: "900", color: "#0B0F0E" },
+  metricK: { fontSize: 12, fontWeight: "800", color: PREMIUM.colors.textSoft, textTransform: "uppercase", letterSpacing: 0.4 },
+  metricV: { marginTop: 6, fontSize: 18, fontWeight: "900", color: PREMIUM.colors.text },
 
   warn: {
     marginTop: 14,
-    color: "#8C6412",
+    color: PREMIUM.colors.ink,
     fontWeight: "800",
-    backgroundColor: "rgba(242,181,65,0.16)",
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.2),
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.24)",
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.28),
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: PREMIUM.radius.md,
   },
   loadingState: {
     marginTop: 22,
@@ -1055,7 +1465,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   loadingText: {
-    color: "rgba(11,15,14,0.7)",
+    color: PREMIUM.colors.textMuted,
     fontWeight: "800",
   },
   controlsStack: {
@@ -1074,7 +1484,7 @@ const styles = StyleSheet.create({
   },
   controlHint: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.58)",
+    color: PREMIUM.colors.textSoft,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -1083,57 +1493,57 @@ const styles = StyleSheet.create({
   },
 
   btnPrimary: {
-    backgroundColor: "#255E36",
+    backgroundColor: PREMIUM.colors.forest,
     minHeight: 56,
     paddingVertical: 16,
-    borderRadius: 18,
+    borderRadius: PREMIUM.radius.pill,
     alignItems: "center",
     justifyContent: "center",
   },
-  btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
+  btnPrimaryText: { color: PREMIUM.colors.offWhite, fontWeight: "900", letterSpacing: 0.8 },
 
   btnPause: {
-    backgroundColor: "#F2B541",
+    backgroundColor: PREMIUM.colors.gold,
     minHeight: 56,
     paddingVertical: 16,
-    borderRadius: 18,
+    borderRadius: PREMIUM.radius.pill,
     alignItems: "center",
     justifyContent: "center",
   },
-  btnPauseText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
+  btnPauseText: { color: PREMIUM.colors.ink, fontWeight: "900", letterSpacing: 0.8 },
   btnDisabled: {
     opacity: 0.45,
   },
 
   btnEnd: {
     marginTop: 14,
-    backgroundColor: "#C83333",
+    backgroundColor: PREMIUM.colors.danger,
     minHeight: 56,
     paddingVertical: 14,
     paddingHorizontal: 26,
-    borderRadius: 16,
+    borderRadius: PREMIUM.radius.pill,
     minWidth: 240,
     alignItems: "center",
     justifyContent: "center",
   },
-  btnEndText: { color: "white", fontWeight: "900", letterSpacing: 1 },
+  btnEndText: { color: PREMIUM.colors.offWhite, fontWeight: "900", letterSpacing: 0.8 },
 
   bottomRow: {
     marginTop: 16,
     flexDirection: "row",
     gap: 10,
   },
-  back: { minHeight: 44, paddingVertical: 8, paddingHorizontal: 12, justifyContent: "center" },
-  backText: { color: "rgba(11,15,14,0.65)", fontWeight: "800" },
+  back: { minHeight: 44, paddingVertical: 8, paddingHorizontal: 12, justifyContent: "center", borderRadius: PREMIUM.radius.pill },
+  backText: { color: PREMIUM.colors.textMuted, fontWeight: "800" },
   home: {
     minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: "rgba(37,94,54,0.10)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.1),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.18)",
+    borderColor: PREMIUM.colors.lineStrong,
     justifyContent: "center",
   },
-  homeText: { color: "#255E36", fontWeight: "900" },
+  homeText: { color: PREMIUM.colors.forest, fontWeight: "900" },
 });

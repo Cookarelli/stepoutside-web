@@ -8,6 +8,7 @@ import {
   clearProState,
   getProState,
   getPaywallCatalog,
+  getPremiumStatus,
   purchaseProPlan,
   refreshProState,
   restorePurchasesScaffold,
@@ -15,18 +16,9 @@ import {
   type ProPaywallCatalog,
   type ProState,
 } from "../src/lib/pro";
+import { PREMIUM, alpha } from "../src/lib/premiumTheme";
 
-const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  red: "#C83333",
-  mist: "#E7EEE6",
-  sand: "#EFE7DA",
-} as const;
-
-const PRIVACY_URL = "https://stepoutside.app/privacy-policy";
+const PRIVACY_URL = "https://www.stepoutside.app/privacy-policy";
 const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 const MANAGE_SUBSCRIPTIONS_URL = "https://apps.apple.com/account/subscriptions";
 const RENEWAL_DISCLOSURE =
@@ -41,30 +33,62 @@ export default function ProScreen() {
   const [billingReady, setBillingReady] = useState(false);
   const [catalogSource, setCatalogSource] = useState<ProPaywallCatalog["source"]>("fallback");
   const [offeringId, setOfferingId] = useState<string | null>(null);
+  const [missingPlans, setMissingPlans] = useState<ProPaywallCatalog["missingPlans"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [premiumStatusSource, setPremiumStatusSource] = useState<"revenuecat" | "cached" | "override" | "unavailable">("cached");
+  const [overrideReason, setOverrideReason] = useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
       const catalog = await getPaywallCatalog();
       const state = await refreshProState();
+      const premiumStatus = await getPremiumStatus();
 
       setPackages(catalog.packages);
       setBillingReady(catalog.billingReady);
       setCatalogSource(catalog.source);
       setOfferingId(catalog.offeringId);
+      setMissingPlans(catalog.missingPlans);
       setCatalogError(catalog.errorMessage);
       setProStateLocal(state);
+      setPremiumStatusSource(premiumStatus.source);
+      setOverrideReason(premiumStatus.overrideReason);
+
+      if (__DEV__) {
+        console.info("[Premium] paywall state", {
+          catalogSource: catalog.source,
+          offeringId: catalog.offeringId,
+          availablePackages: catalog.packages.map((pkg) => ({
+            plan: pkg.plan,
+            productId: pkg.productId,
+            priceLabel: pkg.priceLabel,
+            periodLabel: pkg.periodLabel,
+          })),
+          missingPlans: catalog.missingPlans,
+          activeEntitlement: premiumStatus.customerInfo?.entitlements.active?.pro
+            ? {
+                productIdentifier: premiumStatus.customerInfo.entitlements.active.pro.productIdentifier,
+              }
+            : null,
+          premiumStatusSource: premiumStatus.source,
+          overrideActive: premiumStatus.source === "override",
+          overrideReason: premiumStatus.overrideReason,
+        });
+      }
     } catch {
       const state = await getProState();
       setPackages([]);
       setBillingReady(false);
       setCatalogSource("error");
       setOfferingId(null);
+      setMissingPlans(["yearly", "monthly"]);
       setCatalogError("We couldn't load subscription plans right now. Please try again in a moment.");
       setProStateLocal(state);
+      setPremiumStatusSource("cached");
+      setOverrideReason(null);
     } finally {
       setLoading(false);
     }
@@ -88,8 +112,8 @@ export default function ProScreen() {
       Alert.alert(
         next.isPro ? "Premium unlocked" : "Purchase complete",
         billingReady
-          ? "Your Step Outside Premium status is now synced with RevenueCat."
-          : "Preview mode used local Premium unlock. Test purchases in an iOS dev build or TestFlight."
+          ? "Your Step Outside Premium access is active."
+          : "Your Step Outside Premium access is active."
       );
     } catch (error) {
       if (
@@ -149,9 +173,14 @@ export default function ProScreen() {
       : proState?.plan === "monthly"
         ? "Monthly subscription"
         : proState?.plan ?? "plan";
+  const monthlyPackage = packages.find((pkg) => pkg.plan === "monthly") ?? null;
   const statusNote = (() => {
+    if (premiumStatusSource === "override" && overrideReason) {
+      return `${overrideReason}. This preview only unlocks Premium UI and does not create a real paid subscription.`;
+    }
+
     if (catalogSource === "live") {
-      return "Plans and pricing are loaded live from the App Store through RevenueCat.";
+      return "Plans and pricing are loaded live from the App Store.";
     }
 
     if (catalogSource === "empty") {
@@ -166,7 +195,18 @@ export default function ProScreen() {
       return "Purchases are available, but pricing is still loading.";
     }
 
-    return "Purchases are only active in a native dev build or TestFlight with RevenueCat configured.";
+    return "Purchases aren't available right now.";
+  })();
+
+  const missingPlanMessage = (() => {
+    if (missingPlans.length === 0) return null;
+    if (missingPlans.length === 1 && missingPlans[0] === "monthly") {
+      return "Monthly is missing from the current RevenueCat offering. Annual is still available.";
+    }
+    if (missingPlans.length === 1 && missingPlans[0] === "yearly") {
+      return "Annual is missing from the current RevenueCat offering. Monthly is still available.";
+    }
+    return "Some subscription plans are unavailable in the current RevenueCat offering.";
   })();
 
   const openExternal = async (url: string, label: string) => {
@@ -181,6 +221,15 @@ export default function ProScreen() {
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.container}>
+          <View style={styles.topNavRow}>
+            <Pressable style={styles.topNavBtn} onPress={() => router.back()}>
+              <Text style={styles.topNavBtnText}>Back</Text>
+            </Pressable>
+            <Pressable style={[styles.topNavBtn, styles.topNavHomeBtn]} onPress={() => router.replace("/(tabs)")}>
+              <Text style={[styles.topNavBtnText, styles.topNavHomeBtnText]}>Home</Text>
+            </Pressable>
+          </View>
+
           <View style={styles.hero}>
             <Text style={styles.eyebrow}>Step Outside Premium</Text>
             <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
@@ -197,6 +246,13 @@ export default function ProScreen() {
             {__DEV__ && catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
           </View>
 
+          {missingPlanMessage ? (
+            <View style={styles.noticeCard}>
+              <Text style={styles.noticeTitle}>Plan availability</Text>
+              <Text style={styles.noticeBody}>{missingPlanMessage}</Text>
+            </View>
+          ) : null}
+
           {catalogError ? (
             <View style={styles.alertCard}>
               <Text style={styles.alertTitle}>Plans unavailable</Text>
@@ -209,7 +265,7 @@ export default function ProScreen() {
 
           {loading ? (
             <View style={styles.loadingWrap}>
-              <ActivityIndicator color={BRAND.forest} />
+              <ActivityIndicator color={PREMIUM.colors.forest} />
               <Text style={styles.loadingText}>Loading plans…</Text>
             </View>
           ) : packages.length === 0 ? (
@@ -217,8 +273,8 @@ export default function ProScreen() {
               <Text style={styles.emptyTitle}>Plans not available right now</Text>
               <Text style={styles.emptyBody}>
                 {billingReady
-                  ? "RevenueCat returned no active packages for this paywall yet. Please try again in a moment."
-                  : "Purchases are unavailable in this build right now."}
+                  ? "Subscription plans aren't available right now. Please try again in a moment."
+                  : "Purchases aren't available right now."}
               </Text>
               <Pressable style={styles.retryBtn} onPress={() => void load()} disabled={busyAction !== null}>
                 <Text style={styles.retryText}>Reload plans</Text>
@@ -228,6 +284,7 @@ export default function ProScreen() {
             packages.map((pkg) => {
               const featured = pkg.plan === "yearly";
               const active = proState?.productId === pkg.productId || proState?.plan === pkg.plan;
+              const showsSavingsCallout = pkg.plan === "yearly" && Boolean(monthlyPackage);
               return (
                 <Pressable
                   key={pkg.plan}
@@ -243,10 +300,18 @@ export default function ProScreen() {
                     <View style={styles.planTitleWrap}>
                       <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
                       <Text style={featured ? styles.featuredPeriod : styles.planPeriod}>{pkg.periodLabel}</Text>
+                      <Text style={featured ? styles.featuredPlanLabel : styles.planLabel}>
+                        {pkg.plan === "monthly" ? "MONTHLY" : pkg.plan === "yearly" ? "YEARLY" : "LIFETIME"}
+                      </Text>
                       {pkg.badge ? (
                         <View style={featured ? styles.featuredBadge : styles.planBadge}>
                           <Text style={featured ? styles.featuredBadgeText : styles.planBadgeText}>{pkg.badge}</Text>
                         </View>
+                      ) : null}
+                      {showsSavingsCallout ? (
+                        <Text style={featured ? styles.featuredSavings : styles.planSavings}>
+                          Annual savings compared with monthly are shown at checkout.
+                        </Text>
                       ) : null}
                     </View>
                     <Text style={featured ? styles.featuredPrice : styles.planPrice}>{pkg.priceLabel}</Text>
@@ -288,7 +353,7 @@ export default function ProScreen() {
             </Pressable>
             {__DEV__ ? (
               <Pressable style={styles.policyBtn} onPress={() => void clear()} disabled={busyAction !== null}>
-                <Text style={[styles.policyText, { color: BRAND.red }]}>
+                <Text style={[styles.policyText, { color: PREMIUM.colors.danger }]}>
                   {busyAction === "clear" ? "Clearing…" : "Clear Pro (test)"}
                 </Text>
               </Pressable>
@@ -305,38 +370,78 @@ export default function ProScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BRAND.bone },
+  safe: { flex: 1, backgroundColor: PREMIUM.colors.cream },
   content: { flexGrow: 1, paddingVertical: 10 },
-  container: { flex: 1, backgroundColor: BRAND.bone, padding: 20 },
-  hero: {
-    padding: 18,
-    borderRadius: 22,
-    backgroundColor: BRAND.mist,
+  container: { flex: 1, backgroundColor: PREMIUM.colors.cream, padding: PREMIUM.spacing.screen },
+  topNavRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    gap: 10,
+  },
+  topNavBtn: {
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.08),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.1)",
+    borderColor: PREMIUM.colors.lineStrong,
+    justifyContent: "center",
+  },
+  topNavBtnText: {
+    color: PREMIUM.colors.forest,
+    fontWeight: "900",
+  },
+  topNavHomeBtn: {
+    backgroundColor: PREMIUM.colors.gold,
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.34),
+  },
+  topNavHomeBtnText: {
+    color: PREMIUM.colors.ink,
+  },
+  hero: {
+    padding: 22,
+    borderRadius: PREMIUM.radius.hero,
+    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.12),
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    ...PREMIUM.shadow.soft,
   },
   eyebrow: {
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1.1,
     textTransform: "uppercase",
-    color: BRAND.forest,
+    color: PREMIUM.colors.forest,
   },
-  title: { marginTop: 8, fontSize: 30, lineHeight: 34, fontWeight: "900", color: BRAND.charcoal },
-  sub: { marginTop: 10, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 22 },
-  heroSupport: { marginTop: 10, color: "rgba(11,15,14,0.56)", fontWeight: "700", lineHeight: 20, fontSize: 13 },
+  title: { marginTop: 8, fontSize: 34, lineHeight: 40, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
+  sub: { marginTop: 10, color: PREMIUM.colors.textMuted, fontWeight: "700", lineHeight: 22, fontSize: 15 },
+  heroSupport: { marginTop: 10, color: PREMIUM.colors.textSoft, fontWeight: "700", lineHeight: 20, fontSize: 13 },
   card: {
     marginTop: 18,
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: PREMIUM.radius.lg,
+    padding: 16,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.78),
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: PREMIUM.colors.line,
+    ...PREMIUM.shadow.soft,
   },
-  cardTitle: { fontWeight: "900", color: BRAND.charcoal },
-  cardBody: { marginTop: 4, fontWeight: "700", color: "rgba(11,15,14,0.72)" },
-  cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: "rgba(11,15,14,0.58)" },
-  offeringNote: { marginTop: 8, color: "rgba(11,15,14,0.42)", fontSize: 11, fontWeight: "700" },
+  cardTitle: { fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily, fontSize: 22 },
+  cardBody: { marginTop: 4, fontWeight: "700", color: PREMIUM.colors.textMuted },
+  cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: PREMIUM.colors.textSoft },
+  offeringNote: { marginTop: 8, color: PREMIUM.colors.textSoft, fontSize: 11, fontWeight: "700" },
+  noticeCard: {
+    marginTop: 14,
+    borderRadius: PREMIUM.radius.lg,
+    padding: 16,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.14),
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.28),
+  },
+  noticeTitle: { fontWeight: "900", color: PREMIUM.colors.ink },
+  noticeBody: { marginTop: 6, color: PREMIUM.colors.textMuted, fontWeight: "700", lineHeight: 20 },
   alertCard: {
     marginTop: 14,
     borderRadius: 16,
@@ -345,17 +450,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(200,51,51,0.18)",
   },
-  alertTitle: { fontWeight: "900", color: BRAND.red },
-  alertBody: { marginTop: 6, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 20 },
+  alertTitle: { fontWeight: "900", color: PREMIUM.colors.danger },
+  alertBody: { marginTop: 6, color: PREMIUM.colors.textMuted, fontWeight: "700", lineHeight: 20 },
   retryBtn: {
     marginTop: 12,
     alignSelf: "flex-start",
     paddingVertical: 9,
     paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: "rgba(37,94,54,0.12)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.12),
   },
-  retryText: { color: BRAND.forest, fontWeight: "900" },
+  retryText: { color: PREMIUM.colors.forest, fontWeight: "900" },
   loadingWrap: {
     marginTop: 16,
     borderRadius: 16,
@@ -366,7 +471,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.08)",
   },
-  loadingText: { marginTop: 8, color: "rgba(11,15,14,0.62)", fontWeight: "700" },
+  loadingText: { marginTop: 8, color: PREMIUM.colors.textMuted, fontWeight: "700" },
   emptyCard: {
     marginTop: 16,
     borderRadius: 18,
@@ -375,40 +480,48 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.08)",
   },
-  emptyTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17 },
-  emptyBody: { marginTop: 8, color: "rgba(11,15,14,0.64)", fontWeight: "700", lineHeight: 21 },
+  emptyTitle: { color: PREMIUM.colors.text, fontWeight: "700", fontSize: 22, fontFamily: PREMIUM.type.serifFamily },
+  emptyBody: { marginTop: 8, color: PREMIUM.colors.textMuted, fontWeight: "700", lineHeight: 21 },
   featuredPlan: {
     marginTop: 16,
-    backgroundColor: BRAND.forest,
+    backgroundColor: PREMIUM.colors.forestDeep,
     paddingVertical: 16,
     paddingHorizontal: 16,
-    borderRadius: 18,
-    shadowColor: "#1F4A2C",
-    shadowOpacity: 0.12,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
+    borderRadius: PREMIUM.radius.xl,
+    ...PREMIUM.shadow.hero,
   },
   planCard: {
     marginTop: 10,
-    backgroundColor: BRAND.sand,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.78),
     paddingVertical: 16,
     paddingHorizontal: 16,
-    borderRadius: 18,
+    borderRadius: PREMIUM.radius.xl,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: PREMIUM.colors.line,
   },
   planDisabled: { opacity: 0.75 },
   featuredTitle: { color: "white", fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
-  planTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
+  planTitle: { color: PREMIUM.colors.text, fontWeight: "700", fontSize: 24, lineHeight: 28, flexShrink: 1, fontFamily: PREMIUM.type.serifFamily },
   featuredPeriod: { color: "rgba(255,255,255,0.84)", fontWeight: "800", fontSize: 13 },
-  planPeriod: { color: "rgba(11,15,14,0.72)", fontWeight: "800", fontSize: 13 },
+  planPeriod: { color: PREMIUM.colors.textMuted, fontWeight: "800", fontSize: 13 },
+  featuredPlanLabel: {
+    color: "rgba(255,255,255,0.82)",
+    fontWeight: "900",
+    fontSize: 11,
+    letterSpacing: 0.8,
+  },
+  planLabel: {
+    color: PREMIUM.colors.forest,
+    fontWeight: "900",
+    fontSize: 11,
+    letterSpacing: 0.8,
+  },
   featuredPrice: { color: "white", fontWeight: "900", fontSize: 18, marginLeft: 12 },
-  planPrice: { color: BRAND.charcoal, fontWeight: "900", fontSize: 18, marginLeft: 12 },
+  planPrice: { color: PREMIUM.colors.text, fontWeight: "900", fontSize: 18, marginLeft: 12 },
   featuredDetail: { marginTop: 10, color: "rgba(255,255,255,0.84)", fontWeight: "700" },
-  planDetail: { marginTop: 10, color: "rgba(11,15,14,0.66)", fontWeight: "700" },
+  planDetail: { marginTop: 10, color: PREMIUM.colors.textMuted, fontWeight: "700" },
   featuredFootnote: { marginTop: 10, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 },
-  planFootnote: { marginTop: 10, color: "rgba(11,15,14,0.54)", fontWeight: "800", fontSize: 12 },
+  planFootnote: { marginTop: 10, color: PREMIUM.colors.textSoft, fontWeight: "800", fontSize: 12 },
   planTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -425,13 +538,15 @@ const styles = StyleSheet.create({
   },
   planBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(37,94,54,0.12)",
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.12),
     paddingVertical: 5,
     paddingHorizontal: 9,
     borderRadius: 999,
   },
   featuredBadgeText: { color: "white", fontWeight: "900", fontSize: 11, letterSpacing: 0.3 },
-  planBadgeText: { color: BRAND.forest, fontWeight: "900", fontSize: 11, letterSpacing: 0.3 },
+  planBadgeText: { color: PREMIUM.colors.forest, fontWeight: "900", fontSize: 11, letterSpacing: 0.3 },
+  featuredSavings: { color: "rgba(255,255,255,0.76)", fontWeight: "700", fontSize: 12, lineHeight: 16 },
+  planSavings: { color: PREMIUM.colors.textSoft, fontWeight: "700", fontSize: 12, lineHeight: 16 },
   activePlan: {
     borderWidth: 2,
     borderColor: "rgba(11,15,14,0.16)",
@@ -442,35 +557,35 @@ const styles = StyleSheet.create({
     padding: 14,
     backgroundColor: "rgba(255,255,255,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: PREMIUM.colors.line,
     gap: 8,
   },
-  disclosureTitle: { color: BRAND.charcoal, fontWeight: "900" },
-  disclosureBody: { color: "rgba(11,15,14,0.7)", fontWeight: "700", lineHeight: 20 },
+  disclosureTitle: { color: PREMIUM.colors.text, fontWeight: "700", fontFamily: PREMIUM.type.serifFamily, fontSize: 22 },
+  disclosureBody: { color: PREMIUM.colors.textMuted, fontWeight: "700", lineHeight: 20 },
   restoreBtn: {
     marginTop: 18,
     minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 14,
-    backgroundColor: "rgba(37,94,54,0.1)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.1),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: PREMIUM.colors.lineStrong,
     paddingVertical: 13,
   },
-  restoreText: { fontWeight: "900", color: BRAND.forest },
+  restoreText: { fontWeight: "900", color: PREMIUM.colors.forest },
   manageBtn: {
     marginTop: 10,
     minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 14,
-    backgroundColor: "rgba(11,15,14,0.05)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.text, 0.05),
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.09)",
+    borderColor: PREMIUM.colors.line,
     paddingVertical: 12,
   },
-  manageText: { fontWeight: "900", color: BRAND.charcoal },
+  manageText: { fontWeight: "900", color: PREMIUM.colors.text },
   linksRow: { marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 10 },
   policyBtn: {
     minHeight: 44,
@@ -478,16 +593,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     justifyContent: "center",
   },
-  policyText: { fontWeight: "800", color: BRAND.forest, textDecorationLine: "underline" },
+  policyText: { fontWeight: "800", color: PREMIUM.colors.forest, textDecorationLine: "underline" },
   done: {
     marginTop: 20,
     alignSelf: "flex-start",
-    backgroundColor: "rgba(11,15,14,0.08)",
-    borderRadius: 12,
+    backgroundColor: alpha(PREMIUM.colors.text, 0.08),
+    borderRadius: PREMIUM.radius.pill,
     minHeight: 44,
     paddingVertical: 10,
     paddingHorizontal: 14,
     justifyContent: "center",
   },
-  doneText: { fontWeight: "900", color: "rgba(11,15,14,0.72)" },
+  doneText: { fontWeight: "900", color: PREMIUM.colors.textMuted },
 });

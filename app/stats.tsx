@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BrandBadge } from "../src/components/BrandBadge";
 import { PremiumFeatureGate } from "../src/components/PremiumFeatureGate";
+import { PREMIUM, alpha } from "../src/lib/premiumTheme";
 import { buildMonthlyActivityStats } from "../src/lib/monthlyStats";
 import { dayKeyLocal, EMPTY_SUMMARY, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
 
@@ -65,17 +66,24 @@ export default function StatsScreen() {
   const router = useRouter();
 
   const t = {
-    bg: "#F8F4EE",
-    text: "rgba(11,15,14,0.92)",
-    sub: "rgba(11,15,14,0.62)",
-    card: "rgba(11,15,14,0.06)",
-    cardBorder: "rgba(11,15,14,0.12)",
-    highlight: "#F2B541",
-    greenTint: "rgba(37,94,54,0.10)",
-    greenBorder: "rgba(37,94,54,0.16)",
-    yellowTint: "rgba(242,181,65,0.16)",
-    yellowBorder: "rgba(242,181,65,0.34)",
-    watermark: 0.08,
+    bg: PREMIUM.colors.cream,
+    headerText: PREMIUM.colors.forest,
+    pageText: PREMIUM.colors.ink,
+    pageSub: PREMIUM.colors.textMuted,
+    yellowText: PREMIUM.colors.ink,
+    yellowSub: alpha(PREMIUM.colors.ink, 0.74),
+    text: PREMIUM.colors.offWhite,
+    sub: alpha(PREMIUM.colors.offWhite, 0.76),
+    card: PREMIUM.colors.forest,
+    cardBorder: PREMIUM.colors.lineStrong,
+    highlight: PREMIUM.colors.gold,
+    greenTint: PREMIUM.colors.forest,
+    greenBorder: PREMIUM.colors.lineStrong,
+    yellowTint: alpha(PREMIUM.colors.gold, 0.92),
+    yellowBorder: alpha(PREMIUM.colors.goldDeep, 0.42),
+    heroGlow: PREMIUM.colors.glowGold,
+    heroGlowSoft: PREMIUM.colors.glowCream,
+    watermark: 0.04,
   } as const;
 
   const [summary, setSummary] = useState<SummaryStats | null>(null);
@@ -179,6 +187,10 @@ export default function StatsScreen() {
   }, [dualResetDaysCount, goldenHourSessionCount, goldenHourStreakBest, goldenHourStreakCurrent]);
   const monthlyStats = useMemo(() => buildMonthlyActivityStats(sessions, new Date()), [sessions]);
   const hasAnyStats = totalSessions > 0;
+  const totalDistanceM = useMemo(
+    () => sessions.reduce((acc, session) => acc + (typeof session.distanceM === "number" ? Math.max(0, session.distanceM) : 0), 0),
+    [sessions]
+  );
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "left", "right", "bottom"]}>
@@ -186,7 +198,7 @@ export default function StatsScreen() {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <BrandBadge size={30} />
-            <Text style={[styles.headerTitle, { color: t.text }]}>Stats</Text>
+            <Text style={[styles.headerTitle, { color: t.headerText }]}>Stats</Text>
           </View>
 
           <Pressable
@@ -196,11 +208,11 @@ export default function StatsScreen() {
             }}
             style={({ pressed }) => [
               styles.backBtn,
-              { backgroundColor: t.card, borderColor: t.cardBorder },
+              { backgroundColor: "rgba(37,94,54,0.08)", borderColor: t.cardBorder },
               pressed ? { opacity: 0.9 } : null,
             ]}
           >
-            <Text style={[styles.backBtnText, { color: t.sub }]}>Done</Text>
+            <Text style={[styles.backBtnText, { color: t.headerText }]}>Done</Text>
           </Pressable>
         </View>
 
@@ -210,8 +222,10 @@ export default function StatsScreen() {
           style={[styles.watermark, { opacity: t.watermark }]}
         />
 
-        <ScrollView contentContainerStyle={styles.scrollPad}>
+        <ScrollView contentContainerStyle={styles.scrollPad} showsVerticalScrollIndicator={false}>
           <View style={[styles.summaryHero, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
+            <View style={[styles.heroGlowOne, { backgroundColor: t.heroGlow }]} />
+            <View style={[styles.heroGlowTwo, { backgroundColor: t.heroGlowSoft }]} />
             <Text style={[styles.summaryEyebrow, { color: t.sub }]}>Your rhythm</Text>
             <Text style={[styles.summaryTitle, { color: t.text }]}>
               {totalSessions === 0 ? "Your first walk starts the story." : `${totalSessions} walks creating steadier momentum.`}
@@ -222,13 +236,28 @@ export default function StatsScreen() {
                 : `You’ve logged ${totalMinutes} minutes outside with a best streak of ${bestStreak} day${bestStreak === 1 ? "" : "s"}.`}
             </Text>
 
-            <View style={styles.summaryRow}>
-              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
-                <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Current streak</Text>
-                <Text style={[styles.summaryMetricValue, { color: t.text }]}>{currentStreak}</Text>
+            <View style={styles.heroChips}>
+              <View style={[styles.heroChip, { backgroundColor: "rgba(248,244,238,0.12)", borderColor: t.greenBorder }]}>
+                <Text style={[styles.heroChipLabel, { color: t.sub }]}>Total walks</Text>
+                <Text style={[styles.heroChipValue, { color: t.highlight }]}>{totalSessions}</Text>
               </View>
-              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
-                <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Outside</Text>
+              <View style={[styles.heroChip, { backgroundColor: "rgba(248,244,238,0.12)", borderColor: t.yellowBorder }]}>
+                <Text style={[styles.heroChipLabel, { color: t.sub }]}>Total distance</Text>
+                <Text style={[styles.heroChipValue, { color: t.highlight }]}>{formatDistanceMiles(totalDistanceM)}</Text>
+              </View>
+              <View style={[styles.heroChip, { backgroundColor: "rgba(248,244,238,0.12)", borderColor: t.yellowBorder }]}>
+                <Text style={[styles.heroChipLabel, { color: t.sub }]}>Avg session</Text>
+                <Text style={[styles.heroChipValue, { color: t.text }]}>{avgSessionMinutes} min</Text>
+              </View>
+            </View>
+
+            <View style={styles.summaryRow}>
+              <View style={[styles.summaryMetric, { backgroundColor: "rgba(248,244,238,0.10)", borderColor: t.cardBorder }]}>
+                <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Current streak</Text>
+                <Text style={[styles.summaryMetricValue, { color: t.highlight }]}>{currentStreak}</Text>
+              </View>
+              <View style={[styles.summaryMetric, { backgroundColor: "rgba(248,244,238,0.10)", borderColor: t.cardBorder }]}>
+                <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Total time</Text>
                 <Text style={[styles.summaryMetricValue, { color: t.text }]}>{formatMinutesLabel(totalMinutes)}</Text>
               </View>
             </View>
@@ -236,31 +265,31 @@ export default function StatsScreen() {
 
           <View style={styles.grid}>
             <View style={[styles.card, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Current streak</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{currentStreak}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>days</Text>
+              <Text style={[styles.cardLabel, { color: t.sub }]}>Total walks</Text>
+              <Text style={[styles.cardValue, { color: t.highlight }]}>{totalSessions}</Text>
+              <Text style={[styles.cardSub, { color: t.sub }]}>sessions</Text>
             </View>
 
             <View style={[styles.card, { backgroundColor: t.yellowTint, borderColor: t.yellowBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Total outside</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{totalMinutes}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>minutes</Text>
+              <Text style={[styles.cardLabel, { color: t.yellowSub }]}>Total distance</Text>
+              <Text style={[styles.cardValue, { color: t.yellowText }]}>{formatDistanceMiles(totalDistanceM)}</Text>
+              <Text style={[styles.cardSub, { color: t.yellowSub }]}>across your walks</Text>
             </View>
 
             <View style={[styles.card, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Best streak</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{bestStreak}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>days</Text>
+              <Text style={[styles.cardLabel, { color: t.sub }]}>Total time</Text>
+              <Text style={[styles.cardValue, { color: t.text }]}>{formatMinutesLabel(totalMinutes)}</Text>
+              <Text style={[styles.cardSub, { color: t.sub }]}>outside</Text>
             </View>
 
             <View style={[styles.card, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Sessions</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{totalSessions}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>completed</Text>
+              <Text style={[styles.cardLabel, { color: t.sub }]}>Current streak</Text>
+              <Text style={[styles.cardValue, { color: t.text }]}>{currentStreak}</Text>
+              <Text style={[styles.cardSub, { color: t.sub }]}>days in a row</Text>
             </View>
           </View>
 
-          <Text style={[styles.sectionTitle, { color: t.text }]}>Last 7 days</Text>
+          <Text style={[styles.sectionTitle, { color: t.headerText }]}>Last 7 days</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
@@ -283,7 +312,7 @@ export default function StatsScreen() {
                     : "Your last 7 days will fill in after your first completed walk."}
                 </Text>
                 {!loading ? (
-                  <Pressable style={styles.unlockBtn} onPress={() => router.push("/walk")}>
+                  <Pressable style={[styles.unlockBtn, { backgroundColor: t.highlight }]} onPress={() => router.push("/walk")}>
                     <Text style={styles.unlockBtnText}>Start a walk</Text>
                   </Pressable>
                 ) : null}
@@ -291,7 +320,7 @@ export default function StatsScreen() {
             )}
           </View>
 
-          <Text style={[styles.sectionTitle, { color: t.text }]}>Monthly Progress</Text>
+          <Text style={[styles.sectionTitle, { color: t.headerText }]}>Monthly Progress</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
@@ -299,6 +328,7 @@ export default function StatsScreen() {
               title="Monthly progress insights"
               body="Unlock monthly progress insights with Step Outside Premium."
               ctaLabel="Unlock Premium"
+              tone="forest"
             >
               <>
                 <Text style={[styles.monthTitle, { color: t.text }]}>{monthlyStats.monthLabel}</Text>
@@ -361,7 +391,7 @@ export default function StatsScreen() {
             </PremiumFeatureGate>
           </View>
 
-          <Text style={[styles.sectionTitle, { color: t.text }]}>Premium Streaks</Text>
+          <Text style={[styles.sectionTitle, { color: t.headerText }]}>Premium Streaks</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
@@ -369,6 +399,7 @@ export default function StatsScreen() {
               title="Premium streaks"
               body="Unlock Premium for weekly consistency streaks, active day totals, comeback tracking, and goal progress."
               ctaLabel="Unlock Premium"
+              tone="forest"
             >
               <>
                 <View style={styles.row}>
@@ -404,55 +435,56 @@ export default function StatsScreen() {
             </PremiumFeatureGate>
           </View>
 
-          <Text style={[styles.sectionTitle, { color: t.text }]}>Golden Hours</Text>
+          <Text style={[styles.sectionTitle, { color: t.headerText }]}>Golden Hours</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.yellowTint, borderColor: t.yellowBorder }]}>
             <View style={styles.row}>
-              <Text style={[styles.rowLeft, { color: t.sub }]}>Sunrise bonuses</Text>
-              <Text style={[styles.rowRight, { color: t.text }]}>{sunriseBonusCount}</Text>
+              <Text style={[styles.rowLeft, { color: t.pageText }]}>Sunrise bonuses</Text>
+              <Text style={[styles.rowRight, { color: t.pageText }]}>{sunriseBonusCount}</Text>
             </View>
             <View style={styles.row}>
-              <Text style={[styles.rowLeft, { color: t.sub }]}>Sunset bonuses</Text>
-              <Text style={[styles.rowRight, { color: t.text }]}>{sunsetBonusCount}</Text>
+              <Text style={[styles.rowLeft, { color: t.pageText }]}>Sunset bonuses</Text>
+              <Text style={[styles.rowRight, { color: t.pageText }]}>{sunsetBonusCount}</Text>
             </View>
 
             <PremiumFeatureGate
               title="Premium insights"
               body="Unlock Premium for Golden Hour streaks, dual reset tracking, and deeper rhythm insights."
               ctaLabel="Unlock Premium"
+              tone="forest"
             >
               <>
                 <View style={styles.row}>
-                  <Text style={[styles.rowLeft, { color: t.sub }]}>Golden Hour streak</Text>
-                  <Text style={[styles.rowRight, { color: t.text }]}>{goldenHourStreakCurrent} days</Text>
+                  <Text style={[styles.rowLeft, { color: t.yellowSub }]}>Golden Hour streak</Text>
+                  <Text style={[styles.rowRight, { color: t.yellowText }]}>{goldenHourStreakCurrent} days</Text>
                 </View>
                 <View style={styles.row}>
-                  <Text style={[styles.rowLeft, { color: t.sub }]}>Best Golden Hour run</Text>
-                  <Text style={[styles.rowRight, { color: t.text }]}>{goldenHourStreakBest} days</Text>
+                  <Text style={[styles.rowLeft, { color: t.yellowSub }]}>Best Golden Hour run</Text>
+                  <Text style={[styles.rowRight, { color: t.yellowText }]}>{goldenHourStreakBest} days</Text>
                 </View>
                 <View style={styles.row}>
-                  <Text style={[styles.rowLeft, { color: t.sub }]}>Dual reset days</Text>
-                  <Text style={[styles.rowRight, { color: t.text }]}>{dualResetDaysCount}</Text>
+                  <Text style={[styles.rowLeft, { color: t.yellowSub }]}>Dual reset days</Text>
+                  <Text style={[styles.rowRight, { color: t.yellowText }]}>{dualResetDaysCount}</Text>
                 </View>
                 <View style={styles.row}>
-                  <Text style={[styles.rowLeft, { color: t.sub }]}>Golden Hour hit rate</Text>
-                  <Text style={[styles.rowRight, { color: t.text }]}>{goldenHourRate}%</Text>
+                  <Text style={[styles.rowLeft, { color: t.yellowSub }]}>Golden Hour hit rate</Text>
+                  <Text style={[styles.rowRight, { color: t.yellowText }]}>{goldenHourRate}%</Text>
                 </View>
                 <View style={styles.row}>
-                  <Text style={[styles.rowLeft, { color: t.sub }]}>Avg session length</Text>
-                  <Text style={[styles.rowRight, { color: t.text }]}>{avgSessionMinutes} min</Text>
+                  <Text style={[styles.rowLeft, { color: t.yellowSub }]}>Avg session length</Text>
+                  <Text style={[styles.rowRight, { color: t.yellowText }]}>{avgSessionMinutes} min</Text>
                 </View>
                 <View style={styles.row}>
-                  <Text style={[styles.rowLeft, { color: t.sub }]}>Active days (30d)</Text>
-                  <Text style={[styles.rowRight, { color: t.text }]}>{last30ActiveDays} days</Text>
+                  <Text style={[styles.rowLeft, { color: t.yellowSub }]}>Active days (30d)</Text>
+                  <Text style={[styles.rowRight, { color: t.yellowText }]}>{last30ActiveDays} days</Text>
                 </View>
-                <Text style={[styles.insightText, { color: t.sub }]}>{goldenHourInsight}</Text>
+                <Text style={[styles.insightText, { color: t.yellowSub }]}>{goldenHourInsight}</Text>
               </>
             </PremiumFeatureGate>
           </View>
 
-          <Text style={[styles.sectionTitle, { color: t.text }]}>Recent sessions</Text>
+          <Text style={[styles.sectionTitle, { color: t.headerText }]}>Recent sessions</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
@@ -472,9 +504,17 @@ export default function StatsScreen() {
                   (s as any).endedAt ?? ""
                 )}-${idx}`;
                 return (
-                  <View key={key} style={styles.sessionRow}>
-                    <Text style={[styles.sessionTitle, { color: t.text }]}>{mins} min</Text>
-                    <Text style={[styles.sessionSub, { color: t.sub }]}>{fmtTime(s.endedAt)}</Text>
+                  <View
+                    key={key}
+                    style={[
+                      styles.sessionRow,
+                      idx % 2 === 0
+                        ? { backgroundColor: PREMIUM.colors.forest, borderColor: PREMIUM.colors.lineStrong }
+                        : { backgroundColor: alpha(PREMIUM.colors.gold, 0.92), borderColor: alpha(PREMIUM.colors.goldDeep, 0.42) },
+                    ]}
+                  >
+                    <Text style={[styles.sessionTitle, { color: idx % 2 === 0 ? t.text : t.pageText }]}>{mins} min</Text>
+                    <Text style={[styles.sessionSub, { color: idx % 2 === 0 ? t.sub : t.pageSub }]}>{fmtTime(s.endedAt)}</Text>
                   </View>
                 );
               })
@@ -488,7 +528,7 @@ export default function StatsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  container: { flex: 1, paddingHorizontal: 18 },
+  container: { flex: 1, paddingHorizontal: PREMIUM.spacing.lg },
 
   header: {
     flexDirection: "row",
@@ -500,30 +540,50 @@ const styles = StyleSheet.create({
   },
   headerLeft: { flexDirection: "row", alignItems: "center" },
   headerTitle: { marginLeft: 10, fontSize: 22, fontWeight: "900" },
+  
 
   backBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: PREMIUM.radius.pill,
     borderWidth: 1,
   },
   backBtnText: { fontWeight: "800" },
 
   watermark: {
     position: "absolute",
-    top: 120,
-    right: -40,
-    width: 320,
-    height: 320,
+    top: 140,
+    right: -48,
+    width: 300,
+    height: 300,
   },
 
-  scrollPad: { paddingBottom: 28 },
+  scrollPad: { paddingBottom: 108 },
   summaryHero: {
-    borderRadius: 24,
-    padding: 18,
+    position: "relative",
+    borderRadius: PREMIUM.radius.hero,
+    padding: PREMIUM.spacing.xl,
     borderWidth: 1,
     marginTop: 10,
-    marginBottom: 14,
+    marginBottom: 18,
+    overflow: "hidden",
+    ...PREMIUM.shadow.hero,
+  },
+  heroGlowOne: {
+    position: "absolute",
+    top: -36,
+    right: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 999,
+  },
+  heroGlowTwo: {
+    position: "absolute",
+    bottom: -52,
+    left: -28,
+    width: 124,
+    height: 124,
+    borderRadius: 999,
   },
   summaryEyebrow: {
     fontSize: 12,
@@ -533,15 +593,40 @@ const styles = StyleSheet.create({
   },
   summaryTitle: {
     marginTop: 10,
-    fontSize: 26,
-    lineHeight: 32,
-    fontWeight: "900",
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   summaryBody: {
     marginTop: 10,
-    fontSize: 14,
-    lineHeight: 21,
-    fontWeight: "700",
+    fontSize: 15,
+    lineHeight: 23,
+    fontWeight: "600",
+  },
+  heroChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+  heroChip: {
+    borderRadius: PREMIUM.radius.md,
+    borderWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    minWidth: 120,
+  },
+  heroChipLabel: {
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  heroChipValue: {
+    marginTop: 6,
+    fontSize: 18,
+    fontWeight: "900",
   },
   summaryRow: {
     marginTop: 16,
@@ -550,10 +635,10 @@ const styles = StyleSheet.create({
   },
   summaryMetric: {
     flex: 1,
-    borderRadius: 18,
+    borderRadius: PREMIUM.radius.md,
     borderWidth: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
   summaryMetricLabel: {
     fontSize: 12,
@@ -561,7 +646,7 @@ const styles = StyleSheet.create({
   },
   summaryMetricValue: {
     marginTop: 6,
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "900",
   },
 
@@ -572,10 +657,11 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "48%",
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 14,
+    borderRadius: PREMIUM.radius.lg,
+    padding: 18,
+    marginBottom: 16,
     borderWidth: 1,
+    ...PREMIUM.shadow.soft,
   },
   cardLabel: { fontWeight: "800", fontSize: 13 },
   cardValue: {
@@ -583,14 +669,16 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 8,
     letterSpacing: -0.3,
+    lineHeight: 42,
   },
   cardSub: { fontWeight: "800", marginTop: 2, fontSize: 13 },
 
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: "900",
-    marginTop: 8,
+    fontSize: 30,
+    fontWeight: "700",
+    marginTop: 12,
     marginBottom: 10,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   accentRule: {
     height: 4,
@@ -601,15 +689,22 @@ const styles = StyleSheet.create({
   },
 
   panel: {
-    borderRadius: 22,
-    padding: 14,
+    borderRadius: PREMIUM.radius.lg,
+    padding: 18,
     borderWidth: 1,
+    ...PREMIUM.shadow.soft,
   },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 9 },
   rowLeft: { fontWeight: "800", fontSize: 15 },
   rowRight: { fontWeight: "900", fontSize: 15 },
 
-  sessionRow: { paddingVertical: 10 },
+  sessionRow: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: PREMIUM.radius.md,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
   sessionTitle: { fontWeight: "900", fontSize: 18 },
   sessionSub: { marginTop: 4, fontWeight: "700", fontSize: 14 },
 
@@ -618,8 +713,9 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 16, fontWeight: "900" },
   emptyBody: { fontWeight: "700", lineHeight: 20 },
   monthTitle: {
-    fontSize: 18,
-    fontWeight: "900",
+    fontSize: 22,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   monthBody: {
     marginTop: 6,
@@ -628,11 +724,11 @@ const styles = StyleSheet.create({
   },
   monthComparisonCard: {
     marginTop: 12,
-    borderRadius: 16,
-    padding: 12,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    borderRadius: PREMIUM.radius.md,
+    padding: 14,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.10),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.14),
   },
   monthComparisonTitle: {
     fontWeight: "900",
@@ -651,13 +747,13 @@ const styles = StyleSheet.create({
   unlockBtn: {
     marginTop: 10,
     alignSelf: "flex-start",
-    backgroundColor: "#255E36",
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    backgroundColor: PREMIUM.colors.forest,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: PREMIUM.radius.pill,
   },
   unlockBtnText: {
-    color: "white",
+    color: PREMIUM.colors.offWhite,
     fontWeight: "900",
   },
 });

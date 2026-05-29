@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ENV } from "../../env";
 import { SEEDED_ROUTE_SPOTS, SEEDED_ZIP_CENTROIDS, type RouteKind, type RouteSpotDoc } from "../data/routeCatalogSeed";
 
 export type RouteSuggestion = {
@@ -23,6 +24,21 @@ const GYM_RESET_MINUTES = 18;
 const ZIP_LOOKUP_URL = "https://api.zippopotam.us/us";
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 const ROUTE_SUGGESTIONS_CACHE_KEY = "@stepoutside/recentSuggestions";
+const GOOGLE_PLACES_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby";
+const GOOGLE_PLACES_TIMEOUT_MS = 4500;
+const GOOGLE_PLACES_NEARBY_RADIUS_METERS = 9000;
+const GOOGLE_PLACES_ZIP_RADIUS_METERS = 12000;
+const GOOGLE_PLACES_MAX_RESULTS = 10;
+const GOOGLE_PLACES_FIELD_MASK =
+  "places.id,places.displayName,places.location,places.primaryType,places.types,places.formattedAddress,places.businessStatus";
+const GOOGLE_PLACES_INCLUDED_TYPES = [
+  "park",
+  "hiking_area",
+  "dog_park",
+  "botanical_garden",
+  "campground",
+  "tourist_attraction",
+] as const;
 
 function regionKeyForCoords(lat: number, lng: number): string {
   const latBucket = Math.floor(lat / REGION_CELL_SIZE);
@@ -122,6 +138,25 @@ type GymElement = {
   tags?: Record<string, string | undefined>;
 };
 
+type GooglePlacesNearbyResponse = {
+  places?: GooglePlace[];
+};
+
+type GooglePlace = {
+  id?: string;
+  displayName?: {
+    text?: string;
+  };
+  location?: {
+    latitude?: number;
+    longitude?: number;
+  };
+  primaryType?: string;
+  types?: string[];
+  formattedAddress?: string;
+  businessStatus?: string;
+};
+
 function parseGymElementCoords(element: GymElement): { lat: number; lng: number } | null {
   const lat = element.lat ?? element.center?.lat;
   const lng = element.lon ?? element.center?.lon;
@@ -157,6 +192,176 @@ function toGymSuggestion(name: string, coords: { lat: number; lng: number }): Ro
     tags: gymTagsForName(name),
     source: "gym",
   };
+}
+
+function formatMilesAway(distanceMeters: number): string {
+  const miles = distanceMeters / 1609.34;
+  if (miles < 0.15) return "very close";
+  if (miles < 1) return `${miles.toFixed(1)} mi away`;
+  return `${Math.round(miles * 10) / 10} mi away`;
+}
+
+function humanizePlaceType(type: string): string {
+  return type
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function inferRouteKindFromPlace(place: GooglePlace): RouteKind {
+  const types = new Set(place.types ?? []);
+  if (types.has("hiking_area") || types.has("campground")) {
+    return "trail";
+  }
+  return "park_loop";
+}
+
+function estimateWalkDistanceMeters(kind: RouteKind, place: GooglePlace, distanceAwayMeters: number): number {
+  const types = new Set(place.types ?? []);
+  const longerWalk =
+    kind === "trail" || types.has("hiking_area") || types.has("campground") || types.has("tourist_attraction");
+
+  const baseDistance = longerWalk ? 1600 : 1050;
+  const proximityBonus = distanceAwayMeters < 400 ? 0 : distanceAwayMeters < 1500 ? 120 : 240;
+  return Math.round(Math.max(750, Math.min(2600, baseDistance + proximityBonus)));
+}
+
+function estimateWalkMinutes(distanceMeters: number): number {
+  const walkingSpeedMetersPerMinute = 78;
+  return Math.max(10, Math.min(34, Math.round(distanceMeters / walkingSpeedMetersPerMinute)));
+}
+
+function googlePlaceTypeTags(place: GooglePlace, distanceAwayMeters: number): string[] {
+  const type = place.primaryType ?? place.types?.[0] ?? "nearby";
+  const baseTags = [humanizePlaceType(type), formatMilesAway(distanceAwayMeters)];
+  const tags = [...baseTags];
+  if ((place.types ?? []).includes("park")) tags.unshift("Park");
+  if ((place.types ?? []).includes("hiking_area")) tags.unshift("Trail");
+  if ((place.types ?? []).includes("dog_park")) tags.unshift("Dog-friendly");
+  if ((place.types ?? []).includes("botanical_garden")) tags.unshift("Calm");
+  return Array.from(new Set(tags)).slice(0, 4);
+}
+
+function toGooglePlaceSuggestion(
+  place: GooglePlace,
+  origin: { lat: number; lng: number },
+  source: "nearby" | "zip"
+): RouteSuggestion | null {
+  const lat = place.location?.latitude;
+  const lng = place.location?.longitude;
+  const name = place.displayName?.text?.trim();
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (place.businessStatus === "CLOSED_PERMANENTLY") return null;
+
+  const coords = { lat: lat as number, lng: lng as number };
+  const distanceAwayMeters = haversineMeters(origin, coords);
+  const kind = inferRouteKindFromPlace(place);
+  const distanceMeters = estimateWalkDistanceMeters(kind, place, distanceAwayMeters);
+
+  return {
+    id: `google-place-${place.id ?? slugify(name)}`,
+    name,
+    kind,
+    lat: coords.lat,
+    lng: coords.lng,
+    distanceMeters,
+    estMinutes: estimateWalkMinutes(distanceMeters),
+    isIndoor: false,
+    tags: googlePlaceTypeTags(place, distanceAwayMeters),
+    source,
+  };
+}
+
+function suggestionQuality(route: RouteSuggestion): number {
+  let quality = 0;
+  if (route.source === "catalog" || route.source === "zip") quality += 18;
+  if (route.source === "nearby") quality += 12;
+  if (route.kind === "trail") quality += 10;
+  if (route.kind === "park_loop") quality += 8;
+  if (route.isIndoor) quality -= 6;
+  if (route.tags.some((tag) => /park|trail|nature|water|shade|calm/i.test(tag))) quality += 4;
+  return quality;
+}
+
+function rankSuggestionsByDistanceAndQuality(
+  routes: RouteSuggestion[],
+  coords: { lat: number; lng: number }
+): RouteSuggestion[] {
+  const deduped = new Map<string, RouteSuggestion>();
+
+  for (const route of routes) {
+    const key = `${slugify(route.name)}:${Math.round(route.lat * 1000)}:${Math.round(route.lng * 1000)}`;
+    const existing = deduped.get(key);
+    if (!existing || suggestionQuality(route) > suggestionQuality(existing)) {
+      deduped.set(key, route);
+    }
+  }
+
+  return [...deduped.values()]
+    .sort((a, b) => {
+      const distanceA = haversineMeters(coords, { lat: a.lat, lng: a.lng });
+      const distanceB = haversineMeters(coords, { lat: b.lat, lng: b.lng });
+      const scoreA = distanceA / 280 - suggestionQuality(a) * 14;
+      const scoreB = distanceB / 280 - suggestionQuality(b) * 14;
+      return scoreA - scoreB;
+    })
+    .slice(0, 8);
+}
+
+async function fetchGooglePlacesNearby(
+  coords: { lat: number; lng: number },
+  source: "nearby" | "zip"
+): Promise<RouteSuggestion[]> {
+  if (!ENV.MAPS.placesSuggestionsEnabled || !ENV.MAPS.placesApiKey) {
+    return [];
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GOOGLE_PLACES_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(GOOGLE_PLACES_NEARBY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": ENV.MAPS.placesApiKey,
+        "X-Goog-FieldMask": GOOGLE_PLACES_FIELD_MASK,
+      },
+      body: JSON.stringify({
+        includedTypes: GOOGLE_PLACES_INCLUDED_TYPES,
+        maxResultCount: GOOGLE_PLACES_MAX_RESULTS,
+        rankPreference: "DISTANCE",
+        locationRestriction: {
+          circle: {
+            center: {
+              latitude: coords.lat,
+              longitude: coords.lng,
+            },
+            radius: source === "zip" ? GOOGLE_PLACES_ZIP_RADIUS_METERS : GOOGLE_PLACES_NEARBY_RADIUS_METERS,
+          },
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      if (__DEV__) {
+        console.warn(`[places] Nearby search failed with ${response.status}.`);
+      }
+      return [];
+    }
+
+    const data = (await response.json()) as GooglePlacesNearbyResponse;
+    return (data.places ?? [])
+      .map((place) => toGooglePlaceSuggestion(place, coords, source))
+      .filter((place): place is RouteSuggestion => place !== null);
+  } catch (error) {
+    if (__DEV__) {
+      console.warn("[places] Nearby search request failed.", error);
+    }
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function fetchCoordsForZip(zip: string): Promise<{ lat: number; lng: number } | null> {
@@ -287,13 +492,20 @@ function seedRoutesByZip(zip: string): RouteSuggestion[] {
 }
 
 export async function getRouteSuggestionsNearCoords(coords: { lat: number; lng: number }): Promise<RouteSuggestion[]> {
-  return seedRoutesNearCoords(coords);
+  const [googleRoutes] = await Promise.all([fetchGooglePlacesNearby(coords, "nearby")]);
+  const seededRoutes = seedRoutesNearCoords(coords);
+  return rankSuggestionsByDistanceAndQuality([...googleRoutes, ...seededRoutes], coords);
 }
 
 export async function getRouteSuggestionsByZip(zip: string): Promise<RouteSuggestion[]> {
   const normalized = normalizeZip(zip);
   if (normalized.length !== 5) return [];
-  return seedRoutesByZip(normalized);
+  const seededRoutes = seedRoutesByZip(normalized);
+  const coords = await fetchCoordsForZip(normalized);
+  if (!coords) return seededRoutes;
+
+  const googleRoutes = await fetchGooglePlacesNearby(coords, "zip");
+  return rankSuggestionsByDistanceAndQuality([...googleRoutes, ...seededRoutes], coords);
 }
 
 export async function getGymResetNearCoords(coords: { lat: number; lng: number }): Promise<RouteSuggestion | null> {
@@ -341,6 +553,11 @@ export function getRouteCatalogZipHint(zip: string): string {
   const normalized = normalizeZip(zip);
   if (normalized.length !== 5) return "Enter a 5-digit ZIP code.";
   const hasSeed = SEEDED_ZIP_CENTROIDS.some((entry) => entry.zip === normalized);
+  if (ENV.MAPS.placesSuggestionsEnabled && ENV.MAPS.placesApiKey) {
+    return hasSeed
+      ? "Showing nearby parks and curated reset ideas around that ZIP."
+      : "Searching live nearby parks and fallback reset ideas around that ZIP.";
+  }
   return hasSeed
     ? "Showing the closest curated resets we have near that ZIP."
     : "We have not curated that ZIP yet. We’ll fall back to simple local reset ideas instead.";

@@ -11,6 +11,8 @@ export function usePremiumAccess(): UsePremiumAccessResult {
   const [isPremium, setIsPremium] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<PremiumStatus["customerInfo"]>(null);
   const [error, setError] = useState<Error | null>(null);
+  const [source, setSource] = useState<PremiumStatus["source"]>("cached");
+  const [overrideReason, setOverrideReason] = useState<PremiumStatus["overrideReason"]>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshPremiumStatus = useCallback(async () => {
@@ -20,6 +22,8 @@ export function usePremiumAccess(): UsePremiumAccessResult {
       setIsPremium(next.isPremium);
       setCustomerInfo(next.customerInfo);
       setError(next.error);
+      setSource(next.source);
+      setOverrideReason(next.overrideReason);
     } finally {
       setIsLoading(false);
     }
@@ -34,6 +38,8 @@ export function usePremiumAccess(): UsePremiumAccessResult {
     isLoading,
     customerInfo,
     error,
+    source,
+    overrideReason,
     refreshPremiumStatus,
   };
 }

@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,6 +14,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { usePremiumAccess } from "../../hooks/use-premium-access";
+import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
 import {
   cacheRouteSuggestions,
@@ -25,11 +26,11 @@ import {
 import { dayKeyLocal, EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
 
 const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  mist: "#E8E0D4",
+  forest: PREMIUM.colors.forest,
+  sunrise: PREMIUM.colors.gold,
+  bone: PREMIUM.colors.offWhite,
+  charcoal: PREMIUM.colors.ink,
+  mist: PREMIUM.colors.creamSoft,
 } as const;
 
 const MICROCOPY = [
@@ -227,6 +228,10 @@ async function loadFeaturedResetFromZip(): Promise<FeaturedReset> {
 export default function HomeTab() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    console.log("[boot] home screen mounted");
+  }, []);
 
   const [summary, setSummary] = useState<SummaryStats>(EMPTY_SUMMARY);
   const [dailySpark, setDailySpark] = useState<DailySpark | null>(null);
@@ -536,23 +541,20 @@ export default function HomeTab() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BRAND.bone,
+    backgroundColor: PREMIUM.colors.cream,
   },
   container: {
-    paddingHorizontal: 20,
+    paddingHorizontal: PREMIUM.spacing.screen,
     paddingTop: 4,
-    paddingBottom: 28,
-    gap: 14,
+    paddingBottom: 32,
+    gap: 18,
   },
   heroCard: {
     position: "relative",
-    borderRadius: 28,
-    padding: 22,
-    backgroundColor: BRAND.forest,
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
+    borderRadius: PREMIUM.radius.hero,
+    padding: 24,
+    backgroundColor: PREMIUM.colors.forest,
+    ...PREMIUM.shadow.hero,
     overflow: "hidden",
   },
   heroGlowOne: {
@@ -587,13 +589,13 @@ const styles = StyleSheet.create({
   heroEyebrowPill: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: "rgba(248,244,238,0.12)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.12),
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.12)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.12),
   },
   heroEyebrowText: {
-    color: "rgba(248,244,238,0.78)",
+    color: alpha(PREMIUM.colors.offWhite, 0.78),
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.3,
@@ -601,60 +603,62 @@ const styles = StyleSheet.create({
   statusPill: {
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: "rgba(248,244,238,0.14)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.14),
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.14)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.14),
     maxWidth: "100%",
   },
   statusPillText: {
-    color: "#F8F4EE",
+    color: PREMIUM.colors.offWhite,
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.2,
     flexShrink: 1,
   },
   greeting: {
-    color: "rgba(248,244,238,0.82)",
+    color: alpha(PREMIUM.colors.offWhite, 0.82),
     fontSize: 22,
     lineHeight: 28,
-    fontWeight: "900",
+    fontWeight: "700",
     letterSpacing: -0.2,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   microcopy: {
     marginTop: 8,
-    color: "#FFFFFF",
-    fontSize: 32,
-    lineHeight: 38,
-    fontWeight: "900",
+    color: PREMIUM.colors.offWhite,
+    fontSize: 36,
+    lineHeight: 42,
+    fontWeight: "700",
     maxWidth: 320,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   heroSupportLine: {
     marginTop: 10,
-    color: "rgba(248,244,238,0.68)",
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "700",
+    color: alpha(PREMIUM.colors.offWhite, 0.72),
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
     maxWidth: 320,
   },
   heroSupportLineSecondary: {
     marginTop: 8,
-    color: "rgba(248,244,238,0.86)",
+    color: alpha(PREMIUM.colors.offWhite, 0.86),
     fontSize: 13,
-    lineHeight: 18,
+    lineHeight: 19,
     fontWeight: "800",
     maxWidth: 320,
   },
   primaryCta: {
     marginTop: 24,
     minHeight: 66,
-    borderRadius: 20,
-    backgroundColor: BRAND.sunrise,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.gold,
     alignItems: "center",
     justifyContent: "center",
   },
   primaryCtaText: {
-    color: BRAND.charcoal,
+    color: PREMIUM.colors.ink,
     fontSize: 17,
     fontWeight: "900",
     letterSpacing: 1.2,
@@ -680,12 +684,12 @@ const styles = StyleSheet.create({
   heroMetricChip: {
     flex: 1,
     minWidth: 132,
-    borderRadius: 18,
+    borderRadius: PREMIUM.radius.md,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: "rgba(248,244,238,0.1)",
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.10),
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.12)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.12),
   },
   heroMetricLabel: {
     color: "rgba(248,244,238,0.62)",
@@ -696,9 +700,9 @@ const styles = StyleSheet.create({
   },
   heroMetricValue: {
     marginTop: 6,
-    color: "#FFFFFF",
-    fontSize: 14,
-    lineHeight: 19,
+    color: PREMIUM.colors.offWhite,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: "800",
   },
   sectionHeader: {
@@ -707,11 +711,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   momentumPanel: {
-    borderRadius: 28,
-    padding: 18,
-    backgroundColor: "rgba(37,94,54,0.94)",
+    borderRadius: PREMIUM.radius.hero,
+    padding: 20,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.96),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.98)",
+    borderColor: alpha(PREMIUM.colors.forest, 0.98),
+    ...PREMIUM.shadow.card,
   },
   sectionTitle: {
     color: BRAND.charcoal,
@@ -719,9 +724,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   sectionTitleOnGreen: {
-    color: "#F8F4EE",
+    color: PREMIUM.colors.offWhite,
     fontSize: 18,
-    fontWeight: "900",
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   sectionLink: {
     color: BRAND.forest,
@@ -753,12 +759,12 @@ const styles = StyleSheet.create({
   },
   statCardOnGreen: {
     width: "47%",
-    borderRadius: 22,
+    borderRadius: PREMIUM.radius.lg,
     paddingVertical: 18,
     paddingHorizontal: 16,
-    backgroundColor: "rgba(248,244,238,0.12)",
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.12),
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.16)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.16),
   },
   statLabel: {
     color: "rgba(11,15,14,0.56)",
@@ -781,9 +787,9 @@ const styles = StyleSheet.create({
   },
   statValueOnGreen: {
     marginTop: 8,
-    color: "#FFFFFF",
-    fontSize: 22,
-    lineHeight: 27,
+    color: PREMIUM.colors.offWhite,
+    fontSize: 24,
+    lineHeight: 29,
     fontWeight: "900",
   },
   statMeta: {
@@ -800,11 +806,11 @@ const styles = StyleSheet.create({
   },
   premiumStreakCard: {
     marginTop: 14,
-    borderRadius: 20,
-    padding: 16,
-    backgroundColor: "rgba(248,244,238,0.14)",
+    borderRadius: PREMIUM.radius.lg,
+    padding: 18,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.14),
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.16)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.16),
   },
   premiumStreakEyebrow: {
     color: BRAND.sunrise,
@@ -838,11 +844,11 @@ const styles = StyleSheet.create({
   },
   premiumPreviewCard: {
     marginTop: 14,
-    borderRadius: 20,
-    padding: 16,
-    backgroundColor: "rgba(248,244,238,0.12)",
+    borderRadius: PREMIUM.radius.lg,
+    padding: 18,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.12),
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.14)",
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.14),
   },
   premiumPreviewEyebrow: {
     color: BRAND.sunrise,
@@ -853,10 +859,11 @@ const styles = StyleSheet.create({
   },
   premiumPreviewTitle: {
     marginTop: 8,
-    color: "#FFFFFF",
-    fontSize: 18,
-    lineHeight: 23,
-    fontWeight: "900",
+    color: PREMIUM.colors.offWhite,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   premiumPreviewBody: {
     marginTop: 8,
@@ -882,11 +889,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   sparkCard: {
-    borderRadius: 24,
-    padding: 20,
-    backgroundColor: "rgba(255,255,255,0.48)",
+    borderRadius: PREMIUM.radius.xl,
+    padding: 22,
+    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.8),
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: PREMIUM.colors.line,
+    ...PREMIUM.shadow.soft,
   },
   cardEyebrow: {
     color: BRAND.forest,
@@ -896,10 +904,11 @@ const styles = StyleSheet.create({
   },
   sparkQuote: {
     marginTop: 10,
-    color: BRAND.charcoal,
-    fontSize: 24,
-    lineHeight: 31,
-    fontWeight: "900",
+    color: PREMIUM.colors.text,
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   sparkMission: {
     marginTop: 12,
@@ -916,11 +925,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   resetCard: {
-    borderRadius: 24,
-    padding: 20,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    borderRadius: PREMIUM.radius.xl,
+    padding: 22,
+    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.12),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: PREMIUM.colors.lineStrong,
+    ...PREMIUM.shadow.soft,
   },
   loadingRow: {
     marginTop: 14,
@@ -935,10 +945,11 @@ const styles = StyleSheet.create({
   },
   resetTitle: {
     marginTop: 10,
-    color: BRAND.charcoal,
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: "900",
+    color: PREMIUM.colors.text,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   resetMeta: {
     marginTop: 8,
@@ -961,13 +972,13 @@ const styles = StyleSheet.create({
   resetPrimaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: BRAND.forest,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.forest,
     alignItems: "center",
     justifyContent: "center",
   },
   resetPrimaryBtnText: {
-    color: "#FFFFFF",
+    color: PREMIUM.colors.offWhite,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
@@ -975,20 +986,20 @@ const styles = StyleSheet.create({
   resetSecondaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.58)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.9),
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: PREMIUM.colors.line,
     alignItems: "center",
     justifyContent: "center",
   },
   resetSecondaryBtnSolo: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.58)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.9),
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: PREMIUM.colors.line,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -999,18 +1010,20 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   proCard: {
-    borderRadius: 24,
-    padding: 20,
-    backgroundColor: "rgba(242,181,65,0.18)",
+    borderRadius: PREMIUM.radius.xl,
+    padding: 22,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.18),
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.34)",
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.34),
+    ...PREMIUM.shadow.soft,
   },
   proTitle: {
     marginTop: 10,
-    color: BRAND.charcoal,
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: "900",
+    color: PREMIUM.colors.text,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   proBody: {
     marginTop: 10,
@@ -1022,13 +1035,13 @@ const styles = StyleSheet.create({
   proButton: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: BRAND.charcoal,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.ink,
     alignItems: "center",
     justifyContent: "center",
   },
   proButtonText: {
-    color: "#FFFFFF",
+    color: PREMIUM.colors.offWhite,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,

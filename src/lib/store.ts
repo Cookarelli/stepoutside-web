@@ -22,6 +22,10 @@ export type OutsideSession = {
   startedAt: number;
   endedAt: number;
   durationSec: number;
+  activeDurationSec?: number;
+  pausedDurationSec?: number;
+  totalElapsedSec?: number;
+  movingDurationSec?: number;
   source: SessionSource;
   title?: string;
   activityType?: ActivityType;
@@ -183,6 +187,20 @@ function computePaceSecPerMile(durationSec: number, distanceM?: number): number 
   return Math.max(1, Math.round(durationSec / miles));
 }
 
+function resolvePaceDurationSec(
+  session: Pick<OutsideSession, "movingDurationSec" | "activeDurationSec" | "durationSec">
+): number {
+  if (typeof session.movingDurationSec === "number" && Number.isFinite(session.movingDurationSec) && session.movingDurationSec > 0) {
+    return session.movingDurationSec;
+  }
+
+  if (typeof session.activeDurationSec === "number" && Number.isFinite(session.activeDurationSec) && session.activeDurationSec > 0) {
+    return session.activeDurationSec;
+  }
+
+  return Math.max(0, finiteNumberOr(session.durationSec));
+}
+
 function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boolean): OutsideSession {
   const routePoints =
     includeRoutePoints && Array.isArray(session.routePoints) && session.routePoints.length > 1
@@ -194,6 +212,18 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
     startedAt: finiteNumberOr(session.startedAt),
     endedAt: finiteNumberOr(session.endedAt),
     durationSec: Math.max(0, finiteNumberOr(session.durationSec)),
+    ...(typeof session.activeDurationSec === "number" && Number.isFinite(session.activeDurationSec)
+      ? { activeDurationSec: Math.max(0, session.activeDurationSec) }
+      : {}),
+    ...(typeof session.pausedDurationSec === "number" && Number.isFinite(session.pausedDurationSec)
+      ? { pausedDurationSec: Math.max(0, session.pausedDurationSec) }
+      : {}),
+    ...(typeof session.totalElapsedSec === "number" && Number.isFinite(session.totalElapsedSec)
+      ? { totalElapsedSec: Math.max(0, session.totalElapsedSec) }
+      : {}),
+    ...(typeof session.movingDurationSec === "number" && Number.isFinite(session.movingDurationSec)
+      ? { movingDurationSec: Math.max(0, session.movingDurationSec) }
+      : {}),
     source: session.source === "gps" ? "gps" : "timer",
     title: session.title?.trim() || defaultSessionTitle(session),
     activityType: normalizeActivityType(session.activityType),
@@ -217,8 +247,8 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
       : {}),
     ...(typeof session.paceSecPerMile === "number" && Number.isFinite(session.paceSecPerMile)
       ? { paceSecPerMile: session.paceSecPerMile }
-      : computePaceSecPerMile(session.durationSec, session.distanceM)
-        ? { paceSecPerMile: computePaceSecPerMile(session.durationSec, session.distanceM) }
+      : computePaceSecPerMile(resolvePaceDurationSec(session), session.distanceM)
+        ? { paceSecPerMile: computePaceSecPerMile(resolvePaceDurationSec(session), session.distanceM) }
         : {}),
     ...(routePoints ? { routePoints } : {}),
   };
@@ -398,6 +428,10 @@ async function readSessions(): Promise<OutsideSession[]> {
               startedAt: finiteNumberOr(session.startedAt),
               endedAt: finiteNumberOr(session.endedAt),
               durationSec: Math.max(0, finiteNumberOr(session.durationSec)),
+              activeDurationSec: finiteNumberOr(session.activeDurationSec),
+              pausedDurationSec: finiteNumberOr(session.pausedDurationSec),
+              totalElapsedSec: finiteNumberOr(session.totalElapsedSec),
+              movingDurationSec: finiteNumberOr(session.movingDurationSec),
               source: session.source,
               title: typeof session.title === "string" ? session.title : undefined,
               activityType: normalizeActivityType(session.activityType),
@@ -463,6 +497,22 @@ function mergeSessionLists(localSessions: OutsideSession[], remoteSessions: Outs
             typeof remote.distanceM === "number" && Number.isFinite(remote.distanceM)
               ? remote.distanceM
               : existing?.distanceM,
+          activeDurationSec:
+            typeof remote.activeDurationSec === "number" && Number.isFinite(remote.activeDurationSec)
+              ? remote.activeDurationSec
+              : existing?.activeDurationSec,
+          pausedDurationSec:
+            typeof remote.pausedDurationSec === "number" && Number.isFinite(remote.pausedDurationSec)
+              ? remote.pausedDurationSec
+              : existing?.pausedDurationSec,
+          totalElapsedSec:
+            typeof remote.totalElapsedSec === "number" && Number.isFinite(remote.totalElapsedSec)
+              ? remote.totalElapsedSec
+              : existing?.totalElapsedSec,
+          movingDurationSec:
+            typeof remote.movingDurationSec === "number" && Number.isFinite(remote.movingDurationSec)
+              ? remote.movingDurationSec
+              : existing?.movingDurationSec,
           isSunriseBonus:
             typeof remote.isSunriseBonus === "boolean" ? remote.isSunriseBonus : existing?.isSunriseBonus,
           isSunsetBonus:
@@ -528,6 +578,18 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
             startedAt: finiteNumberOr(remote.startedAt),
             endedAt: finiteNumberOr(remote.endedAt),
             durationSec: finiteNumberOr(remote.durationSec),
+            ...(typeof remote.activeDurationSec === "number" && Number.isFinite(remote.activeDurationSec)
+              ? { activeDurationSec: remote.activeDurationSec }
+              : {}),
+            ...(typeof remote.pausedDurationSec === "number" && Number.isFinite(remote.pausedDurationSec)
+              ? { pausedDurationSec: remote.pausedDurationSec }
+              : {}),
+            ...(typeof remote.totalElapsedSec === "number" && Number.isFinite(remote.totalElapsedSec)
+              ? { totalElapsedSec: remote.totalElapsedSec }
+              : {}),
+            ...(typeof remote.movingDurationSec === "number" && Number.isFinite(remote.movingDurationSec)
+              ? { movingDurationSec: remote.movingDurationSec }
+              : {}),
             source: remote.source === "gps" ? "gps" : "timer",
             title: typeof remote.title === "string" ? remote.title : undefined,
             activityType: normalizeActivityType(remote.activityType),
@@ -666,6 +728,10 @@ export async function getSessionById(id: string): Promise<OutsideSession | null>
         startedAt: finiteNumberOr(remote.startedAt, local?.startedAt ?? 0),
         endedAt: finiteNumberOr(remote.endedAt, local?.endedAt ?? 0),
         durationSec: finiteNumberOr(remote.durationSec, local?.durationSec ?? 0),
+        activeDurationSec: finiteNumberOr(remote.activeDurationSec, local?.activeDurationSec ?? 0),
+        pausedDurationSec: finiteNumberOr(remote.pausedDurationSec, local?.pausedDurationSec ?? 0),
+        totalElapsedSec: finiteNumberOr(remote.totalElapsedSec, local?.totalElapsedSec ?? 0),
+        movingDurationSec: finiteNumberOr(remote.movingDurationSec, local?.movingDurationSec ?? 0),
         source: remote.source === "gps" || remote.source === "timer" ? remote.source : local?.source ?? "timer",
         title: typeof remote.title === "string" ? remote.title : local?.title,
         activityType: normalizeActivityType(remote.activityType ?? local?.activityType),
@@ -836,7 +902,7 @@ export async function resetAllData(): Promise<void> {
 /** Returns summary so Complete screen can render streak immediately */
 export async function addCompletedSession(
   session: OutsideSession
-): Promise<{ summary: SummaryStats }> {
+): Promise<{ summary: SummaryStats; sessions: OutsideSession[] }> {
   const premiumStatus = await getPremiumStatus();
   const includeRoutePoints = premiumStatus.isPremium;
   const normalized = buildSessionForStorage(session, includeRoutePoints);
@@ -854,5 +920,5 @@ export async function addCompletedSession(
   } catch {
     // Session summaries remain available locally if Firestore sync is unavailable.
   }
-  return { summary: nextSummary };
+  return { summary: nextSummary, sessions };
 }

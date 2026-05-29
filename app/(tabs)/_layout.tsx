@@ -1,24 +1,31 @@
 import { Tabs } from "expo-router";
-import React from "react";
+import React, { useEffect } from "react";
 import { Ionicons } from "@expo/vector-icons";
 
-const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-} as const;
+import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 
 export default function TabsLayout() {
+  useEffect(() => {
+    console.log("[boot] tabs layout mounted");
+  }, []);
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: BRAND.forest,
-        tabBarInactiveTintColor: "rgba(11,15,14,0.55)",
+        tabBarActiveTintColor: PREMIUM.colors.forest,
+        tabBarInactiveTintColor: alpha(PREMIUM.colors.text, 0.48),
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: "700",
+          marginBottom: 2,
+        },
         tabBarStyle: {
-          backgroundColor: BRAND.bone,
-          borderTopColor: "rgba(11,15,14,0.10)",
+          backgroundColor: PREMIUM.colors.creamSoft,
+          borderTopColor: PREMIUM.colors.line,
+          height: 88,
+          paddingTop: 8,
+          paddingBottom: 8,
         },
       }}
     >
@@ -26,31 +33,37 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="stats"
+        name="explore"
         options={{
-          title: "Stats",
-          tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
+          title: "Challenges",
+          tabBarIcon: ({ color, size }) => <Ionicons name="trophy-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="steps"
         options={{
           title: "Steps",
-          tabBarIcon: ({ color, size }) => <Ionicons name="walk" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="footsteps-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="stats"
+        options={{
+          title: "Stats",
+          tabBarIcon: ({ color, size }) => <Ionicons name="stats-chart-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="person-circle-outline" size={size} color={color} />,
         }}
       />
-      <Tabs.Screen name="explore" options={{ href: null }} />
     </Tabs>
   );
 }

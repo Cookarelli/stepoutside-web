@@ -124,15 +124,16 @@ const styles = StyleSheet.create({
   },
   rowSingle: {
     marginTop: 28,
-    alignItems: "stretch",
+    alignItems: "center",
   },
   primaryBtn: {
     backgroundColor: BRAND.forest,
     minHeight: 52,
     paddingVertical: 14,
-    paddingHorizontal: 24,
+    paddingHorizontal: 32,
     borderRadius: 14,
     justifyContent: "center",
+    alignSelf: "center",
   },
   primaryText: {
     color: "white",

@@ -7,12 +7,13 @@ import { initRevenueCat } from "../src/lib/pro";
 
 export default function RootLayout() {
   useEffect(() => {
+    console.log("[boot] root layout mounted");
     void initRevenueCat();
   }, []);
 
   return (
     <AppErrorBoundary>
-      <StatusBar style="auto" />
+      <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="splash" />
         <Stack.Screen name="(onboarding)" />

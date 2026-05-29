@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { computeGpsStrength, smoothRoutePoints } from "../lib/gpsTracking";
 import type { RoutePoint } from "../lib/store";
 
 type RoutePreviewProps = {
@@ -40,7 +41,7 @@ function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
 }
 
 function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
-  const sampled = samplePoints(points, 48);
+  const sampled = smoothRoutePoints(samplePoints(points, 48));
   const lats = sampled.map((point) => point.lat);
   const lngs = sampled.map((point) => point.lng);
 
@@ -98,13 +99,10 @@ function describeSignal(points: RoutePoint[]): string {
     .map((point) => point.accuracy)
     .filter((accuracy): accuracy is number => typeof accuracy === "number" && Number.isFinite(accuracy));
 
-  if (accuracies.length === 0) return "Route captured";
+  if (accuracies.length === 0) return "Weak GPS";
 
   const averageAccuracy = accuracies.reduce((sum, accuracy) => sum + accuracy, 0) / accuracies.length;
-
-  if (averageAccuracy <= 12) return "Strong GPS";
-  if (averageAccuracy <= 24) return "Good GPS";
-  return "Conservative GPS";
+  return computeGpsStrength(averageAccuracy, Math.max(0, points.length - 1));
 }
 
 export function RoutePreview({ points, title = "Your route", subtitle = "Captured from this walk" }: RoutePreviewProps) {

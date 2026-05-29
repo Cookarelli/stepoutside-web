@@ -7,7 +7,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { usePremiumAccess } from "../../hooks/use-premium-access";
-import { RoutePreview } from "../../src/components/RoutePreview";
+import { NativeRouteMapCard } from "../../src/components/NativeRouteMapCard";
+import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 import { getSavedRouteSessions, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../../src/lib/store";
 import {
   cacheRouteSuggestions,
@@ -38,10 +39,10 @@ type TrailSuggestion = {
 type PermissionState = "unknown" | "granted" | "denied";
 
 const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
+  forest: PREMIUM.colors.forest,
+  sunrise: PREMIUM.colors.gold,
+  bone: PREMIUM.colors.offWhite,
+  charcoal: PREMIUM.colors.ink,
 } as const;
 
 const SAVED_WALKS_KEY = "@stepoutside/savedWalks";
@@ -211,6 +212,9 @@ export default function StepsTab() {
     [showAllSaved, sortedSavedWalks]
   );
   const freeSaveLimitReached = useMemo(() => !isPremium && savedWalks.length >= 3, [isPremium, savedWalks.length]);
+  const locationStatusLabel =
+    permission === "granted" ? "Location on" : zipCode.length === 5 ? `ZIP ${zipCode}` : "Travel-ready";
+  const suggestionStatusLabel = loading ? "Refreshing resets" : `${suggestions.length} ideas nearby`;
 
   const loadSavedWalks = useCallback(async () => {
     try {
@@ -504,14 +508,40 @@ export default function StepsTab() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Resets & Suggestions</Text>
-        <Text style={styles.sub}>Short nearby park loops, trail resets, and indoor backup walks.</Text>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroCard}>
+          <View style={styles.heroGlowOne} />
+          <View style={styles.heroGlowTwo} />
 
-        <Pressable style={styles.refreshBtn} onPress={() => void loadNearby(true)}>
-          <Text style={styles.refreshText}>Refresh Nearby</Text>
-        </Pressable>
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroPill}>
+              <Text style={styles.heroPillText}>{locationStatusLabel}</Text>
+            </View>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusPillText}>{suggestionStatusLabel}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.heroEyebrow}>Reset ideas</Text>
+          <Text style={styles.title}>Resets & Suggestions</Text>
+          <Text style={styles.sub}>Short nearby park loops, trail resets, and indoor backup walks that match the Step Outside rhythm.</Text>
+
+          <View style={styles.heroStatsRow}>
+            <View style={styles.heroMetricChip}>
+              <Text style={styles.heroMetricLabel}>Saved walks</Text>
+              <Text style={styles.heroMetricValue}>{savedWalks.length}</Text>
+            </View>
+            <View style={styles.heroMetricChip}>
+              <Text style={styles.heroMetricLabel}>Premium routes</Text>
+              <Text style={styles.heroMetricValue}>{savedRouteSessions.length}</Text>
+            </View>
+          </View>
+
+          <Pressable style={styles.refreshBtn} onPress={() => void loadNearby(true)}>
+            <Text style={styles.refreshText}>Refresh Nearby</Text>
+          </Pressable>
+        </View>
 
         {savedWalks.length > 0 ? (
           <View style={styles.savedWrap}>
@@ -598,7 +628,7 @@ export default function StepsTab() {
 
                 {session.routePoints && session.routePoints.length > 1 ? (
                   <View style={styles.savedRoutePreviewWrap}>
-                    <RoutePreview
+                    <NativeRouteMapCard
                       points={session.routePoints}
                       title="Saved route"
                       subtitle="Saved to your Premium route history"
@@ -621,7 +651,7 @@ export default function StepsTab() {
 
         {!bootstrapped || loading ? (
           <View style={styles.centerState}>
-            <ActivityIndicator color={BRAND.forest} />
+            <ActivityIndicator color={PREMIUM.colors.forest} />
             <Text style={styles.stateText}>Finding trusted resets near you…</Text>
           </View>
         ) : null}
@@ -639,7 +669,7 @@ export default function StepsTab() {
                 }}
                 keyboardType="number-pad"
                 placeholder="ZIP code"
-                placeholderTextColor="rgba(11,15,14,0.35)"
+                placeholderTextColor={alpha(PREMIUM.colors.text, 0.35)}
                 maxLength={5}
                 style={styles.zipInput}
               />
@@ -672,10 +702,10 @@ export default function StepsTab() {
                     {item.source === "catalog"
                       ? "Route DB"
                       : item.source === "zip"
-                        ? "ZIP match"
+                        ? "ZIP area"
                         : item.source === "gym"
                           ? "Nearby gym"
-                        : item.source === "nearby"
+                          : item.source === "nearby"
                           ? "Nearby"
                           : "Quick pick"}
                   </Text>
@@ -732,33 +762,131 @@ export default function StepsTab() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BRAND.bone,
+    backgroundColor: PREMIUM.colors.cream,
   },
   container: {
-    padding: 20,
-    paddingBottom: 28,
+    padding: PREMIUM.spacing.screen,
+    paddingBottom: 120,
+  },
+  heroCard: {
+    position: "relative",
+    borderRadius: PREMIUM.radius.hero,
+    padding: 24,
+    backgroundColor: PREMIUM.colors.forest,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.lineStrong,
+    overflow: "hidden",
+    ...PREMIUM.shadow.hero,
+  },
+  heroGlowOne: {
+    position: "absolute",
+    top: -42,
+    right: -24,
+    width: 150,
+    height: 150,
+    borderRadius: 999,
+    backgroundColor: "rgba(242,181,65,0.14)",
+  },
+  heroGlowTwo: {
+    position: "absolute",
+    bottom: -44,
+    left: -28,
+    width: 128,
+    height: 128,
+    borderRadius: 999,
+    backgroundColor: "rgba(248,244,238,0.08)",
+  },
+  heroTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  heroPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "rgba(248,244,238,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.12)",
+  },
+  heroPillText: {
+    color: "rgba(248,244,238,0.78)",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  statusPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: "rgba(248,244,238,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.14)",
+  },
+  statusPillText: {
+    color: BRAND.bone,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  heroEyebrow: {
+    marginTop: 22,
+    color: alpha(PREMIUM.colors.offWhite, 0.72),
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: BRAND.charcoal,
+    marginTop: 10,
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: "700",
+    color: PREMIUM.colors.offWhite,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   sub: {
     marginTop: 8,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "rgba(11,15,14,0.65)",
+    fontSize: 15,
+    fontWeight: "600",
+    color: alpha(PREMIUM.colors.offWhite, 0.76),
+    lineHeight: 22,
+  },
+  heroStatsRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
+  heroMetricChip: {
+    flex: 1,
+    borderRadius: PREMIUM.radius.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.10),
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.12),
+  },
+  heroMetricLabel: {
+    color: "rgba(248,244,238,0.70)",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  heroMetricValue: {
+    marginTop: 6,
+    color: PREMIUM.colors.gold,
+    fontSize: 24,
+    fontWeight: "900",
   },
   refreshBtn: {
-    marginTop: 14,
+    marginTop: 18,
     alignSelf: "flex-start",
-    backgroundColor: BRAND.forest,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    backgroundColor: PREMIUM.colors.gold,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    borderRadius: PREMIUM.radius.pill,
   },
   refreshText: {
-    color: "white",
+    color: PREMIUM.colors.ink,
     fontWeight: "900",
   },
   zipRow: {
@@ -770,79 +898,82 @@ const styles = StyleSheet.create({
   zipInput: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    borderRadius: 12,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.94),
+    borderRadius: PREMIUM.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    color: BRAND.charcoal,
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.24),
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    color: PREMIUM.colors.ink,
     fontWeight: "800",
   },
   zipBtn: {
-    backgroundColor: BRAND.forest,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
+    backgroundColor: PREMIUM.colors.gold,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: PREMIUM.radius.pill,
   },
   zipBtnText: {
-    color: "white",
+    color: PREMIUM.colors.ink,
     fontWeight: "900",
   },
   zipHint: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(248,244,238,0.74)",
     fontWeight: "700",
     lineHeight: 19,
   },
   centerState: {
     marginTop: 20,
-    borderRadius: 14,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    borderRadius: PREMIUM.radius.lg,
+    backgroundColor: PREMIUM.colors.forest,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.10)",
-    padding: 14,
+    borderColor: PREMIUM.colors.lineStrong,
+    padding: 18,
+    ...PREMIUM.shadow.soft,
   },
   proNudge: {
     marginTop: 14,
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: "rgba(242,181,65,0.18)",
+    borderRadius: PREMIUM.radius.lg,
+    padding: 16,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.18),
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.4)",
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.4),
   },
   proNudgeText: {
-    color: "rgba(11,15,14,0.78)",
+    color: PREMIUM.colors.ink,
     fontWeight: "800",
     lineHeight: 20,
   },
   proNudgeBtn: {
     marginTop: 8,
     alignSelf: "flex-start",
-    backgroundColor: BRAND.forest,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    backgroundColor: PREMIUM.colors.forest,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: PREMIUM.radius.pill,
   },
   proNudgeBtnText: {
-    color: "white",
+    color: PREMIUM.colors.offWhite,
     fontWeight: "900",
   },
   savedWrap: {
     marginTop: 14,
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    borderRadius: PREMIUM.radius.xl,
+    padding: 18,
+    backgroundColor: PREMIUM.colors.forest,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: PREMIUM.colors.lineStrong,
+    ...PREMIUM.shadow.soft,
   },
   savedRoutesWrap: {
     marginTop: 14,
-    borderRadius: 14,
-    padding: 12,
-    backgroundColor: "rgba(242,181,65,0.12)",
+    borderRadius: PREMIUM.radius.xl,
+    padding: 18,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.92),
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.28)",
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.42),
+    ...PREMIUM.shadow.soft,
   },
   savedHeaderRow: {
     flexDirection: "row",
@@ -853,12 +984,12 @@ const styles = StyleSheet.create({
   savedTitle: {
     fontSize: 14,
     fontWeight: "900",
-    color: BRAND.forest,
+    color: BRAND.bone,
   },
   savedToggle: {
     fontSize: 12,
     fontWeight: "900",
-    color: BRAND.forest,
+    color: BRAND.sunrise,
   },
   savedRoutesTitle: {
     fontSize: 14,
@@ -868,7 +999,7 @@ const styles = StyleSheet.create({
   savedRoutesMeta: {
     fontSize: 11,
     fontWeight: "900",
-    color: "rgba(11,15,14,0.56)",
+    color: "rgba(11,15,14,0.58)",
   },
   savedRow: {
     flexDirection: "row",
@@ -881,34 +1012,34 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   savedName: {
-    color: BRAND.charcoal,
+    color: BRAND.bone,
     fontWeight: "800",
     marginRight: 8,
   },
   savedMeta: {
     marginTop: 2,
-    color: "rgba(11,15,14,0.7)",
+    color: "rgba(248,244,238,0.68)",
     fontWeight: "700",
     fontSize: 12,
   },
   removeBtn: {
-    backgroundColor: "rgba(200,51,51,0.12)",
+    backgroundColor: "rgba(248,244,238,0.10)",
     paddingVertical: 6,
     paddingHorizontal: 9,
     borderRadius: 8,
   },
   removeText: {
-    color: "#C83333",
+    color: BRAND.sunrise,
     fontWeight: "900",
     fontSize: 12,
   },
   savedRouteCard: {
     marginTop: 10,
-    borderRadius: 16,
-    padding: 12,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: "rgba(37,94,54,0.14)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(37,94,54,0.18)",
   },
   savedRouteCardPressed: {
     opacity: 0.92,
@@ -927,7 +1058,7 @@ const styles = StyleSheet.create({
   savedRouteBadge: {
     fontSize: 11,
     fontWeight: "900",
-    color: "#8A5D09",
+    color: BRAND.charcoal,
     backgroundColor: "rgba(242,181,65,0.18)",
     paddingVertical: 4,
     paddingHorizontal: 8,
@@ -935,7 +1066,7 @@ const styles = StyleSheet.create({
   },
   savedRouteStats: {
     marginTop: 6,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(11,15,14,0.72)",
     fontSize: 12,
     fontWeight: "700",
   },
@@ -949,18 +1080,18 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: BRAND.sunrise,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: "rgba(242,181,65,0.42)",
   },
   savedRouteMetaChipText: {
-    color: BRAND.forest,
+    color: BRAND.charcoal,
     fontSize: 11,
     fontWeight: "900",
   },
   savedRouteLockedText: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(11,15,14,0.68)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -970,17 +1101,18 @@ const styles = StyleSheet.create({
   },
   stateText: {
     marginTop: 6,
-    color: "rgba(11,15,14,0.72)",
+    color: "rgba(248,244,238,0.80)",
     fontWeight: "700",
     lineHeight: 21,
   },
   card: {
     marginTop: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.7)",
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: PREMIUM.colors.forest,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.10)",
-    padding: 14,
+    borderColor: PREMIUM.colors.lineStrong,
+    padding: 18,
+    ...PREMIUM.shadow.soft,
   },
   cardTop: {
     flexDirection: "row",
@@ -990,15 +1122,17 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     flex: 1,
-    fontSize: 18,
-    fontWeight: "900",
-    color: BRAND.charcoal,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "700",
+    color: PREMIUM.colors.offWhite,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   fallbackTag: {
     fontSize: 11,
     fontWeight: "900",
-    color: BRAND.forest,
-    backgroundColor: "rgba(37,94,54,0.14)",
+    color: BRAND.charcoal,
+    backgroundColor: "rgba(242,181,65,0.92)",
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 999,
@@ -1009,18 +1143,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   chip: {
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: "rgba(248,244,238,0.10)",
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.12)",
   },
   chipText: {
     fontWeight: "800",
-    color: "rgba(11,15,14,0.75)",
+    color: "rgba(248,244,238,0.86)",
   },
   cardNote: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(248,244,238,0.72)",
     fontWeight: "700",
     lineHeight: 18,
   },
@@ -1042,25 +1178,28 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: "rgba(248,244,238,0.10)",
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(248,244,238,0.12)",
   },
   saveBtnActive: {
-    backgroundColor: "rgba(37,94,54,0.18)",
+    backgroundColor: "rgba(242,181,65,0.18)",
+    borderColor: "rgba(242,181,65,0.38)",
   },
   saveBtnDisabled: {
     opacity: 0.5,
   },
   saveBtnText: {
     fontWeight: "900",
-    color: "rgba(11,15,14,0.72)",
+    color: BRAND.bone,
   },
   saveBtnTextActive: {
-    color: BRAND.forest,
+    color: BRAND.charcoal,
   },
   saveBtnTextDisabled: {
-    color: "rgba(11,15,14,0.45)",
+    color: "rgba(248,244,238,0.42)",
   },
 });

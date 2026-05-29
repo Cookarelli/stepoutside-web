@@ -1,11 +1,7 @@
 import React from "react";
 import { StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
 
-const BRAND = {
-  forest: "#255E36",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-} as const;
+import { PREMIUM, alpha } from "../lib/premiumTheme";
 
 type BrandBadgeProps = {
   size?: number;
@@ -19,7 +15,6 @@ export function BrandBadge({
   style,
 }: BrandBadgeProps) {
   const isInverse = variant === "inverse";
-  const fontSize = Math.max(12, Math.round(size * 0.34));
 
   return (
     <View
@@ -28,9 +23,9 @@ export function BrandBadge({
         {
           width: size,
           height: size,
-          borderRadius: Math.round(size * 0.3),
-          backgroundColor: isInverse ? "rgba(248,244,238,0.14)" : "rgba(37,94,54,0.10)",
-          borderColor: isInverse ? "rgba(248,244,238,0.16)" : "rgba(37,94,54,0.14)",
+          borderRadius: Math.round(size * 0.34),
+          backgroundColor: isInverse ? alpha(PREMIUM.colors.offWhite, 0.14) : alpha(PREMIUM.colors.forest, 0.10),
+          borderColor: isInverse ? alpha(PREMIUM.colors.offWhite, 0.18) : alpha(PREMIUM.colors.forest, 0.14),
         },
         style,
       ]}
@@ -39,8 +34,8 @@ export function BrandBadge({
         style={[
           styles.mark,
           {
-            fontSize,
-            color: isInverse ? BRAND.bone : BRAND.forest,
+            fontSize: Math.max(12, Math.round(size * 0.3)),
+            color: isInverse ? PREMIUM.colors.offWhite : PREMIUM.colors.forest,
             letterSpacing: Math.max(0.4, size * 0.03),
           },
         ]}
@@ -51,7 +46,7 @@ export function BrandBadge({
         style={[
           styles.dot,
           {
-            backgroundColor: isInverse ? "rgba(248,244,238,0.78)" : "rgba(37,94,54,0.62)",
+            backgroundColor: isInverse ? alpha(PREMIUM.colors.offWhite, 0.8) : alpha(PREMIUM.colors.forest, 0.65),
           },
         ]}
       />
@@ -69,6 +64,7 @@ const styles = StyleSheet.create({
   mark: {
     fontWeight: "900",
     lineHeight: 24,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   dot: {
     position: "absolute",

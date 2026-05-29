@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -17,6 +18,8 @@ import {
 
 import { ENV } from "../../env";
 import { usePremiumAccess } from "../../hooks/use-premium-access";
+import { accountDeletionRequiresRecentLogin, deleteCurrentAccount } from "../../src/lib/accountDeletion";
+import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 import {
   createEmailPasswordAccount,
   getCachedAuthUser,
@@ -27,6 +30,7 @@ import {
   subscribeToAuth,
   type AuthUserSnapshot,
 } from "../../src/lib/auth";
+import { auth } from "../../src/lib/firebase";
 import { resetOnboarding } from "../../src/lib/onboarding";
 import {
   getNotificationPrefs,
@@ -38,7 +42,7 @@ import {
 } from "../../src/lib/notifications";
 import { EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
 
-type AuthAction = "google" | "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | null;
+type AuthAction = "google" | "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | "deleteAccount" | null;
 
 function firstNonEmpty(...values: (string | null | undefined)[]): string {
   for (const value of values) {
@@ -140,7 +144,7 @@ function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSig
 
   const onPress = async () => {
     if (!googleRequest) {
-      onStatus("Google sign-in is still warming up.");
+      onStatus("Google sign-in isn’t available right now. Use email sign-in below.");
       return;
     }
 
@@ -183,6 +187,8 @@ export default function ProfileTab() {
   const [authStatus, setAuthStatus] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteStatus, setDeleteStatus] = useState("");
   const { isPremium } = usePremiumAccess();
 
   const googleEnabled = Boolean(
@@ -393,10 +399,58 @@ export default function ProfileTab() {
     ]);
   };
 
+  const onOpenDeleteAccount = () => {
+    if (!auth.currentUser) {
+      Alert.alert("Sign in first", "Delete Account is available after you sign in.");
+      return;
+    }
+
+    setDeleteStatus("");
+    setDeleteModalVisible(true);
+  };
+
+  const onDeleteAccount = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setDeleteStatus("Sign in again before deleting your account.");
+      return;
+    }
+
+    setAuthStatus("");
+    setDeleteStatus("");
+    setAuthAction("deleteAccount");
+
+    try {
+      const result = await deleteCurrentAccount(currentUser);
+      if (result.cloudCleanupRequired) {
+        console.warn("[account-delete] shared company cleanup still needed", {
+          companyIds: result.cloudCleanupTargets,
+        });
+      }
+
+      setDeleteModalVisible(false);
+      setDeleteStatus("");
+      setAuthStatus("Account deleted.");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      router.replace("/(tabs)/profile");
+      Alert.alert("Account deleted", "Your account and associated app data have been removed where legally permitted.");
+    } catch (error) {
+      if (accountDeletionRequiresRecentLogin(error)) {
+        setDeleteStatus("For security, please sign in again before deleting your account.");
+      } else {
+        setDeleteStatus("We couldn’t delete your account right now. Please try again in a moment.");
+      }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setAuthAction(null);
+    }
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Profile</Text>
-      <Text style={styles.sub}>Your account, reminders, and plan settings in one grounded place.</Text>
+    <>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.title}>Profile</Text>
+        <Text style={styles.sub}>Your account, reminders, and plan settings in one grounded place.</Text>
 
       <View style={styles.accountCard}>
         <View style={styles.accountHeader}>
@@ -430,7 +484,7 @@ export default function ProfileTab() {
 
         {authLoading && !visibleUser ? (
           <View style={styles.authLoadingRow}>
-            <ActivityIndicator color="#255E36" />
+            <ActivityIndicator color={PREMIUM.colors.forest} />
             <Text style={styles.authLoadingText}>Checking your account…</Text>
           </View>
         ) : null}
@@ -507,7 +561,7 @@ export default function ProfileTab() {
                 onStatus={setAuthStatus}
               />
             ) : (
-              <Text style={styles.authSetupNote}>Google sign-in will appear as soon as the client IDs are added to Expo envs.</Text>
+              <Text style={styles.authSetupNote}>Use email sign-in or create an account below.</Text>
             )}
           </View>
         ) : (
@@ -533,6 +587,26 @@ export default function ProfileTab() {
         )}
 
         {authStatus ? <Text style={styles.authStatus}>{authStatus}</Text> : null}
+      </View>
+
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsEyebrow}>Settings / Account</Text>
+        <Text style={styles.settingsTitle}>Delete Account</Text>
+        <Text style={styles.settingsBody}>
+          Deleting your account removes your user profile and associated app data where legally permitted. Shared team records may require server-side cleanup afterward.
+        </Text>
+        <Pressable
+          onPress={onOpenDeleteAccount}
+          disabled={!visibleUser || authAction !== null}
+          style={({ pressed }) => [
+            styles.deleteBtn,
+            (!visibleUser || authAction !== null) ? styles.authBtnDisabled : null,
+            pressed ? { opacity: 0.92 } : null,
+          ]}
+        >
+          <Text style={styles.deleteBtnText}>Delete Account</Text>
+        </Pressable>
+        {!visibleUser ? <Text style={styles.deleteHint}>Sign in to access account deletion.</Text> : null}
       </View>
 
       <View style={styles.streakCard}>
@@ -667,36 +741,80 @@ export default function ProfileTab() {
         ) : null}
       </View>
 
-      <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.btnAlt, pressed ? { opacity: 0.9 } : null]}>
-        <Text style={styles.btnAltText}>Replay Welcome Screens</Text>
-      </Pressable>
-    </ScrollView>
+        <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.btnAlt, pressed ? { opacity: 0.9 } : null]}>
+          <Text style={styles.btnAltText}>Replay Welcome Screens</Text>
+        </Pressable>
+      </ScrollView>
+
+      <Modal visible={deleteModalVisible} transparent animationType="fade" onRequestClose={() => setDeleteModalVisible(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalEyebrow}>Delete Account</Text>
+            <Text style={styles.modalTitle}>Remove this Step Outside account?</Text>
+            <Text style={styles.modalBody}>
+              This permanently removes your signed-in profile and associated app data where legally permitted, including account-backed sessions, reflections, challenge progress, badges, and saved profile data.
+            </Text>
+            <Text style={styles.modalWarning}>
+              This action cannot be undone. For security, some shared company records may be cleaned up later by a server-side helper.
+            </Text>
+            {deleteStatus ? <Text style={styles.modalStatus}>{deleteStatus}</Text> : null}
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => {
+                  if (authAction === "deleteAccount") return;
+                  setDeleteModalVisible(false);
+                  setDeleteStatus("");
+                }}
+                style={({ pressed }) => [styles.modalCancelBtn, pressed ? { opacity: 0.9 } : null]}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void onDeleteAccount()}
+                disabled={authAction === "deleteAccount"}
+                style={({ pressed }) => [
+                  styles.modalDeleteBtn,
+                  authAction === "deleteAccount" ? styles.authBtnDisabled : null,
+                  pressed ? { opacity: 0.92 } : null,
+                ]}
+              >
+                <Text style={styles.modalDeleteText}>
+                  {authAction === "deleteAccount" ? "Deleting…" : "Permanently Delete My Account"}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
+    padding: PREMIUM.spacing.screen,
     paddingBottom: 32,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: PREMIUM.colors.cream,
     flexGrow: 1,
   },
-  title: { fontSize: 28, fontWeight: "900", color: "#0B0F0E" },
+  title: { fontSize: 34, lineHeight: 40, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
   sub: {
     marginTop: 10,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "rgba(11,15,14,0.65)",
-    lineHeight: 20,
+    fontSize: 15,
+    fontWeight: "600",
+    color: PREMIUM.colors.textMuted,
+    lineHeight: 22,
   },
   accountCard: {
     marginTop: 18,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.84),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
-    padding: 16,
+    borderColor: PREMIUM.colors.line,
+    padding: 18,
     gap: 14,
+    ...PREMIUM.shadow.soft,
   },
   accountHeader: {
     flexDirection: "row",
@@ -707,32 +825,34 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: "#255E36",
+    backgroundColor: PREMIUM.colors.forest,
     alignItems: "center",
     justifyContent: "center",
   },
   avatarText: {
-    color: "#FFFFFF",
+    color: PREMIUM.colors.offWhite,
     fontSize: 18,
     fontWeight: "900",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   accountCopy: {
     flex: 1,
     gap: 4,
   },
   accountTitle: {
-    color: "#0B0F0E",
-    fontSize: 18,
-    fontWeight: "900",
+    color: PREMIUM.colors.text,
+    fontSize: 22,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
   },
   accountBody: {
-    color: "rgba(11,15,14,0.76)",
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: "700",
+    color: alpha(PREMIUM.colors.text, 0.8),
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
   },
   accountMeta: {
-    color: "rgba(11,15,14,0.5)",
+    color: alpha(PREMIUM.colors.text, 0.54),
     fontSize: 12,
     lineHeight: 17,
     fontWeight: "700",
@@ -743,12 +863,12 @@ const styles = StyleSheet.create({
   },
   profileStatChip: {
     flex: 1,
-    borderRadius: 16,
+    borderRadius: PREMIUM.radius.md,
     paddingVertical: 12,
     paddingHorizontal: 12,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.10),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
+    borderColor: PREMIUM.colors.line,
   },
   profileStatLabel: {
     color: "rgba(11,15,14,0.55)",
@@ -759,8 +879,8 @@ const styles = StyleSheet.create({
   },
   profileStatValue: {
     marginTop: 6,
-    color: "#0B0F0E",
-    fontSize: 18,
+    color: PREMIUM.colors.text,
+    fontSize: 20,
     fontWeight: "900",
   },
   authLoadingRow: {
@@ -780,12 +900,12 @@ const styles = StyleSheet.create({
   },
   authInput: {
     minHeight: 50,
-    borderRadius: 14,
+    borderRadius: PREMIUM.radius.md,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderColor: PREMIUM.colors.line,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.72),
     paddingHorizontal: 14,
-    color: "#0B0F0E",
+    color: PREMIUM.colors.text,
     fontSize: 15,
     fontWeight: "700",
   },
@@ -796,29 +916,29 @@ const styles = StyleSheet.create({
   emailPrimaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 14,
-    backgroundColor: "#255E36",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.forest,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
   emailPrimaryBtnText: {
-    color: "#FFFFFF",
+    color: PREMIUM.colors.offWhite,
     fontWeight: "900",
   },
   emailSecondaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 14,
-    backgroundColor: "rgba(37,94,54,0.11)",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.12),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: PREMIUM.colors.lineStrong,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
   emailSecondaryBtnText: {
-    color: "#255E36",
+    color: PREMIUM.colors.forest,
     fontWeight: "900",
   },
   resetPasswordBtn: {
@@ -832,13 +952,13 @@ const styles = StyleSheet.create({
   },
   googleBtn: {
     minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: "#255E36",
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.forest,
     alignItems: "center",
     justifyContent: "center",
   },
   googleBtnText: {
-    color: "#FFFFFF",
+    color: PREMIUM.colors.offWhite,
     fontWeight: "900",
     letterSpacing: 0.3,
   },
@@ -907,11 +1027,11 @@ const styles = StyleSheet.create({
   streakCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: 18,
-    backgroundColor: "rgba(242,181,65,0.14)",
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.14),
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.24)",
-    padding: 14,
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.24),
+    padding: 18,
   },
   streakEyebrow: {
     color: "#8A5D09",
@@ -922,9 +1042,10 @@ const styles = StyleSheet.create({
   },
   streakTitle: {
     marginTop: 6,
-    color: "#0B0F0E",
-    fontWeight: "900",
-    fontSize: 18,
+    color: PREMIUM.colors.text,
+    fontWeight: "700",
+    fontSize: 22,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   streakBody: {
     marginTop: 8,
@@ -963,11 +1084,12 @@ const styles = StyleSheet.create({
   planCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: 18,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.12),
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
-    padding: 14,
+    borderColor: PREMIUM.colors.line,
+    padding: 18,
+    ...PREMIUM.shadow.soft,
   },
   planTopRow: {
     gap: 14,
@@ -981,9 +1103,10 @@ const styles = StyleSheet.create({
   },
   planTitle: {
     marginTop: 4,
-    color: "#0B0F0E",
-    fontWeight: "900",
-    fontSize: 20,
+    color: PREMIUM.colors.text,
+    fontWeight: "700",
+    fontSize: 24,
+    fontFamily: PREMIUM.type.serifFamily,
   },
   planBody: {
     marginTop: 6,
@@ -992,22 +1115,23 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   btn: {
-    backgroundColor: "#255E36",
+    backgroundColor: PREMIUM.colors.forest,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 14,
+    borderRadius: PREMIUM.radius.pill,
     alignSelf: "flex-start",
     maxWidth: "100%",
   },
-  btnText: { color: "white", fontWeight: "900", letterSpacing: 0.4 },
+  btnText: { color: PREMIUM.colors.offWhite, fontWeight: "900", letterSpacing: 0.4 },
   notificationsCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: 18,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.72),
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
-    padding: 14,
+    borderColor: PREMIUM.colors.line,
+    padding: 18,
+    borderRadius: PREMIUM.radius.xl,
+    ...PREMIUM.shadow.soft,
   },
   notificationsHeader: {
     flexDirection: "row",
@@ -1016,39 +1140,165 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 8,
   },
-  notificationsTitle: { fontWeight: "900", color: "#0B0F0E", marginBottom: 8, fontSize: 17 },
-  notificationsBody: { color: "rgba(11,15,14,0.62)", fontWeight: "700", lineHeight: 19, maxWidth: 240 },
+  notificationsTitle: { fontWeight: "700", color: PREMIUM.colors.text, marginBottom: 8, fontSize: 24, fontFamily: PREMIUM.type.serifFamily },
+  notificationsBody: { color: PREMIUM.colors.textMuted, fontWeight: "700", lineHeight: 20, maxWidth: 240 },
   reminderPill: {
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.12)",
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.12),
   },
   reminderPillText: {
-    color: "#255E36",
+    color: PREMIUM.colors.forest,
     fontWeight: "900",
     fontSize: 12,
   },
-  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingVertical: 8 },
+  settingsCard: {
+    marginTop: 14,
+    width: "100%",
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: alpha(PREMIUM.colors.danger, 0.05),
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.danger, 0.18),
+    padding: 18,
+    gap: 8,
+    ...PREMIUM.shadow.soft,
+  },
+  settingsEyebrow: {
+    color: "#A32727",
+    fontWeight: "900",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    fontSize: 11,
+  },
+  settingsTitle: {
+    color: PREMIUM.colors.text,
+    fontWeight: "700",
+    fontSize: 24,
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  settingsBody: {
+    color: PREMIUM.colors.textMuted,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  deleteBtn: {
+    marginTop: 6,
+    backgroundColor: "#B42318",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: PREMIUM.radius.pill,
+    alignSelf: "flex-start",
+  },
+  deleteBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  deleteHint: {
+    color: PREMIUM.colors.textSoft,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingVertical: 10 },
   rowCopy: { flex: 1 },
-  rowLabel: { fontWeight: "700", color: "rgba(11,15,14,0.75)" },
-  rowHint: { marginTop: 3, color: "rgba(11,15,14,0.55)", fontWeight: "600", fontSize: 12, lineHeight: 17 },
+  rowLabel: { fontWeight: "700", color: PREMIUM.colors.text },
+  rowHint: { marginTop: 3, color: PREMIUM.colors.textSoft, fontWeight: "600", fontSize: 12, lineHeight: 17 },
   testBtn: {
     marginTop: 8,
     alignSelf: "flex-start",
-    backgroundColor: "rgba(37,94,54,0.14)",
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.14),
     paddingVertical: 8,
     paddingHorizontal: 10,
-    borderRadius: 10,
+    borderRadius: PREMIUM.radius.pill,
   },
-  testBtnText: { color: "#255E36", fontWeight: "900" },
+  testBtnText: { color: PREMIUM.colors.forest, fontWeight: "900" },
   btnAlt: {
     marginTop: 12,
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: alpha(PREMIUM.colors.text, 0.08),
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 14,
+    borderRadius: PREMIUM.radius.pill,
     alignSelf: "flex-start",
   },
-  btnAltText: { color: "rgba(11,15,14,0.72)", fontWeight: "900", letterSpacing: 0.3 },
+  btnAltText: { color: PREMIUM.colors.textMuted, fontWeight: "900", letterSpacing: 0.3 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: alpha(PREMIUM.colors.text, 0.56),
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: PREMIUM.radius.hero,
+    backgroundColor: PREMIUM.colors.cream,
+    padding: 22,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    ...PREMIUM.shadow.hero,
+  },
+  modalEyebrow: {
+    color: "#A32727",
+    fontWeight: "900",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    fontSize: 11,
+  },
+  modalTitle: {
+    color: PREMIUM.colors.text,
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  modalBody: {
+    color: PREMIUM.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
+  },
+  modalWarning: {
+    color: PREMIUM.colors.danger,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  modalStatus: {
+    color: "#A32727",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+  },
+  modalActions: {
+    marginTop: 8,
+    gap: 10,
+  },
+  modalCancelBtn: {
+    minHeight: 48,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.text, 0.08),
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  modalCancelText: {
+    color: PREMIUM.colors.text,
+    fontWeight: "900",
+  },
+  modalDeleteBtn: {
+    minHeight: 52,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  modalDeleteText: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    textAlign: "center",
+  },
 });

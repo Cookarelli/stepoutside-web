@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PostWalkTabNav } from "../src/components/PostWalkTabNav";
 import { pickReflectionPrompt, saveReflection } from "../src/lib/reflections";
 
 function toBool(value: string | undefined): boolean {
@@ -38,9 +39,11 @@ export default function ReflectionScreen() {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [statusText, setStatusText] = useState("");
+  const [saveWarning, setSaveWarning] = useState("");
+  const [savedText, setSavedText] = useState("");
 
   const goToShare = (overrides?: { reflectionText?: string; saveWarning?: string }) => {
-    router.replace({
+    router.push({
       pathname: "/share" as never,
       params: {
         walkId,
@@ -58,12 +61,13 @@ export default function ReflectionScreen() {
     } as never);
   };
 
-  const onContinue = async () => {
+  const onSaveReflection = async () => {
     const trimmed = text.trim();
     if (!trimmed || saving) return;
 
     setSaving(true);
     setStatusText("");
+    setSaveWarning("");
 
     try {
       const result = await saveReflection({
@@ -77,26 +81,42 @@ export default function ReflectionScreen() {
       });
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      goToShare({
-        reflectionText: result.record.text,
-        saveWarning: result.warning,
-      });
+      setSavedText(result.record.text);
+      setSaveWarning(result.warning ?? "");
+      setStatusText(result.warning ?? "Reflection saved.");
     } catch {
+      setSavedText(trimmed);
+      setSaveWarning("Reflection wasn’t saved to storage this time.");
       setStatusText("Couldn’t save that reflection, but you can still keep moving.");
-      void Haptics.selectionAsync();
-      goToShare({
-        reflectionText: trimmed,
-        saveWarning: "Reflection wasn’t saved to storage this time.",
-      });
     } finally {
       setSaving(false);
     }
   };
 
-  const onSkip = () => {
+  const onShare = () => {
     void Haptics.selectionAsync();
-    goToShare();
+    goToShare({
+      reflectionText: text.trim() || savedText,
+      saveWarning,
+    });
   };
+
+  const navParams = useMemo(
+    () => ({
+      walkId,
+      startedAt: params.startedAt ?? "",
+      endedAt: params.endedAt ?? "",
+      durationSec: String(durationSec),
+      distanceM: String(distanceM),
+      source: params.source ?? "timer",
+      sunriseBonus: String(sunriseBonus),
+      sunsetBonus: String(sunsetBonus),
+      prompt,
+      reflectionText: text.trim() || savedText,
+      saveWarning,
+    }),
+    [distanceM, durationSec, params.endedAt, params.source, params.startedAt, prompt, saveWarning, savedText, sunriseBonus, sunsetBonus, text, walkId]
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
@@ -133,7 +153,7 @@ export default function ReflectionScreen() {
 
         <View style={styles.footerActions}>
           <Pressable
-            onPress={() => void onContinue()}
+            onPress={() => void onSaveReflection()}
             disabled={saving || text.trim().length === 0}
             style={({ pressed }) => [
               styles.primaryBtn,
@@ -141,15 +161,29 @@ export default function ReflectionScreen() {
               pressed ? { opacity: 0.94 } : null,
             ]}
           >
-            <Text style={styles.primaryBtnText}>{saving ? "SAVING…" : "CONTINUE"}</Text>
+            <Text style={styles.primaryBtnText}>{saving ? "SAVING…" : "SAVE REFLECTION"}</Text>
           </Pressable>
 
-          <Pressable
-            onPress={onSkip}
-            style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
-          >
-            <Text style={styles.secondaryBtnText}>SKIP</Text>
-          </Pressable>
+          <View style={styles.secondaryRow}>
+            <Pressable
+              onPress={onShare}
+              style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
+            >
+              <Text style={styles.secondaryBtnText}>SHARE WALK</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                void Haptics.selectionAsync();
+                router.replace("/(tabs)");
+              }}
+              style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
+            >
+              <Text style={styles.secondaryBtnText}>BACK HOME</Text>
+            </Pressable>
+          </View>
+
+          <PostWalkTabNav current="reflection" params={navParams} />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -244,6 +278,7 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   secondaryBtn: {
+    flex: 1,
     minHeight: 50,
     borderRadius: 16,
     backgroundColor: "rgba(11,15,14,0.06)",
@@ -256,5 +291,9 @@ const styles = StyleSheet.create({
     color: "#0B0F0E",
     fontWeight: "900",
     letterSpacing: 0.8,
+  },
+  secondaryRow: {
+    flexDirection: "row",
+    gap: 10,
   },
 });

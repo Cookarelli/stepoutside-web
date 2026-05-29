@@ -6,6 +6,15 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isCompanyAdmin(companyId) {
+      return isSignedIn() &&
+        request.auth.uid in get(/databases/$(database)/documents/companies/$(companyId)).data.adminUids;
+    }
+
     match /routes/{routeId} {
       allow read: if true;
       allow write: if false;
@@ -20,6 +29,55 @@ service cloud.firestore {
 
       match /reflections/{reflectionId} {
         allow read, write: if isOwner(uid);
+      }
+
+      match /challengeProgress/{challengeId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /badges/{badgeId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /memberships/{membershipId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    match /companies/{companyId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.adminUids;
+      allow update: if isCompanyAdmin(companyId);
+      allow delete: if false;
+
+      match /teams/{teamId} {
+        allow read: if isSignedIn();
+        allow create, update: if isCompanyAdmin(companyId);
+        allow delete: if false;
+      }
+
+      match /inviteCodes/{inviteCodeId} {
+        allow read: if isSignedIn();
+        allow create, update: if isCompanyAdmin(companyId);
+        allow delete: if false;
+      }
+
+      match /members/{memberUid} {
+        allow read: if isSignedIn();
+        allow create, update: if isOwner(memberUid) || isCompanyAdmin(companyId);
+        allow delete: if false;
+      }
+
+      match /challengeInstances/{instanceId} {
+        allow read: if isSignedIn();
+        allow create, update: if isCompanyAdmin(companyId);
+        allow delete: if false;
+      }
+
+      match /challengeProgress/{progressId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+        allow delete: if false;
       }
     }
   }

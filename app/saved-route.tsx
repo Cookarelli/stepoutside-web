@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { RoutePreview } from "../src/components/RoutePreview";
+import { NativeRouteMapCard } from "../src/components/NativeRouteMapCard";
 import { getSessionById, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../src/lib/store";
 
 function fmtDate(ts: number): string {
@@ -114,7 +114,7 @@ export default function SavedRouteScreen() {
 
             {session.routePoints && session.routePoints.length > 1 ? (
               <View style={styles.previewWrap}>
-                <RoutePreview
+                <NativeRouteMapCard
                   points={session.routePoints}
                   title="Saved GPS route map"
                   subtitle="Captured from your Premium activity history"

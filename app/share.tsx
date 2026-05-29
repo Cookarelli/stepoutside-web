@@ -1,10 +1,11 @@
 import * as Haptics from "expo-haptics";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, Share, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { RoutePreview } from "../src/components/RoutePreview";
+import { NativeRouteMapCard } from "../src/components/NativeRouteMapCard";
+import { PostWalkTabNav } from "../src/components/PostWalkTabNav";
 import { getSessionById, saveSessionRouteForLater, type OutsideSession } from "../src/lib/store";
 
 function toBool(value: string | undefined): boolean {
@@ -27,11 +28,14 @@ function fmtDistance(distanceM: number): string {
 }
 
 export default function ShareScreen() {
-  const router = useRouter();
   const params = useLocalSearchParams<{
     walkId?: string;
+    startedAt?: string;
+    endedAt?: string;
     durationSec?: string;
     distanceM?: string;
+    source?: string;
+    prompt?: string;
     sunriseBonus?: string;
     sunsetBonus?: string;
     reflectionText?: string;
@@ -85,6 +89,35 @@ export default function ShareScreen() {
     if (reflectionText) lines.push(`Reflection: "${reflectionText}"`);
     return lines.join("\n");
   }, [reflectionText, session?.routePoints?.length, summaryLine, sunriseBonus, sunsetBonus]);
+
+  const navParams = useMemo(
+    () => ({
+      walkId,
+      startedAt: params.startedAt ?? "",
+      endedAt: params.endedAt ?? "",
+      durationSec: String(durationSec),
+      distanceM: String(distanceM),
+      source: params.source ?? "timer",
+      prompt: params.prompt ?? "",
+      sunriseBonus: String(sunriseBonus),
+      sunsetBonus: String(sunsetBonus),
+      reflectionText,
+      saveWarning,
+    }),
+    [
+      distanceM,
+      durationSec,
+      params.endedAt,
+      params.prompt,
+      params.source,
+      params.startedAt,
+      reflectionText,
+      saveWarning,
+      sunriseBonus,
+      sunsetBonus,
+      walkId,
+    ]
+  );
 
   const onShare = async () => {
     setSharing(true);
@@ -146,7 +179,7 @@ export default function ShareScreen() {
 
         {session?.routePoints && session.routePoints.length > 1 ? (
           <View style={styles.routeWrap}>
-            <RoutePreview points={session.routePoints} title="Walk route" subtitle="Captured from this reset" />
+            <NativeRouteMapCard points={session.routePoints} title="Walk route" subtitle="Captured from this reset" />
           </View>
         ) : null}
 
@@ -197,26 +230,8 @@ export default function ShareScreen() {
         >
           <Text style={styles.primaryBtnText}>{sharing ? "OPENING SHARE…" : "SHARE"}</Text>
         </Pressable>
-
-        <Pressable
-          onPress={() => {
-            void Haptics.selectionAsync();
-            router.replace("/(tabs)");
-          }}
-          style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
-        >
-          <Text style={styles.secondaryBtnText}>BACK HOME</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => {
-            void Haptics.selectionAsync();
-            router.push("/stats");
-          }}
-          style={({ pressed }) => [styles.tertiaryBtn, pressed ? { opacity: 0.9 } : null]}
-        >
-          <Text style={styles.tertiaryBtnText}>VIEW STATS</Text>
-        </Pressable>
+        <Text style={styles.navLabel}>Keep moving</Text>
+        <PostWalkTabNav current="share" params={navParams} />
       </View>
     </SafeAreaView>
   );
@@ -384,30 +399,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 1,
   },
-  secondaryBtn: {
-    marginTop: 10,
-    minWidth: 240,
-    minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: "rgba(11,15,14,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  secondaryBtnText: {
-    color: "#0B0F0E",
+  navLabel: {
+    marginTop: 16,
+    color: "rgba(11,15,14,0.56)",
+    fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
-  },
-  tertiaryBtn: {
-    marginTop: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  tertiaryBtnText: {
-    color: "rgba(11,15,14,0.68)",
-    fontWeight: "900",
-    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
 });

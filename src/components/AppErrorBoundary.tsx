@@ -39,7 +39,7 @@ export class AppErrorBoundary extends React.Component<AppErrorBoundaryProps, App
           <Text style={styles.body}>
             The app hit an unexpected state. Retry this screen instead of crashing the whole app.
           </Text>
-          {this.state.message ? <Text style={styles.debugText}>{this.state.message}</Text> : null}
+          {__DEV__ && this.state.message ? <Text style={styles.debugText}>{this.state.message}</Text> : null}
           <Pressable
             style={styles.button}
             onPress={() => {

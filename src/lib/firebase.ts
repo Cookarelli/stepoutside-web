@@ -2,6 +2,8 @@ import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, initializeAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 
+console.log("[BOOT] firebase.ts loaded");
+
 function envOrFallback(name: keyof NodeJS.ProcessEnv, fallback: string): string {
   const value =
     name === "EXPO_PUBLIC_FIREBASE_API_KEY"
@@ -17,6 +19,10 @@ function envOrFallback(name: keyof NodeJS.ProcessEnv, fallback: string): string 
       : name === "EXPO_PUBLIC_FIREBASE_APP_ID"
       ? process.env.EXPO_PUBLIC_FIREBASE_APP_ID
       : process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID;
+
+  if (__DEV__ && !value) {
+    console.warn(`[Firebase] Missing ${name}; using preview fallback.`);
+  }
 
   return value || fallback;
 }
@@ -36,6 +42,12 @@ const firebaseConfig = {
  * Firebase App (single instance across fast refresh)
  */
 export const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+if (__DEV__) {
+  console.log("[BOOT] Firebase initialized", {
+    projectId: firebaseConfig.projectId,
+    usingFallbackProject: firebaseConfig.projectId === "stepoutside-preview",
+  });
+}
 
 /**
  * Firebase Auth

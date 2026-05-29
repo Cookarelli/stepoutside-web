@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { Animated, Easing, Image, StyleSheet, View } from "react-native";
 
 import { hasActiveWalkSnapshot } from "../src/lib/activeWalk";
-import { refreshScheduledReminders } from "../src/lib/notifications";
 import { hasCompletedOnboarding } from "../src/lib/onboarding";
 
 const QUOTES = [
@@ -33,8 +32,7 @@ export default function SplashScreen() {
 
   useEffect(() => {
     let alive = true;
-
-    void refreshScheduledReminders();
+    console.log("[BOOT] splash screen mounted");
 
     Animated.parallel([
       Animated.timing(logoScale, {

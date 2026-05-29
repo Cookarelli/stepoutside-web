@@ -31,6 +31,7 @@ export type ProPaywallCatalog = {
   source: "live" | "fallback" | "empty" | "error";
   offeringId: string | null;
   packages: ProPaywallPackage[];
+  missingPlans: ProPlan[];
   errorMessage: string | null;
 };
 
@@ -38,10 +39,12 @@ export type PremiumStatus = {
   isPremium: boolean;
   customerInfo: CustomerInfo | null;
   error: Error | null;
+  source: "revenuecat" | "cached" | "override" | "unavailable";
+  overrideReason: string | null;
 };
 
 export const PRO_PRODUCT_IDS = {
-  monthly: "stepoutside_pro_monthly",
+  monthly: "step_outside_pro_monthly",
   yearly: "stepoutside_pro_yearly",
   lifetime: "stepoutside_pro_lifetime_launch",
 } as const;
@@ -70,6 +73,42 @@ function derivePlan(productId: string | null): ProPlan | null {
   if (productId === PRO_PRODUCT_IDS.yearly) return "yearly";
   if (productId === PRO_PRODUCT_IDS.lifetime) return "lifetime";
   return null;
+}
+
+function getPremiumOverrideState(): { state: ProState; reason: string } | null {
+  // Developer-only screenshot/testing helper. Leave the env vars unset in production
+  // so real Premium access always comes from RevenueCat entitlements.
+  if (!ENV.DEV.enablePremiumTestOverride) return null;
+
+  const plan = ENV.DEV.premiumOverridePlan ?? ENV.DEV.premiumOverridePlanDefault;
+
+  const currentUser = auth.currentUser;
+  const email = currentUser?.email?.trim().toLowerCase() ?? null;
+  const uid = currentUser?.uid?.trim().toLowerCase() ?? null;
+  const allowlistedEmail = email ? ENV.DEV.premiumOverrideEmails.includes(email) : false;
+  const allowlistedUid = uid ? ENV.DEV.premiumOverrideUids.includes(uid) : false;
+  const allowAnonymous = !currentUser && ENV.DEV.premiumOverrideAllowAnonymous;
+
+  if (!allowlistedEmail && !allowlistedUid && !allowAnonymous) return null;
+
+  return {
+    state: {
+      isPro: true,
+      plan,
+      productId: PRO_PRODUCT_IDS[plan],
+      updatedAt: Date.now(),
+    },
+    reason: allowlistedEmail
+      ? `Premium screenshot override enabled for ${email}`
+      : allowlistedUid
+        ? "Premium screenshot override enabled for allowlisted account"
+        : "Premium screenshot override enabled for anonymous local testing",
+  };
+}
+
+function withPremiumOverride(state: ProState): ProState {
+  const override = getPremiumOverrideState();
+  return override?.state ?? state;
 }
 
 function mapCustomerInfoToPro(info: CustomerInfo): ProState {
@@ -133,8 +172,14 @@ async function logRevenueCatOfferings(offerings: Awaited<ReturnType<typeof Purch
     const appUserID = await Purchases.getAppUserID();
     const currentOffering = offerings.current;
     const packages = currentOffering?.availablePackages ?? [];
+    const allOfferings = Object.values(offerings.all ?? {});
     const productIdentifiers = packages.map((pkg) => pkg.product.identifier);
     const missingProductIds = Object.values(PRO_PRODUCT_IDS).filter((productId) => !productIdentifiers.includes(productId));
+    const allOfferingPackageMap = allOfferings.map((offering) => ({
+      identifier: offering.identifier,
+      packageIdentifiers: offering.availablePackages.map((pkg) => pkg.identifier),
+      productIdentifiers: offering.availablePackages.map((pkg) => pkg.product.identifier),
+    }));
 
     console.info("[RevenueCat] offerings", {
       appUserID,
@@ -142,6 +187,7 @@ async function logRevenueCatOfferings(offerings: Awaited<ReturnType<typeof Purch
       packageIdentifiers: packages.map((pkg) => pkg.identifier),
       productIdentifiers,
       priceStrings: packages.map((pkg) => pkg.product.priceString),
+      allOfferings: allOfferingPackageMap,
     });
 
     if (missingProductIds.length > 0) {
@@ -152,6 +198,71 @@ async function logRevenueCatOfferings(offerings: Awaited<ReturnType<typeof Purch
   } catch (error) {
     console.warn("[RevenueCat] offerings log unavailable", error);
   }
+}
+
+function getPackageFromOfferingByPlan(offering: PurchasesOffering | null, plan: ProPlan): PurchasesPackage | null {
+  if (!offering) return null;
+
+  const direct =
+    plan === "monthly"
+      ? offering.monthly
+      : plan === "yearly"
+        ? offering.annual
+        : offering.lifetime;
+
+  if (direct) return direct;
+
+  const productId = PRO_PRODUCT_IDS[plan];
+  return (
+    offering.availablePackages.find((pkg) => {
+      const identifier = pkg.identifier.toLowerCase();
+      const productIdentifier = pkg.product.identifier.toLowerCase();
+      if (productIdentifier === productId) return true;
+      if (identifier === productId) return true;
+      if (plan === "monthly") return identifier.includes("month") || productIdentifier.includes("month");
+      if (plan === "yearly") return identifier.includes("year") || identifier.includes("annual") || productIdentifier.includes("year");
+      return identifier.includes("lifetime") || identifier.includes("launch") || productIdentifier.includes("lifetime");
+    }) ?? null
+  );
+}
+
+function getPackageForPlanAcrossOfferings(
+  offerings: Awaited<ReturnType<typeof Purchases.getOfferings>>,
+  plan: ProPlan
+): { rcPackage: PurchasesPackage | null; offeringId: string | null; fromCurrentOffering: boolean } {
+  const current = getPackageFromOfferingByPlan(offerings.current, plan);
+  if (current) {
+    return {
+      rcPackage: current,
+      offeringId: offerings.current?.identifier ?? null,
+      fromCurrentOffering: true,
+    };
+  }
+
+  for (const offering of Object.values(offerings.all ?? {})) {
+    const match = getPackageFromOfferingByPlan(offering, plan);
+    if (match) {
+      if (__DEV__) {
+        console.warn("[RevenueCat] package found outside current offering", {
+          requestedPlan: plan,
+          currentOfferingId: offerings.current?.identifier ?? null,
+          fallbackOfferingId: offering.identifier,
+          productIdentifier: match.product.identifier,
+        });
+      }
+      return {
+        rcPackage: match,
+        offeringId: offering.identifier,
+        fromCurrentOffering: false,
+      };
+    }
+  }
+
+  return {
+    rcPackage: null,
+    offeringId: null,
+    fromCurrentOffering: false,
+  };
 }
 
 export async function initRevenueCat(): Promise<boolean> {
@@ -191,7 +302,9 @@ export async function syncRevenueCatIdentity(appUserID: string | null): Promise<
       ? (await Purchases.logIn(appUserID)).customerInfo
       : await Purchases.logOut();
 
-    return await persist(mapCustomerInfoToPro(info));
+    const next = mapCustomerInfoToPro(info);
+    await persist(next);
+    return withPremiumOverride(next);
   } catch {
     return await getProState();
   }
@@ -199,17 +312,17 @@ export async function syncRevenueCatIdentity(appUserID: string | null): Promise<
 
 export async function getProState(): Promise<ProState> {
   const raw = await AsyncStorage.getItem(KEY_PRO_STATE);
-  if (!raw) return DEFAULT_PRO_STATE;
+  if (!raw) return withPremiumOverride(DEFAULT_PRO_STATE);
   try {
     const parsed = JSON.parse(raw) as ProState;
-    return {
+    return withPremiumOverride({
       isPro: Boolean(parsed?.isPro),
       plan: parsed?.plan ?? null,
       productId: parsed?.productId ?? null,
       updatedAt: parsed?.updatedAt ?? null,
-    };
+    });
   } catch {
-    return DEFAULT_PRO_STATE;
+    return withPremiumOverride(DEFAULT_PRO_STATE);
   }
 }
 
@@ -220,21 +333,26 @@ export async function refreshProState(): Promise<ProState> {
 
     const info = await Purchases.getCustomerInfo();
     const next = mapCustomerInfoToPro(info);
-    return await persist(next);
+    await persist(next);
+    return withPremiumOverride(next);
   } catch {
     return await getProState();
   }
 }
 
 export async function getPremiumStatus(): Promise<PremiumStatus> {
+  const override = getPremiumOverrideState();
+
   try {
     const ready = await initRevenueCat();
     if (!ready) {
       const cached = await getProState();
       return {
-        isPremium: cached.isPro,
+        isPremium: override?.state.isPro ?? cached.isPro,
         customerInfo: null,
         error: null,
+        source: override ? "override" : "cached",
+        overrideReason: override?.reason ?? null,
       };
     }
 
@@ -243,16 +361,20 @@ export async function getPremiumStatus(): Promise<PremiumStatus> {
     await persist(next);
 
     return {
-      isPremium: next.isPro,
+      isPremium: override?.state.isPro ?? next.isPro,
       customerInfo,
       error: null,
+      source: override ? "override" : "revenuecat",
+      overrideReason: override?.reason ?? null,
     };
   } catch (error) {
     const cached = await getProState();
     return {
-      isPremium: cached.isPro,
+      isPremium: override?.state.isPro ?? cached.isPro,
       customerInfo: null,
       error: normalizeError(error, "We couldn't confirm Premium access right now."),
+      source: override ? "override" : "cached",
+      overrideReason: override?.reason ?? null,
     };
   }
 }
@@ -275,25 +397,8 @@ export async function setProFromPlan(plan: ProPlan): Promise<ProState> {
     productId,
     updatedAt: Date.now(),
   };
-  return await persist(next);
-}
-
-function getPackageForPlan(offering: PurchasesOffering | null, plan: ProPlan): PurchasesPackage | null {
-  if (!offering) return null;
-
-  const direct =
-    plan === "monthly"
-      ? offering.monthly
-      : plan === "yearly"
-        ? offering.annual
-        : offering.lifetime;
-
-  if (direct) return direct;
-
-  const productId = PRO_PRODUCT_IDS[plan];
-  return (
-    offering.availablePackages.find((pkg) => pkg.product.identifier === productId || pkg.identifier === productId) ?? null
-  );
+  await persist(next);
+  return withPremiumOverride(next);
 }
 
 function buildLivePaywallPackage(
@@ -307,7 +412,7 @@ function buildLivePaywallPackage(
       plan,
       title: "Step Outside Premium",
       periodLabel: "Monthly subscription",
-      priceLabel: product.priceString || "$X.XX/month",
+      priceLabel: product.priceString || "See App Store price",
       detail: "Billed monthly through Apple.",
       badge: null,
       productId: product.identifier,
@@ -322,7 +427,7 @@ function buildLivePaywallPackage(
       plan,
       title: "Step Outside Premium",
       periodLabel: "Annual subscription",
-      priceLabel: product.priceString || "$X.XX/year",
+      priceLabel: product.priceString || "See App Store price",
       detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually.` : "Billed annually through Apple.",
       badge: "Best Value",
       productId: product.identifier,
@@ -334,7 +439,7 @@ function buildLivePaywallPackage(
     plan,
     title: "Lifetime",
     periodLabel: "One-time purchase",
-    priceLabel: product.priceString || "$X.XX",
+    priceLabel: product.priceString || "See App Store price",
     detail: "one-time purchase",
     badge: "Launch",
     productId: product.identifier,
@@ -350,7 +455,8 @@ export async function getPaywallCatalog(): Promise<ProPaywallCatalog> {
       source: "error",
       offeringId: null,
       packages: [],
-      errorMessage: "Purchases are not available in this build yet. Verify the RevenueCat API key and native purchase setup.",
+      missingPlans: [...PAYWALL_PLANS],
+      errorMessage: "Purchases aren't available right now. Please try again later.",
     };
   }
 
@@ -364,17 +470,21 @@ export async function getPaywallCatalog(): Promise<ProPaywallCatalog> {
         source: "empty",
         offeringId: null,
         packages: [],
-        errorMessage: "No active RevenueCat offering is available for this build yet.",
+        missingPlans: [...PAYWALL_PLANS],
+        errorMessage: "Subscription plans aren't available right now. Please try again in a moment.",
       };
     }
 
     const packages = PAYWALL_PLANS.flatMap((plan) => {
-      const rcPackage = getPackageForPlan(offering, plan);
-      if (!rcPackage) {
+      const match = getPackageForPlanAcrossOfferings(offerings, plan);
+      if (!match.rcPackage) {
+        if (__DEV__ && plan === "monthly") {
+          console.warn("[RevenueCat] Monthly plan missing from all offerings. Check the RevenueCat dashboard offering/package mapping.");
+        }
         return [];
       }
 
-      return [buildLivePaywallPackage(plan, rcPackage)];
+      return [buildLivePaywallPackage(plan, match.rcPackage)];
     });
 
     if (packages.length === 0) {
@@ -383,7 +493,8 @@ export async function getPaywallCatalog(): Promise<ProPaywallCatalog> {
         source: "empty",
         offeringId: offering.identifier,
         packages: [],
-        errorMessage: `RevenueCat offering "${offering.identifier}" is active, but it does not contain any purchasable packages for this app.`,
+        missingPlans: [...PAYWALL_PLANS],
+        errorMessage: "Subscription plans aren't available right now. Please try again in a moment.",
       };
     }
 
@@ -394,6 +505,7 @@ export async function getPaywallCatalog(): Promise<ProPaywallCatalog> {
       source: "live",
       offeringId: offering.identifier,
       packages,
+      missingPlans,
       errorMessage:
         missingPlans.length > 0 ? `Some plans are unavailable right now: ${missingPlans.join(", ")}.` : null,
     };
@@ -403,7 +515,8 @@ export async function getPaywallCatalog(): Promise<ProPaywallCatalog> {
       source: "error",
       offeringId: null,
       packages: [],
-      errorMessage: "We couldn't load live subscription plans from RevenueCat. Please try again in a moment.",
+      missingPlans: [...PAYWALL_PLANS],
+      errorMessage: "We couldn't load subscription plans right now. Please try again in a moment.",
     };
   }
 }
@@ -425,7 +538,7 @@ export async function purchaseProPlan(plan: ProPlan, rcPackage?: PurchasesPackag
   }
 
   const offerings = await Purchases.getOfferings();
-  const livePackage = getPackageForPlan(offerings.current, plan);
+  const livePackage = getPackageForPlanAcrossOfferings(offerings, plan).rcPackage;
   if (livePackage) {
     const result = await Purchases.purchasePackage(livePackage);
     return await persist(mapCustomerInfoToPro(result.customerInfo));
