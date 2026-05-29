@@ -1168,9 +1168,11 @@ const styles = StyleSheet.create({
   mapBtn: {
     alignSelf: "flex-start",
     backgroundColor: BRAND.sunrise,
-    borderRadius: 12,
+    borderRadius: PREMIUM.radius.pill,
+    minHeight: 46,
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
+    justifyContent: "center",
   },
   mapBtnText: {
     fontWeight: "900",
@@ -1179,11 +1181,13 @@ const styles = StyleSheet.create({
   saveBtn: {
     alignSelf: "flex-start",
     backgroundColor: "rgba(248,244,238,0.10)",
-    borderRadius: 12,
+    borderRadius: PREMIUM.radius.pill,
+    minHeight: 46,
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: "rgba(248,244,238,0.12)",
+    justifyContent: "center",
   },
   saveBtnActive: {
     backgroundColor: "rgba(242,181,65,0.18)",

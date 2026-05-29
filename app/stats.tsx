@@ -527,7 +527,7 @@ export default function StatsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
+  safe: { flex: 1, backgroundColor: PREMIUM.colors.cream },
   container: { flex: 1, paddingHorizontal: PREMIUM.spacing.lg },
 
   header: {
@@ -539,7 +539,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   headerLeft: { flexDirection: "row", alignItems: "center" },
-  headerTitle: { marginLeft: 10, fontSize: 22, fontWeight: "900" },
+  headerTitle: { marginLeft: 10, fontSize: 26, lineHeight: 32, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
   
 
   backBtn: {
