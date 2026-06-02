@@ -4,7 +4,6 @@ import {
   Animated,
   Easing,
   Modal,
-  Pressable,
   StyleSheet,
   Text,
   View,
@@ -12,22 +11,32 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { NextUpCard } from "./NextUpCard";
+import { StepButton } from "./StepButton";
 import { getBadgeArtSourceForBadge } from "../lib/challenges/badgeArt";
+import type { NextUpMilestone } from "../lib/challenges/nextUp";
 import type { BadgeDefinition } from "../lib/challenges/types";
 import { PREMIUM, alpha } from "../lib/premiumTheme";
 
 type BadgeRevealSplashProps = {
   badge: BadgeDefinition | null;
+  nextUp?: NextUpMilestone | null;
   queuePosition?: number;
   queueTotal?: number;
   onContinue: () => void;
 };
 
-export function BadgeRevealSplash({ badge, queuePosition = 1, queueTotal = 1, onContinue }: BadgeRevealSplashProps) {
+export function BadgeRevealSplash({
+  badge,
+  nextUp = null,
+  queuePosition = 1,
+  queueTotal = 1,
+  onContinue,
+}: BadgeRevealSplashProps) {
   const opacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.35)).current;
-  const rotation = useRef(new Animated.Value(0)).current;
-  const glow = useRef(new Animated.Value(0.4)).current;
+  const scale = useRef(new Animated.Value(0.85)).current;
+  const translateY = useRef(new Animated.Value(18)).current;
+  const glow = useRef(new Animated.Value(0.24)).current;
 
   const source: ImageSourcePropType | null = useMemo(
     () => (badge ? getBadgeArtSourceForBadge(badge) : null),
@@ -38,43 +47,45 @@ export function BadgeRevealSplash({ badge, queuePosition = 1, queueTotal = 1, on
     if (!badge) return;
 
     opacity.setValue(0);
-    scale.setValue(0.35);
-    rotation.setValue(0);
-    glow.setValue(0.4);
+    scale.setValue(0.85);
+    translateY.setValue(18);
+    glow.setValue(0.24);
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const intro = Animated.parallel([
       Animated.timing(opacity, {
         toValue: 1,
-        duration: 220,
+        duration: 260,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
-      Animated.timing(rotation, {
-        toValue: 1,
-        duration: 920,
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 420,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.spring(scale, {
-        toValue: 1.04,
-        speed: 10,
-        bounciness: 4,
+        toValue: 1,
+        damping: 12,
+        stiffness: 150,
+        mass: 0.9,
         useNativeDriver: true,
       }),
       Animated.timing(glow, {
         toValue: 1,
-        duration: 640,
+        duration: 600,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
     ]);
 
-    const settle = Animated.spring(scale, {
-      toValue: 1,
-      speed: 10,
-      bounciness: 5,
+    const settle = Animated.spring(glow, {
+      toValue: 0.9,
+      damping: 14,
+      stiffness: 130,
+      mass: 1,
       useNativeDriver: true,
     });
 
@@ -83,23 +94,18 @@ export function BadgeRevealSplash({ badge, queuePosition = 1, queueTotal = 1, on
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       }
     });
-  }, [badge, glow, opacity, rotation, scale]);
+  }, [badge, glow, opacity, scale, translateY]);
 
   if (!badge || !source) return null;
 
-  const rotate = rotation.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "540deg"],
-  });
-
   const glowScale = glow.interpolate({
-    inputRange: [0.4, 1],
-    outputRange: [0.88, 1.16],
+    inputRange: [0.24, 1],
+    outputRange: [0.88, 1.12],
   });
 
   const glowOpacity = glow.interpolate({
-    inputRange: [0.4, 1],
-    outputRange: [0.24, 0.54],
+    inputRange: [0.24, 1],
+    outputRange: [0.2, 0.44],
   });
 
   return (
@@ -119,16 +125,24 @@ export function BadgeRevealSplash({ badge, queuePosition = 1, queueTotal = 1, on
               styles.card,
               {
                 opacity,
-                transform: [{ scale }, { rotate }],
+                transform: [{ translateY }, { scale }],
               },
             ]}
           >
             <Text style={styles.eyebrow}>Badge unlocked</Text>
-            <Text style={styles.title}>{badge.title}</Text>
-            <View style={styles.artPlate}>
+            <Text style={styles.title}>{badge.title} earned</Text>
+            <Text style={styles.body}>You showed up. That counts.</Text>
+            <View style={styles.artStage}>
+              <Animated.View
+                style={[
+                  styles.innerGlow,
+                  badge.accent === "sunrise" ? styles.innerGlowSunrise : styles.innerGlowForest,
+                  { opacity: glowOpacity, transform: [{ scale: glowScale }] },
+                ]}
+              />
               <Animated.Image source={source} resizeMode="contain" style={styles.art} />
             </View>
-            <Text style={styles.body}>{badge.description}</Text>
+            {nextUp ? <NextUpCard nextUp={nextUp} compact /> : null}
             {queueTotal > 1 ? (
               <Text style={styles.queueLabel}>
                 Badge {queuePosition} of {queueTotal}
@@ -136,9 +150,12 @@ export function BadgeRevealSplash({ badge, queuePosition = 1, queueTotal = 1, on
             ) : null}
           </Animated.View>
 
-          <Pressable style={styles.cta} onPress={onContinue}>
-            <Text style={styles.ctaText}>{queuePosition < queueTotal ? "NEXT BADGE" : "CONTINUE"}</Text>
-          </Pressable>
+          <StepButton
+            label={queuePosition < queueTotal ? "SEE NEXT UNLOCK" : "KEEP GOING"}
+            onPress={onContinue}
+            fullWidth
+            style={styles.cta}
+          />
         </View>
       </SafeAreaView>
     </Modal>
@@ -155,7 +172,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
-    gap: 22,
+    gap: 18,
     backgroundColor: "rgba(11,15,14,0.74)",
   },
   glow: {
@@ -200,18 +217,28 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontFamily: PREMIUM.type.serifFamily,
   },
-  artPlate: {
+  artStage: {
     width: "100%",
-    minHeight: 240,
-    borderRadius: 26,
-    paddingVertical: 10,
+    minHeight: 212,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.08),
+  },
+  innerGlow: {
+    position: "absolute",
+    width: 184,
+    height: 184,
+    borderRadius: 999,
+  },
+  innerGlowForest: {
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.16),
+  },
+  innerGlowSunrise: {
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.24),
   },
   art: {
-    width: "100%",
-    height: 220,
+    width: 230,
+    height: 230,
+    backgroundColor: "transparent",
   },
   body: {
     color: PREMIUM.colors.textMuted,
@@ -227,17 +254,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   cta: {
-    minWidth: 220,
-    borderRadius: 999,
-    backgroundColor: PREMIUM.colors.forest,
-    paddingVertical: 15,
-    paddingHorizontal: 26,
-    alignItems: "center",
-  },
-  ctaText: {
-    color: PREMIUM.colors.offWhite,
-    fontSize: 14,
-    fontWeight: "900",
-    letterSpacing: 1,
+    maxWidth: 320,
   },
 });

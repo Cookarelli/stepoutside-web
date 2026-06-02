@@ -14,8 +14,11 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { usePremiumAccess } from "../../hooks/use-premium-access";
+import { NextUpCard } from "../../src/components/NextUpCard";
+import { StepButton } from "../../src/components/StepButton";
 import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
+import { getNextUpMilestone, type NextUpMilestone } from "../../src/lib/challenges/nextUp";
 import {
   cacheRouteSuggestions,
   getRouteSuggestionsByZip,
@@ -23,6 +26,7 @@ import {
   normalizeZip,
   type RouteSuggestion,
 } from "../../src/lib/routeCatalog";
+import { readLocalChallengeSnapshot } from "../../src/lib/challenges/storage";
 import { dayKeyLocal, EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
 
 const BRAND = {
@@ -236,6 +240,7 @@ export default function HomeTab() {
   const [summary, setSummary] = useState<SummaryStats>(EMPTY_SUMMARY);
   const [dailySpark, setDailySpark] = useState<DailySpark | null>(null);
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
+  const [nextUpGoal, setNextUpGoal] = useState<NextUpMilestone | null>(null);
   const [featuredReset, setFeaturedReset] = useState<FeaturedReset>({
     route: null,
     sourceLine: "Looking for a nearby reset…",
@@ -268,9 +273,15 @@ export default function HomeTab() {
   const loadHome = useCallback(async () => {
     setLoadingContext(true);
 
-    const [summaryResult] = await Promise.allSettled([getSummary()]);
+    const [summaryResult, snapshotResult] = await Promise.allSettled([
+      getSummary(),
+      readLocalChallengeSnapshot(),
+    ]);
 
     setSummary(summaryResult.status === "fulfilled" ? summaryResult.value : EMPTY_SUMMARY);
+    setNextUpGoal(
+      snapshotResult.status === "fulfilled" ? getNextUpMilestone(snapshotResult.value) : null
+    );
     setDailySpark(getDailySpark(new Date()));
 
     let nextWeather: WeatherSnapshot | null = null;
@@ -354,15 +365,13 @@ export default function HomeTab() {
             {todayMinutes > 0 ? "You already have credit for today. Another short reset still counts." : "Your next best step is a short walk."}
           </Text>
 
-          <Pressable
+          <StepButton
+            label="START WALK"
             onPress={() => router.push("/walk")}
-            style={({ pressed }) => [
-              styles.primaryCta,
-              pressed ? { opacity: 0.96, transform: [{ scale: 0.99 }] } : null,
-            ]}
-          >
-            <Text style={styles.primaryCtaText}>START WALK</Text>
-          </Pressable>
+            tone="gold"
+            fullWidth
+            style={styles.primaryCta}
+          />
 
           <View style={styles.heroMetricsRow}>
             <View style={styles.heroMetricChip}>
@@ -455,6 +464,12 @@ export default function HomeTab() {
               </View>
             </View>
           ) : null}
+
+          {nextUpGoal ? (
+            <View style={styles.nextUpWrap}>
+              <NextUpCard nextUp={nextUpGoal} />
+            </View>
+          ) : null}
         </View>
 
         {dailySpark ? (
@@ -487,31 +502,30 @@ export default function HomeTab() {
               <Text style={styles.resetNote}>{featuredReset.sourceLine}</Text>
 
               <View style={styles.resetActions}>
-                <Pressable
+                <StepButton
                   style={styles.resetPrimaryBtn}
                   onPress={() => void openInMaps(featuredReset.route as RouteSuggestion)}
-                >
-                  <Text style={styles.resetPrimaryBtnText}>OPEN IN MAPS</Text>
-                </Pressable>
+                  label="OPEN IN MAPS"
+                />
 
-                <Pressable
+                <StepButton
                   style={styles.resetSecondaryBtn}
                   onPress={() => router.push("/(tabs)/steps")}
-                >
-                  <Text style={styles.resetSecondaryBtnText}>SEE ALL RESETS</Text>
-                </Pressable>
+                  label="SEE ALL RESETS"
+                  variant="secondary"
+                />
               </View>
             </>
           ) : (
             <>
               <Text style={styles.resetTitle}>No nearby reset loaded yet</Text>
               <Text style={styles.resetNote}>{featuredReset.sourceLine}</Text>
-              <Pressable
+              <StepButton
                 style={styles.resetSecondaryBtnSolo}
                 onPress={() => router.push("/(tabs)/steps")}
-              >
-                <Text style={styles.resetSecondaryBtnText}>BROWSE RESETS</Text>
-              </Pressable>
+                label="BROWSE RESETS"
+                variant="secondary"
+              />
             </>
           )}
         </View>
@@ -525,12 +539,11 @@ export default function HomeTab() {
               intentional daily practice.
             </Text>
 
-            <Pressable
+            <StepButton
               style={styles.proButton}
               onPress={() => router.push("/pro")}
-            >
-              <Text style={styles.proButtonText}>EXPLORE PREMIUM</Text>
-            </Pressable>
+              label="EXPLORE PREMIUM"
+            />
           </View>
         ) : null}
       </ScrollView>
@@ -652,16 +665,6 @@ const styles = StyleSheet.create({
   primaryCta: {
     marginTop: 24,
     minHeight: 66,
-    borderRadius: PREMIUM.radius.pill,
-    backgroundColor: PREMIUM.colors.gold,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  primaryCtaText: {
-    color: PREMIUM.colors.ink,
-    fontSize: 17,
-    fontWeight: "900",
-    letterSpacing: 1.2,
   },
   heroSupport: {
     marginTop: 14,
@@ -893,6 +896,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
   },
+  nextUpWrap: {
+    marginTop: 14,
+  },
   sparkCard: {
     borderRadius: PREMIUM.radius.xl,
     padding: 22,
@@ -977,42 +983,14 @@ const styles = StyleSheet.create({
   resetPrimaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: PREMIUM.radius.pill,
-    backgroundColor: PREMIUM.colors.forest,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  resetPrimaryBtnText: {
-    color: PREMIUM.colors.offWhite,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.8,
   },
   resetSecondaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: PREMIUM.radius.pill,
-    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.9),
-    borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
-    alignItems: "center",
-    justifyContent: "center",
   },
   resetSecondaryBtnSolo: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: PREMIUM.radius.pill,
-    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.9),
-    borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  resetSecondaryBtnText: {
-    color: BRAND.charcoal,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.8,
   },
   proCard: {
     borderRadius: PREMIUM.radius.xl,
@@ -1039,17 +1017,6 @@ const styles = StyleSheet.create({
   },
   proButton: {
     marginTop: 16,
-    minHeight: 54,
-    borderRadius: PREMIUM.radius.pill,
-    backgroundColor: PREMIUM.colors.ink,
-    alignItems: "center",
-    justifyContent: "center",
     paddingHorizontal: 16,
-  },
-  proButtonText: {
-    color: PREMIUM.colors.offWhite,
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 0.8,
   },
 });

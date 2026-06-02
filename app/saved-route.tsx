@@ -6,6 +6,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { NativeRouteMapCard } from "../src/components/NativeRouteMapCard";
+import { RoutePreview } from "../src/components/RoutePreview";
 import { getSessionById, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../src/lib/store";
 
 function fmtDate(ts: number): string {
@@ -25,6 +26,12 @@ function fmtMinutes(durationSec: number): string {
 function fmtDistance(distanceM?: number): string {
   if (!distanceM || distanceM <= 0) return "Distance unavailable";
   return `${(distanceM / 1609.344).toFixed(2)} mi`;
+}
+
+function fmtGapLabel(gapSec?: number): string | null {
+  if (!gapSec || gapSec <= 0) return null;
+  if (gapSec < 60) return `about ${Math.round(gapSec)} sec`;
+  return `about ${Math.max(1, Math.round(gapSec / 60))} min`;
 }
 
 function buildMapsUrl(session: OutsideSession): string | null {
@@ -70,6 +77,7 @@ export default function SavedRouteScreen() {
   const mapsUrl = useMemo(() => (session ? buildMapsUrl(session) : null), [session]);
   const earnedSunriseBonus = session ? hasSunriseBonus(session) : false;
   const earnedSunsetBonus = session ? hasSunsetBonus(session) : false;
+  const routeGapLabel = useMemo(() => fmtGapLabel(session?.routeCaptureGapSec), [session?.routeCaptureGapSec]);
   const lockedBonusTeaser =
     session?.bonusType && !earnedSunriseBonus && !earnedSunsetBonus
       ? "Premium unlocks sunrise and sunset bonus achievements."
@@ -114,18 +122,41 @@ export default function SavedRouteScreen() {
 
             {session.routePoints && session.routePoints.length > 1 ? (
               <View style={styles.previewWrap}>
-                <NativeRouteMapCard
-                  points={session.routePoints}
-                  title="Saved GPS route map"
-                  subtitle="Captured from your Premium activity history"
-                />
+                {session.routeCaptureStatus === "partial" ? (
+                  <RoutePreview
+                    points={session.routePoints}
+                    title="Saved GPS route map"
+                    subtitle="Partial route captured from your Premium activity history"
+                  />
+                ) : (
+                  <NativeRouteMapCard
+                    points={session.routePoints}
+                    title="Saved GPS route map"
+                    subtitle="Captured from your Premium activity history"
+                  />
+                )}
               </View>
             ) : null}
 
             {session.source === "gps" && (!session.routePoints || session.routePoints.length < 2) ? (
               <View style={styles.lockedCard}>
                 <Text style={styles.lockedTitle}>Route map unavailable</Text>
-                <Text style={styles.lockedBody}>Unlock saved GPS route maps with Step Outside Premium.</Text>
+                <Text style={styles.lockedBody}>
+                  {session.routeCaptureStatus === "none"
+                    ? "This walk summary saved, but a full GPS route was not captured."
+                    : "Unlock saved GPS route maps with Step Outside Premium."}
+                </Text>
+              </View>
+            ) : null}
+
+            {session.routeCaptureStatus === "partial" && session.routePoints && session.routePoints.length > 1 ? (
+              <View style={styles.lockedCard}>
+                <Text style={styles.lockedTitle}>Partial route captured</Text>
+                <Text style={styles.lockedBody}>
+                  {routeGapLabel
+                    ? `Part of this route was captured before tracking paused for ${routeGapLabel}.`
+                    : "Part of this route was captured before tracking paused."}
+                </Text>
               </View>
             ) : null}
 
@@ -140,7 +171,9 @@ export default function SavedRouteScreen() {
               <Text style={styles.noteTitle}>Why this matters</Text>
               <Text style={styles.noteBody}>
                 {session.routePoints && session.routePoints.length > 1
-                  ? "Saved routes help you revisit where you walked, compare resets, and keep a visual log of your Premium activity history."
+                  ? session.routeCaptureStatus === "partial"
+                    ? "This saved preview reflects the part of your walk that Step Outside captured before tracking was interrupted."
+                    : "Saved routes help you revisit where you walked, compare resets, and keep a visual log of your Premium activity history."
                   : "Your basic activity summary is still saved here, including time, distance, and any Golden Hour bonuses."}
               </Text>
             </View>

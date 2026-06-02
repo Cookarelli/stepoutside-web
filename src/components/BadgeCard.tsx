@@ -24,11 +24,6 @@ export function BadgeCard({ state }: BadgeCardProps) {
       ? alpha(PREMIUM.colors.ink, 0.78)
       : alpha(PREMIUM.colors.offWhite, 0.78)
     : PREMIUM.colors.textMuted;
-  const artPlateColor = earned
-    ? warm
-      ? alpha(PREMIUM.colors.offWhite, 0.16)
-      : alpha(PREMIUM.colors.offWhite, 0.10)
-    : alpha(PREMIUM.colors.forestSoft, 0.08);
   const metaText = earned ? `Earned${state.earnedAtLabel ? ` • ${state.earnedAtLabel}` : ""}` : state.progressHint;
 
   return (
@@ -43,8 +38,20 @@ export function BadgeCard({ state }: BadgeCardProps) {
         },
       ]}
     >
-      <View style={[styles.artWrap, { backgroundColor: artPlateColor }]}>
-        <Image source={getBadgeArtSourceForBadge(state.badge)} resizeMode="contain" style={styles.art} />
+      <View style={styles.artWrap}>
+        {earned ? (
+          <View
+            style={[
+              styles.artGlow,
+              { backgroundColor: warm ? alpha(PREMIUM.colors.offWhite, 0.18) : alpha(PREMIUM.colors.gold, 0.14) },
+            ]}
+          />
+        ) : null}
+        <Image
+          source={getBadgeArtSourceForBadge(state.badge)}
+          resizeMode="contain"
+          style={[styles.art, !earned ? styles.artLocked : null]}
+        />
       </View>
       <Text style={[styles.title, { color: titleColor }]}>{state.badge.title}</Text>
       <Text style={[styles.body, { color: bodyColor }]}>{state.badge.description}</Text>
@@ -72,13 +79,22 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
     paddingVertical: 10,
     paddingHorizontal: 6,
+  },
+  artGlow: {
+    position: "absolute",
+    width: 82,
+    height: 82,
+    borderRadius: 999,
   },
   art: {
     width: "100%",
     height: 94,
+    backgroundColor: "transparent",
+  },
+  artLocked: {
+    opacity: 0.88,
   },
   title: {
     fontSize: 18,

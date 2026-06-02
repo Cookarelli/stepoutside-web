@@ -19,6 +19,9 @@ export type GpsAcceptanceStats = {
   ignoredPoints: number;
   lastIgnoredReason: GpsIgnoreReason | null;
   averageAccuracy: number | null;
+  worstAccuracy: number | null;
+  lastAcceptedTimestamp: number | null;
+  acceptedDistanceM: number;
   gpsStrength: GpsStrengthLabel;
 };
 
@@ -40,7 +43,7 @@ export type GpsAcceptedResult =
     };
 
 export const GPS_WARMUP_SECONDS = 3;
-export const MIN_DISTANCE_METERS = 2;
+export const MIN_DISTANCE_METERS = 1.5;
 export const MAX_ACCEPTABLE_ACCURACY_METERS = 35;
 export const MAX_REASONABLE_WALKING_SPEED_MPS = 3.0;
 export const MIN_DISTANCE_FOR_PACE_DISPLAY = 0.05 * 1609.344;
@@ -124,7 +127,11 @@ export function updateGpsStats(
   stats: GpsAcceptanceStats,
   pointAccuracy: number | null,
   accepted: boolean,
-  reason: GpsIgnoreReason | null
+  reason: GpsIgnoreReason | null,
+  options?: {
+    timestamp?: number | null;
+    distanceMeters?: number;
+  }
 ): GpsAcceptanceStats {
   const rawPoints = stats.rawPoints + 1;
   const acceptedDistancePoints = accepted ? stats.acceptedDistancePoints + 1 : stats.acceptedDistancePoints;
@@ -135,6 +142,8 @@ export function updateGpsStats(
       : stats.averageAccuracy === null
         ? pointAccuracy
         : (stats.averageAccuracy * stats.rawPoints + pointAccuracy) / rawPoints;
+  const worstAccuracy =
+    pointAccuracy === null ? stats.worstAccuracy : stats.worstAccuracy === null ? pointAccuracy : Math.max(stats.worstAccuracy, pointAccuracy);
 
   return {
     rawPoints,
@@ -142,6 +151,9 @@ export function updateGpsStats(
     ignoredPoints,
     lastIgnoredReason: accepted ? stats.lastIgnoredReason : reason,
     averageAccuracy,
+    worstAccuracy,
+    lastAcceptedTimestamp: accepted ? options?.timestamp ?? stats.lastAcceptedTimestamp : stats.lastAcceptedTimestamp,
+    acceptedDistanceM: accepted ? stats.acceptedDistanceM + Math.max(0, options?.distanceMeters ?? 0) : stats.acceptedDistanceM,
     gpsStrength: computeGpsStrength(averageAccuracy, acceptedDistancePoints),
   };
 }

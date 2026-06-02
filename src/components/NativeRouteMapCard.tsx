@@ -88,6 +88,27 @@ function buildRegion(points: RoutePoint[]) {
   };
 }
 
+function splitPolylineSegments(points: RoutePoint[]) {
+  const segments: { latitude: number; longitude: number }[][] = [];
+  let current: { latitude: number; longitude: number }[] = [];
+
+  for (const point of points) {
+    if (point.segmentStart && current.length > 0) {
+      if (current.length > 1) segments.push(current);
+      current = [{ latitude: point.lat, longitude: point.lng }];
+      continue;
+    }
+
+    current.push({ latitude: point.lat, longitude: point.lng });
+  }
+
+  if (current.length > 1) {
+    segments.push(current);
+  }
+
+  return segments;
+}
+
 export function NativeRouteMapCard({
   points,
   title = "Your route",
@@ -157,6 +178,7 @@ export function NativeRouteMapCard({
   const provider = providerMode === "google" ? PROVIDER_GOOGLE : undefined;
   const startPoint = points[0];
   const endPoint = points[points.length - 1];
+  const polylineSegments = splitPolylineSegments(points);
 
   return (
     <View style={styles.nativeCard}>
@@ -184,11 +206,14 @@ export function NativeRouteMapCard({
         zoomEnabled={false}
         moveOnMarkerPress={false}
       >
-        <Polyline
-          coordinates={points.map((point) => ({ latitude: point.lat, longitude: point.lng }))}
-          strokeColor="#255E36"
-          strokeWidth={4}
-        />
+        {polylineSegments.map((segment, index) => (
+          <Polyline
+            key={`segment-${index}`}
+            coordinates={segment}
+            strokeColor="#255E36"
+            strokeWidth={4}
+          />
+        ))}
         {startPoint ? (
           <Marker
             coordinate={{ latitude: startPoint.lat, longitude: startPoint.lng }}

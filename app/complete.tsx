@@ -1,20 +1,30 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BadgeRevealSplash } from "../src/components/BadgeRevealSplash";
 import { NativeRouteMapCard } from "../src/components/NativeRouteMapCard";
 import { PostWalkTabNav } from "../src/components/PostWalkTabNav";
+import { RoutePreview } from "../src/components/RoutePreview";
+import { StepButton } from "../src/components/StepButton";
 import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
 import { BADGE_CATALOG, CHALLENGE_CATALOG } from "../src/lib/challenges/catalog";
+import { getNextUpMilestone, type NextUpMilestone } from "../src/lib/challenges/nextUp";
 import { refreshLocalChallengeSnapshot } from "../src/lib/challenges/storage";
 import { getCachedAuthUser } from "../src/lib/auth";
 import { syncCorporateChallengeProgressFromWalk, syncCorporateMemberStatsFromWalk } from "../src/lib/corporate";
 import { getPremiumStatus } from "../src/lib/pro";
 import { evaluateSolarBonus } from "../src/lib/solarBonus";
-import { addCompletedSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
+import {
+  addCompletedSession,
+  type GpsDiagnostics,
+  type RouteCaptureStatus,
+  type RoutePoint,
+  type SessionSource,
+  type SummaryStats,
+} from "../src/lib/store";
 
 function minutesFromDuration(durationSec: number): number {
   return Math.max(1, Math.round(durationSec / 60));
@@ -38,6 +48,7 @@ function fmtDistance(distanceM: number): string {
 
 export default function CompleteScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     console.log("[boot] complete screen mounted");
@@ -85,9 +96,14 @@ export default function CompleteScreen() {
   const [sunsetBonus, setSunsetBonus] = useState(false);
   const [lockedBonusTeaser, setLockedBonusTeaser] = useState(false);
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
+  const [routeCaptureStatus, setRouteCaptureStatus] = useState<RouteCaptureStatus>("none");
+  const [routeCaptureInterrupted, setRouteCaptureInterrupted] = useState(false);
+  const [routeCaptureGapSec, setRouteCaptureGapSec] = useState(0);
+  const [gpsDiagnostics, setGpsDiagnostics] = useState<GpsDiagnostics | null>(null);
   const [newlyEarnedBadgeIds, setNewlyEarnedBadgeIds] = useState<string[]>([]);
   const [newlyCompletedChallengeIds, setNewlyCompletedChallengeIds] = useState<string[]>([]);
   const [badgeRevealIndex, setBadgeRevealIndex] = useState(0);
+  const [nextUpGoal, setNextUpGoal] = useState<NextUpMilestone | null>(null);
 
   const lastSaveKeyRef = useRef<string | null>(null);
   const didHapticRef = useRef(false);
@@ -134,6 +150,10 @@ export default function CompleteScreen() {
         setSunsetBonus(solarBonus.isSunsetBonus);
         setLockedBonusTeaser(Boolean(solarBonus.bonusType) && !premiumStatus.isPremium);
         setRoutePoints(draftRoutePoints);
+        setRouteCaptureStatus(walkDraft?.routeCaptureStatus ?? (draftRoutePoints.length > 1 ? "complete" : "none"));
+        setRouteCaptureInterrupted(Boolean(walkDraft?.routeCaptureInterrupted));
+        setRouteCaptureGapSec(Math.max(0, walkDraft?.routeCaptureGapSec ?? 0));
+        setGpsDiagnostics(walkDraft?.gpsDiagnostics ?? null);
 
         const result = await addCompletedSession({
           id,
@@ -165,6 +185,10 @@ export default function CompleteScreen() {
           bonusPoints: solarBonus.bonusPoints,
           sunriseBonus: solarBonus.isSunriseBonus,
           sunsetBonus: solarBonus.isSunsetBonus,
+          routeCaptureStatus: walkDraft?.routeCaptureStatus ?? (draftRoutePoints.length > 1 ? "complete" : "none"),
+          routeCaptureInterrupted: Boolean(walkDraft?.routeCaptureInterrupted),
+          routeCaptureGapSec: Math.max(0, walkDraft?.routeCaptureGapSec ?? 0),
+          gpsDiagnostics: walkDraft?.gpsDiagnostics,
         });
 
         const challengeRefresh = await refreshLocalChallengeSnapshot({
@@ -194,6 +218,7 @@ export default function CompleteScreen() {
         setSummary(result.summary);
         setNewlyCompletedChallengeIds(challengeRefresh.unlocks.newlyCompletedChallengeIds);
         setNewlyEarnedBadgeIds(challengeRefresh.unlocks.newlyEarnedBadgeIds);
+        setNextUpGoal(getNextUpMilestone(challengeRefresh.snapshot));
 
         if (!didHapticRef.current) {
           didHapticRef.current = true;
@@ -223,7 +248,7 @@ export default function CompleteScreen() {
     return `Streak: ${cs} day${cs === 1 ? "" : "s"} • Best: ${bs}`;
   }, [summary]);
 
-  const continueLabel = useMemo(() => {
+  const reflectionLabel = useMemo(() => {
     if (!valid) return "BACK HOME";
     return saving ? "SAVING…" : "SAVE REFLECTION";
   }, [saving, valid]);
@@ -241,6 +266,38 @@ export default function CompleteScreen() {
     () => CHALLENGE_CATALOG.filter((challenge) => newlyCompletedChallengeIds.includes(challenge.id)),
     [newlyCompletedChallengeIds]
   );
+
+  const routeGapLabel = useMemo(() => {
+    if (routeCaptureGapSec <= 0) return null;
+    if (routeCaptureGapSec < 60) return `about ${routeCaptureGapSec} sec`;
+    const roundedMinutes = Math.max(1, Math.round(routeCaptureGapSec / 60));
+    return `about ${roundedMinutes} min`;
+  }, [routeCaptureGapSec]);
+
+  const routeSubtitle = useMemo(() => {
+    if (routeCaptureStatus === "partial") return "Partial route captured before tracking paused";
+    return "Saved from this walk";
+  }, [routeCaptureStatus]);
+
+  const routeNote = useMemo(() => {
+    if (saving) return null;
+
+    if (routePoints.length > 1 && routeCaptureStatus === "complete") {
+      return "Route captured for this walk.";
+    }
+
+    if (routePoints.length > 1 && routeCaptureStatus === "partial") {
+      return routeGapLabel
+        ? `Part of this route was captured before tracking paused for ${routeGapLabel}.`
+        : "Part of this route was captured before tracking paused.";
+    }
+
+    if (source === "gps") {
+      return "This walk saved successfully, but a full GPS route was not captured.";
+    }
+
+    return null;
+  }, [routeCaptureStatus, routeGapLabel, routePoints.length, saving, source]);
 
   const activeBadgeReveal = unlockedBadges[badgeRevealIndex] ?? null;
 
@@ -314,9 +371,17 @@ export default function CompleteScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom + 24, 40) },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
       <View style={styles.container}>
         <BadgeRevealSplash
           badge={activeBadgeReveal}
+          nextUp={nextUpGoal}
           queuePosition={Math.min(unlockedBadges.length, badgeRevealIndex + 1)}
           queueTotal={unlockedBadges.length}
           onContinue={advanceBadgeReveal}
@@ -345,16 +410,18 @@ export default function CompleteScreen() {
 
             {routePoints.length > 1 ? (
               <View style={styles.routeWrap}>
-                <NativeRouteMapCard points={routePoints} title="Captured route" subtitle="Saved from this walk" />
+                {routeCaptureStatus === "partial" ? (
+                  <RoutePreview points={routePoints} title="Captured route" subtitle={routeSubtitle} />
+                ) : (
+                  <NativeRouteMapCard points={routePoints} title="Captured route" subtitle={routeSubtitle} />
+                )}
               </View>
             ) : null}
 
             <Text style={styles.sub}>
               {saving ? "Saving your walk…" : errorText ? errorText : streakLine || "Streak updated."}
             </Text>
-            {!saving && routePoints.length > 1 ? (
-              <Text style={styles.routeNote}>Route captured for this walk.</Text>
-            ) : null}
+            {routeNote ? <Text style={styles.routeNote}>{routeNote}</Text> : null}
             {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise Bonus earned</Text> : null}
             {sunsetBonus ? <Text style={styles.bonus}>🌅 Sunset Bonus earned</Text> : null}
             {lockedBonusTeaser ? (
@@ -375,6 +442,32 @@ export default function CompleteScreen() {
                 ))}
               </View>
             ) : null}
+            {__DEV__ && gpsDiagnostics ? (
+              <View style={styles.devCard}>
+                <Text style={styles.devTitle}>GPS diagnostics</Text>
+                <Text style={styles.devBody}>
+                  Raw {gpsDiagnostics.rawPoints} • Accepted {gpsDiagnostics.acceptedPoints} • Rejected {gpsDiagnostics.rejectedPoints}
+                </Text>
+                <Text style={styles.devBody}>
+                  Accepted distance {fmtDistance(gpsDiagnostics.acceptedDistanceM ?? 0)} • Avg accuracy{" "}
+                  {gpsDiagnostics.averageAccuracy === null || gpsDiagnostics.averageAccuracy === undefined
+                    ? "n/a"
+                    : `${Math.round(gpsDiagnostics.averageAccuracy)}m`}{" "}
+                  • Worst{" "}
+                  {gpsDiagnostics.worstAccuracy === null || gpsDiagnostics.worstAccuracy === undefined
+                    ? "n/a"
+                    : `${Math.round(gpsDiagnostics.worstAccuracy)}m`}
+                </Text>
+                {gpsDiagnostics.lastRejectedReason ? (
+                  <Text style={styles.devBody}>Last rejection: {gpsDiagnostics.lastRejectedReason}</Text>
+                ) : null}
+                {routeCaptureInterrupted ? (
+                  <Text style={styles.devBody}>
+                    Route capture interruption detected{routeGapLabel ? ` (${routeGapLabel})` : ""}.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
           </>
         ) : (
           <Text style={styles.sub}>No session found.</Text>
@@ -383,68 +476,68 @@ export default function CompleteScreen() {
         <View style={styles.actionsWrap}>
           <Text style={styles.actionsLabel}>What next?</Text>
 
-          <Pressable
+          <StepButton
+            label={reflectionLabel}
             onPress={() => {
               void Haptics.selectionAsync();
               goReflection();
             }}
             disabled={saving && valid}
-            style={({ pressed }) => [
-              styles.btnPrimary,
-              saving && valid ? styles.btnDisabled : null,
-              pressed ? { opacity: 0.9 } : null,
-            ]}
-          >
-            <Text style={styles.btnPrimaryText}>{continueLabel}</Text>
-          </Pressable>
+            fullWidth
+          />
 
           <View style={styles.secondaryGrid}>
-            <Pressable
+            <StepButton
+              label="SHARE WALK"
               onPress={() => {
                 void Haptics.selectionAsync();
                 goShare();
               }}
-              style={({ pressed }) => [styles.btnSecondary, pressed ? { opacity: 0.9 } : null]}
-            >
-              <Text style={styles.btnSecondaryText}>SHARE WALK</Text>
-            </Pressable>
+              variant="secondary"
+              style={styles.halfButton}
+            />
 
-            <Pressable
+            <StepButton
+              label="VIEW STATS"
               onPress={() => {
                 void Haptics.selectionAsync();
                 router.replace("/(tabs)/stats");
               }}
-              style={({ pressed }) => [styles.btnSecondary, pressed ? { opacity: 0.9 } : null]}
-            >
-              <Text style={styles.btnSecondaryText}>VIEW STATS</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                void Haptics.selectionAsync();
-                router.replace("/(tabs)");
-              }}
-              style={({ pressed }) => [styles.btnSecondary, pressed ? { opacity: 0.9 } : null]}
-            >
-              <Text style={styles.btnSecondaryText}>BACK HOME</Text>
-            </Pressable>
+              variant="secondary"
+              style={styles.halfButton}
+            />
           </View>
+
+          <StepButton
+            label="BACK HOME"
+            onPress={() => {
+              void Haptics.selectionAsync();
+              router.replace("/(tabs)");
+            }}
+            variant="tertiary"
+            fullWidth
+            style={styles.backHomeButton}
+          />
         </View>
 
         <PostWalkTabNav params={walkParams} />
       </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F8F4EE" },
+  scrollContent: {
+    flexGrow: 1,
+  },
   container: {
-    flex: 1,
     backgroundColor: "#F8F4EE",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
+    paddingTop: 24,
   },
   logo: { width: 88, height: 88, borderRadius: 22, marginBottom: 14 },
   title: { fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
@@ -498,6 +591,31 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "rgba(37,94,54,0.86)",
   },
+  devCard: {
+    marginTop: 14,
+    width: "100%",
+    maxWidth: 540,
+    borderRadius: 18,
+    backgroundColor: "rgba(11,15,14,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.08)",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 4,
+  },
+  devTitle: {
+    color: "#0B0F0E",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  devBody: {
+    color: "rgba(11,15,14,0.72)",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
   achievementCard: {
     marginTop: 14,
     width: "100%",
@@ -543,36 +661,21 @@ const styles = StyleSheet.create({
   },
 
   btnPrimary: {
-    backgroundColor: "#255E36",
-    paddingVertical: 14,
-    paddingHorizontal: 22,
-    borderRadius: 16,
     width: "100%",
-    alignItems: "center",
   },
-  btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
   secondaryGrid: {
     marginTop: 10,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
   },
-  btnSecondary: {
-    minHeight: 50,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.7)",
-    borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
+  halfButton: {
     minWidth: "48%",
     flexGrow: 1,
   },
-  btnSecondaryText: {
-    color: "#0B0F0E",
-    fontWeight: "900",
-    letterSpacing: 0.8,
+  backHomeButton: {
+    marginTop: 12,
+    backgroundColor: "rgba(31,77,54,0.06)",
   },
   btnDisabled: {
     opacity: 0.6,

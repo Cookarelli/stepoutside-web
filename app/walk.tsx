@@ -2,16 +2,18 @@ import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, type AppStateStatus, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, type AppStateStatus, Platform, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   clearCompletedWalkDraft,
   clearActiveWalkSnapshot,
+  type CompletedWalkDraft,
   getActiveWalkSnapshot,
   setActiveWalkSnapshot,
   setCompletedWalkDraft,
 } from "../src/lib/activeWalk";
+import { StepButton } from "../src/components/StepButton";
 import { ENV } from "../env";
 import {
   computeGpsStrength,
@@ -23,7 +25,7 @@ import {
   updateGpsStats,
 } from "../src/lib/gpsTracking";
 import { PREMIUM, alpha } from "../src/lib/premiumTheme";
-import type { RoutePoint } from "../src/lib/store";
+import type { GpsDiagnostics, RouteCaptureStatus, RoutePoint } from "../src/lib/store";
 
 type PermissionState = "unknown" | "granted" | "denied";
 
@@ -39,7 +41,8 @@ function fmtTime(sec: number): string {
 
 export default function Walk() {
   const router = useRouter();
-  const SNAPSHOT_PERSIST_DEBOUNCE_MS = 4000;
+  const SNAPSHOT_PERSIST_DEBOUNCE_MS = 2000;
+  const ROUTE_CAPTURE_GAP_THRESHOLD_SEC = 20;
 
   useEffect(() => {
     console.log("[boot] walk screen mounted");
@@ -63,6 +66,20 @@ export default function Walk() {
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerGenerationRef = useRef(0);
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePersistRef = useRef<
+    | ((
+        overrides?: Partial<{
+          elapsedSec: number;
+          distanceM: number;
+          movingDurationSec: number;
+          pausedDurationSec: number;
+          pauseStartedAt: number | null;
+          running: boolean;
+          routePoints: RoutePoint[];
+        }>
+      ) => void)
+    | null
+  >(null);
   const restoringRef = useRef(false);
   const elapsedBeforeRunRef = useRef(0);
   const runStartedAtRef = useRef<number | null>(null);
@@ -81,6 +98,9 @@ export default function Walk() {
     ignoredPoints: 0,
     lastIgnoredReason: null,
     averageAccuracy: null,
+    worstAccuracy: null,
+    lastAcceptedTimestamp: null,
+    acceptedDistanceM: 0,
     gpsStrength: "Weak GPS",
   });
 
@@ -88,6 +108,10 @@ export default function Walk() {
   const subRef = useRef<Location.LocationSubscription | null>(null);
   const locationGenerationRef = useRef(0);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const inactiveStartedAtRef = useRef<number | null>(null);
+  const routeCaptureInterruptedRef = useRef(false);
+  const routeCaptureGapSecRef = useRef(0);
+  const pendingSegmentBreakRef = useRef(false);
 
   const pace = useMemo(() => {
     return formatWalkingPace(distanceM, movingDurationSec);
@@ -141,6 +165,74 @@ export default function Walk() {
       });
     },
     [logGps]
+  );
+
+  const markRouteCaptureGap = useCallback(
+    (gapSec: number, reason: string) => {
+      const normalizedGap = Math.max(0, Math.round(gapSec));
+      if (normalizedGap < ROUTE_CAPTURE_GAP_THRESHOLD_SEC) return false;
+
+      routeCaptureInterruptedRef.current = true;
+      routeCaptureGapSecRef.current = Math.max(routeCaptureGapSecRef.current, normalizedGap);
+      if (routePointsRef.current.length > 0) {
+        pendingSegmentBreakRef.current = true;
+        lastPointRef.current = null;
+      }
+      logWalk("route capture gap detected", { reason, gapSec: normalizedGap });
+      return true;
+    },
+    [ROUTE_CAPTURE_GAP_THRESHOLD_SEC, logWalk]
+  );
+
+  const buildGpsDiagnostics = useCallback((): GpsDiagnostics => {
+    const rejectionCounts = Object.fromEntries(
+      Object.entries(gpsIgnoreCountsRef.current).filter(([, count]) => typeof count === "number" && Number.isFinite(count))
+    );
+
+    return {
+      rawPoints: gpsStatsRef.current.rawPoints,
+      acceptedPoints: gpsStatsRef.current.acceptedDistancePoints,
+      rejectedPoints: gpsStatsRef.current.ignoredPoints,
+      ...(Object.keys(rejectionCounts).length > 0 ? { rejectionCounts } : {}),
+      ...(gpsStatsRef.current.lastIgnoredReason !== null ? { lastRejectedReason: gpsStatsRef.current.lastIgnoredReason } : {}),
+      ...(gpsStatsRef.current.lastAcceptedTimestamp !== null
+        ? { lastAcceptedAt: gpsStatsRef.current.lastAcceptedTimestamp }
+        : {}),
+      acceptedDistanceM: Math.max(0, Math.round(gpsStatsRef.current.acceptedDistanceM)),
+      averageAccuracy: gpsStatsRef.current.averageAccuracy,
+      worstAccuracy: gpsStatsRef.current.worstAccuracy,
+    };
+  }, []);
+
+  const getRouteCaptureStatus = useCallback(
+    (source: SessionSource, routePoints: RoutePoint[], endedFromPhase?: WalkPhase) => {
+      let gapSec = routeCaptureGapSecRef.current;
+      let interrupted = routeCaptureInterruptedRef.current;
+
+      if (
+        source === "gps" &&
+        routePoints.length > 1 &&
+        endedFromPhase === "tracking" &&
+        typeof gpsStatsRef.current.lastAcceptedTimestamp === "number"
+      ) {
+        const terminalGapSec = Math.max(0, Math.round((Date.now() - gpsStatsRef.current.lastAcceptedTimestamp) / 1000));
+        if (terminalGapSec >= ROUTE_CAPTURE_GAP_THRESHOLD_SEC) {
+          interrupted = true;
+          gapSec = Math.max(gapSec, terminalGapSec);
+          logWalk("terminal route capture gap detected", { gapSec: terminalGapSec });
+        }
+      }
+
+      const status: RouteCaptureStatus =
+        source !== "gps" || routePoints.length < 2 ? "none" : interrupted ? "partial" : "complete";
+
+      return {
+        status,
+        interrupted,
+        gapSec,
+      };
+    },
+    [ROUTE_CAPTURE_GAP_THRESHOLD_SEC, logWalk]
   );
 
   const setPermissionSafe = useCallback((next: PermissionState) => {
@@ -335,8 +427,17 @@ export default function Walk() {
       const accuracy =
         typeof point.accuracy === "number" && Number.isFinite(point.accuracy) ? point.accuracy : null;
 
-      gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, true, null);
-      routePointsRef.current = routePointsRef.current.length === 0 ? [point] : routePointsRef.current;
+      gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, true, null, {
+        timestamp: point.t,
+        distanceMeters: 0,
+      });
+      if (routePointsRef.current.length === 0) {
+        routePointsRef.current = [point];
+      } else if (pendingSegmentBreakRef.current) {
+        routePointsRef.current = [...routePointsRef.current, { ...point, segmentStart: true }];
+        pendingSegmentBreakRef.current = false;
+      }
+      hadGpsPointsRef.current = routePointsRef.current.length > 1;
       lastPointRef.current = point;
       if (firstAcceptedElapsedRef.current === null) {
         firstAcceptedElapsedRef.current =
@@ -345,6 +446,11 @@ export default function Walk() {
             : elapsedBeforeRunRef.current + Math.max(0, Math.floor((Date.now() - runStartedAtRef.current) / 1000));
       }
       setGpsUiStateSafe("live");
+      schedulePersistRef.current?.({
+        routePoints: routePointsRef.current,
+        distanceM: distanceRef.current,
+        movingDurationSec: movingDurationSecRef.current,
+      });
       logGps("accepted", {
         kind: source === "watch" ? "anchor" : "seeded_anchor",
         accuracy,
@@ -441,7 +547,7 @@ export default function Walk() {
           {
             accuracy: Location.Accuracy.BestForNavigation,
             timeInterval: 1000,
-            distanceInterval: 3,
+            distanceInterval: 2,
           },
           (pos) => {
             if (!mountedRef.current || locationGenerationRef.current !== generation || phaseRef.current !== "tracking") {
@@ -475,7 +581,10 @@ export default function Walk() {
               return;
             }
 
-            gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, true, null);
+            gpsStatsRef.current = updateGpsStats(gpsStatsRef.current, accuracy, true, null, {
+              timestamp: point.t,
+              distanceMeters: result.deltaMeters,
+            });
 
             if (result.kind === "anchor") {
               acceptAnchorPoint(point, "watch");
@@ -492,6 +601,11 @@ export default function Walk() {
             setGpsUiStateSafe("live");
             setDistanceSafe(nextDistance);
             setMovingDurationSafe(nextMovingDuration);
+            schedulePersistRef.current?.({
+              routePoints: routePointsRef.current,
+              distanceM: nextDistance,
+              movingDurationSec: nextMovingDuration,
+            });
             logGps("accepted", {
               deltaMeters: Number(result.deltaMeters.toFixed(2)),
               deltaTimeSec: Number(result.deltaTimeSec.toFixed(2)),
@@ -610,10 +724,14 @@ export default function Walk() {
     }
   }, [logWalk]);
 
-  const setCompletedWalkDraftSafe = useCallback(async (routePoints: RoutePoint[], reason: string) => {
+  const setCompletedWalkDraftSafe = useCallback(async (draft: CompletedWalkDraft, reason: string) => {
     try {
-      await setCompletedWalkDraft({ routePoints });
-      logWalk("completed draft saved", { reason, points: routePoints.length });
+      await setCompletedWalkDraft(draft);
+      logWalk("completed draft saved", {
+        reason,
+        points: draft.routePoints.length,
+        routeCaptureStatus: draft.routeCaptureStatus ?? "none",
+      });
       return true;
     } catch (error) {
       console.error("[walk] failed to save completed draft", error);
@@ -642,20 +760,29 @@ export default function Walk() {
           elapsedSec: overrides?.elapsedSec ?? getElapsedNow(),
           distanceM: overrides?.distanceM ?? distanceRef.current,
           movingDurationSec: overrides?.movingDurationSec ?? movingDurationSecRef.current,
-          pausedDurationSec: overrides?.pausedDurationSec ?? getPausedDurationNow(),
-          pauseStartedAt:
-            overrides && "pauseStartedAt" in overrides ? overrides.pauseStartedAt ?? null : pauseStartedAtRef.current,
-          routePoints: overrides?.routePoints ?? routePointsRef.current,
-          running: overrides?.running ?? phaseRef.current === "tracking",
-          updatedAt: Date.now(),
-        });
+        pausedDurationSec: overrides?.pausedDurationSec ?? getPausedDurationNow(),
+        pauseStartedAt:
+          overrides && "pauseStartedAt" in overrides ? overrides.pauseStartedAt ?? null : pauseStartedAtRef.current,
+        routePoints: overrides?.routePoints ?? routePointsRef.current,
+        gpsUiState,
+        routeCaptureStatus:
+          getRouteCaptureStatus(
+            routePointsRef.current.length > 1 || hadGpsPointsRef.current ? "gps" : "timer",
+            overrides?.routePoints ?? routePointsRef.current
+          ).status,
+        routeCaptureInterrupted: routeCaptureInterruptedRef.current,
+        routeCaptureGapSec: routeCaptureGapSecRef.current,
+        gpsDiagnostics: buildGpsDiagnostics(),
+        running: overrides?.running ?? phaseRef.current === "tracking",
+        updatedAt: Date.now(),
+      });
         return true;
       } catch (error) {
         console.error("[walk] failed to persist active walk", error);
         return false;
       }
     },
-    [getElapsedNow, getPausedDurationNow]
+    [buildGpsDiagnostics, getElapsedNow, getPausedDurationNow, getRouteCaptureStatus, gpsUiState]
   );
 
   const clearScheduledPersist = useCallback(() => {
@@ -701,6 +828,8 @@ export default function Walk() {
     [clearScheduledPersist, persistActiveWalk]
   );
 
+  schedulePersistRef.current = schedulePersist;
+
   const resetWalkState = useCallback(async (reason: string) => {
     clearScheduledPersist();
     stopTimer(reason);
@@ -711,6 +840,10 @@ export default function Walk() {
     pausedDurationSecRef.current = 0;
     pauseStartedAtRef.current = null;
     movingDurationSecRef.current = 0;
+    inactiveStartedAtRef.current = null;
+    routeCaptureInterruptedRef.current = false;
+    routeCaptureGapSecRef.current = 0;
+    pendingSegmentBreakRef.current = false;
     distanceRef.current = 0;
     rawRoutePointsRef.current = [];
     routePointsRef.current = [];
@@ -723,6 +856,9 @@ export default function Walk() {
       ignoredPoints: 0,
       lastIgnoredReason: null,
       averageAccuracy: null,
+      worstAccuracy: null,
+      lastAcceptedTimestamp: null,
+      acceptedDistanceM: 0,
       gpsStrength: "Weak GPS",
     };
     gpsIgnoreCountsRef.current = {};
@@ -896,6 +1032,7 @@ export default function Walk() {
       transitionTo("saving", "stop");
 
       const source: SessionSource = hadGpsPointsRef.current || routePointsRef.current.length > 1 ? "gps" : "timer";
+      const endedFromPhase = phaseRef.current;
       const endLat = lastPointRef.current?.lat;
       const endLng = lastPointRef.current?.lng;
       const routePoints = [...routePointsRef.current];
@@ -904,6 +1041,8 @@ export default function Walk() {
       const finalTotalElapsed = getTotalElapsedNow();
       const finalMovingElapsed = movingDurationSecRef.current;
       const finalDistance = Math.max(0, Math.round(distanceRef.current));
+      const routeCapture = getRouteCaptureStatus(source, routePoints, endedFromPhase);
+      const gpsDiagnostics = buildGpsDiagnostics();
       logWalk("walk ended", {
         elapsedSeconds: finalElapsed,
         pausedSeconds: finalPausedDuration,
@@ -917,11 +1056,18 @@ export default function Walk() {
         acceptedPoints: gpsStatsRef.current.acceptedDistancePoints,
         ignoredPoints: gpsStatsRef.current.ignoredPoints,
         lastIgnoredReason: gpsStatsRef.current.lastIgnoredReason,
+        lastAcceptedTimestamp: gpsStatsRef.current.lastAcceptedTimestamp,
+        acceptedDistanceM: Math.round(gpsStatsRef.current.acceptedDistanceM),
         averageAccuracy:
           gpsStatsRef.current.averageAccuracy === null
             ? null
             : Number(gpsStatsRef.current.averageAccuracy.toFixed(1)),
+        worstAccuracy:
+          gpsStatsRef.current.worstAccuracy === null ? null : Number(gpsStatsRef.current.worstAccuracy.toFixed(1)),
         gpsStrength: gpsStatsRef.current.gpsStrength,
+        routeCaptureStatus: routeCapture.status,
+        routeCaptureInterrupted: routeCapture.interrupted,
+        routeCaptureGapSec: routeCapture.gapSec,
         ignoredReasonCounts: gpsIgnoreCountsRef.current,
       });
 
@@ -946,7 +1092,16 @@ export default function Walk() {
         return;
       }
 
-      const savedDraft = await setCompletedWalkDraftSafe(routePoints, "stop");
+      const savedDraft = await setCompletedWalkDraftSafe(
+        {
+          routePoints,
+          routeCaptureStatus: routeCapture.status,
+          routeCaptureInterrupted: routeCapture.interrupted,
+          routeCaptureGapSec: routeCapture.gapSec,
+          gpsDiagnostics,
+        },
+        "stop"
+      );
       if (!savedDraft) {
         await resetWalkState("stop draft failed");
         Alert.alert("Couldn’t save walk", "Please try again.");
@@ -967,6 +1122,9 @@ export default function Walk() {
           distanceM: String(finalDistance),
           source,
           routePointCount: String(routePoints.length),
+          routeCaptureStatus: routeCapture.status,
+          routeCaptureInterrupted: String(routeCapture.interrupted),
+          routeCaptureGapSec: String(routeCapture.gapSec),
           ...(Number.isFinite(endLat) && Number.isFinite(endLng)
             ? { endLat: String(endLat), endLng: String(endLng) }
             : {}),
@@ -1043,12 +1201,41 @@ export default function Walk() {
 
       if (
         startedAtRef.current &&
+        phaseRef.current === "tracking" &&
+        previousState === "active" &&
+        nextState.match(/inactive|background/)
+      ) {
+        inactiveStartedAtRef.current = Date.now();
+      }
+
+      if (
+        startedAtRef.current &&
         (phaseRef.current === "tracking" || phaseRef.current === "paused") &&
         previousState === "active" &&
         nextState.match(/inactive|background/)
       ) {
         clearScheduledPersist();
         void persistActiveWalk();
+      }
+
+      if (
+        startedAtRef.current &&
+        phaseRef.current === "tracking" &&
+        previousState.match(/inactive|background/) &&
+        nextState === "active"
+      ) {
+        if (inactiveStartedAtRef.current !== null) {
+          const inactiveGapSec = Math.max(0, Math.round((Date.now() - inactiveStartedAtRef.current) / 1000));
+          markRouteCaptureGap(inactiveGapSec, "app backgrounded");
+        }
+        inactiveStartedAtRef.current = null;
+
+        void (async () => {
+          const ok = await refreshPermission();
+          if (ok && phaseRef.current === "tracking" && !subRef.current) {
+            await startGps("app active restore");
+          }
+        })();
       }
     });
 
@@ -1061,7 +1248,7 @@ export default function Walk() {
       stopTimer("screen cleanup");
       stopGps("screen cleanup");
     };
-  }, [clearScheduledPersist, persistActiveWalk, stopGps, stopTimer]);
+  }, [clearScheduledPersist, markRouteCaptureGap, persistActiveWalk, refreshPermission, startGps, stopGps, stopTimer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1107,23 +1294,52 @@ export default function Walk() {
         distanceRef.current = snapshot.distanceM;
         rawRoutePointsRef.current = snapshot.routePoints ?? [];
         routePointsRef.current = snapshot.routePoints ?? [];
+        routeCaptureInterruptedRef.current = snapshot.routeCaptureInterrupted ?? false;
+        routeCaptureGapSecRef.current = snapshot.routeCaptureGapSec ?? 0;
+        pendingSegmentBreakRef.current = false;
         hadGpsPointsRef.current = routePointsRef.current.length > 1;
         firstAcceptedElapsedRef.current = routePointsRef.current.length > 0 ? 0 : null;
-        const accuracies = routePointsRef.current
-          .map((point) => point.accuracy)
-          .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-        const averageAccuracy =
-          accuracies.length > 0
-            ? accuracies.reduce((sum, value) => sum + value, 0) / accuracies.length
-            : null;
-        gpsStatsRef.current = {
-          rawPoints: routePointsRef.current.length,
-          acceptedDistancePoints: Math.max(0, routePointsRef.current.length - 1),
-          ignoredPoints: 0,
-          lastIgnoredReason: null,
-          averageAccuracy,
-          gpsStrength: computeGpsStrength(averageAccuracy, Math.max(0, routePointsRef.current.length - 1)),
-        };
+        if (snapshot.gpsDiagnostics) {
+          gpsStatsRef.current = {
+            rawPoints: snapshot.gpsDiagnostics.rawPoints,
+            acceptedDistancePoints: snapshot.gpsDiagnostics.acceptedPoints,
+            ignoredPoints: snapshot.gpsDiagnostics.rejectedPoints,
+            lastIgnoredReason:
+              typeof snapshot.gpsDiagnostics.lastRejectedReason === "string"
+                ? (snapshot.gpsDiagnostics.lastRejectedReason as GpsIgnoreReason)
+                : null,
+            averageAccuracy: snapshot.gpsDiagnostics.averageAccuracy ?? null,
+            worstAccuracy: snapshot.gpsDiagnostics.worstAccuracy ?? null,
+            lastAcceptedTimestamp: snapshot.gpsDiagnostics.lastAcceptedAt ?? null,
+            acceptedDistanceM: snapshot.gpsDiagnostics.acceptedDistanceM ?? snapshot.distanceM,
+            gpsStrength: computeGpsStrength(
+              snapshot.gpsDiagnostics.averageAccuracy ?? null,
+              snapshot.gpsDiagnostics.acceptedPoints
+            ),
+          };
+          gpsIgnoreCountsRef.current = snapshot.gpsDiagnostics.rejectionCounts ?? {};
+        } else {
+          const accuracies = routePointsRef.current
+            .map((point) => point.accuracy)
+            .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+          const averageAccuracy =
+            accuracies.length > 0
+              ? accuracies.reduce((sum, value) => sum + value, 0) / accuracies.length
+              : null;
+          const worstAccuracy = accuracies.length > 0 ? Math.max(...accuracies) : null;
+          gpsStatsRef.current = {
+            rawPoints: routePointsRef.current.length,
+            acceptedDistancePoints: routePointsRef.current.length,
+            ignoredPoints: 0,
+            lastIgnoredReason: null,
+            averageAccuracy,
+            worstAccuracy,
+            lastAcceptedTimestamp: routePointsRef.current[routePointsRef.current.length - 1]?.t ?? null,
+            acceptedDistanceM: snapshot.distanceM,
+            gpsStrength: computeGpsStrength(averageAccuracy, routePointsRef.current.length),
+          };
+          gpsIgnoreCountsRef.current = {};
+        }
         setElapsedSafe(recoveredElapsed);
         setDistanceSafe(snapshot.distanceM);
         setMovingDurationSafe(movingDurationSecRef.current);
@@ -1136,7 +1352,9 @@ export default function Walk() {
         }
 
         if (snapshot.running) {
-          setGpsUiStateSafe(routePointsRef.current.length > 0 ? "live" : "finding");
+          const restoreGapSec = Math.max(0, Math.round((Date.now() - snapshot.updatedAt) / 1000));
+          markRouteCaptureGap(restoreGapSec, "session restore");
+          setGpsUiStateSafe(snapshot.gpsUiState ?? (routePointsRef.current.length > 0 ? "live" : "finding"));
           transitionTo("tracking", "restore tracking");
           startTimer("restore");
           const ok = await refreshPermission();
@@ -1161,7 +1379,7 @@ export default function Walk() {
     return () => {
       cancelled = true;
     };
-  }, [logWalk, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
+  }, [logWalk, markRouteCaptureGap, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
 
   useEffect(() => {
     if (restoringRef.current || !startedAtRef.current) return;
@@ -1285,35 +1503,26 @@ export default function Walk() {
       ) : (
         <View style={styles.controlsStack}>
           <View style={styles.actionRow}>
-            <Pressable
-              style={[
-                styles.btnPrimary,
-                styles.splitBtn,
-                !canStartOrResume ? styles.btnDisabled : null,
-              ]}
+            <StepButton
+              style={styles.splitBtn}
               onPress={hasActiveSession ? resume : start}
+              label={startResumeLabel}
               disabled={!canStartOrResume}
-            >
-              <Text style={styles.btnPrimaryText}>{startResumeLabel}</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.btnPause,
-                styles.splitBtn,
-                !canPause ? styles.btnDisabled : null,
-              ]}
+            />
+            <StepButton
+              style={styles.splitBtn}
               onPress={pause}
+              label={busyAction === "pause" ? "PAUSING…" : "PAUSE"}
               disabled={!canPause}
-            >
-              <Text style={styles.btnPauseText}>{busyAction === "pause" ? "PAUSING…" : "PAUSE"}</Text>
-            </Pressable>
+              tone="gold"
+            />
           </View>
           <Text style={styles.controlHint}>{statusText}</Text>
         </View>
       )}
 
-      <Pressable
-        style={[styles.btnEnd, !canStop ? { opacity: 0.5 } : null]}
+      <StepButton
+        style={styles.btnEnd}
         onPress={() => {
           if (!canStop) return;
 
@@ -1335,24 +1544,25 @@ export default function Walk() {
           ]);
         }}
         disabled={!canStop}
-      >
-        <Text style={styles.btnEndText}>{busyAction === "stop" ? "STOPPING…" : "STOP"}</Text>
-      </Pressable>
+        label={busyAction === "stop" ? "STOPPING…" : "STOP"}
+        tone="danger"
+        fullWidth
+      />
 
       <View style={styles.bottomRow}>
-        <Pressable
+        <StepButton
           style={styles.back}
           onPress={() => leaveWalkScreen("back")}
-        >
-          <Text style={styles.backText}>Back</Text>
-        </Pressable>
+          label="BACK"
+          variant="tertiary"
+        />
 
-        <Pressable
+        <StepButton
           style={styles.home}
           onPress={() => leaveWalkScreen("home")}
-        >
-          <Text style={styles.homeText}>Home</Text>
-        </Pressable>
+          label="HOME"
+          variant="secondary"
+        />
       </View>
     </SafeAreaView>
   );
@@ -1492,58 +1702,23 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
 
-  btnPrimary: {
-    backgroundColor: PREMIUM.colors.forest,
-    minHeight: 56,
-    paddingVertical: 16,
-    borderRadius: PREMIUM.radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  btnPrimaryText: { color: PREMIUM.colors.offWhite, fontWeight: "900", letterSpacing: 0.8 },
-
-  btnPause: {
-    backgroundColor: PREMIUM.colors.gold,
-    minHeight: 56,
-    paddingVertical: 16,
-    borderRadius: PREMIUM.radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  btnPauseText: { color: PREMIUM.colors.ink, fontWeight: "900", letterSpacing: 0.8 },
-  btnDisabled: {
-    opacity: 0.45,
-  },
-
   btnEnd: {
     marginTop: 14,
-    backgroundColor: PREMIUM.colors.danger,
-    minHeight: 56,
-    paddingVertical: 14,
-    paddingHorizontal: 26,
-    borderRadius: PREMIUM.radius.pill,
     minWidth: 240,
     alignItems: "center",
-    justifyContent: "center",
   },
-  btnEndText: { color: PREMIUM.colors.offWhite, fontWeight: "900", letterSpacing: 0.8 },
 
   bottomRow: {
     marginTop: 16,
     flexDirection: "row",
     gap: 10,
   },
-  back: { minHeight: 44, paddingVertical: 8, paddingHorizontal: 12, justifyContent: "center", borderRadius: PREMIUM.radius.pill },
-  backText: { color: PREMIUM.colors.textMuted, fontWeight: "800" },
+  back: { minHeight: 46, paddingHorizontal: 16, justifyContent: "center", borderRadius: PREMIUM.radius.pill, flex: 1 },
   home: {
-    minHeight: 44,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    minHeight: 46,
+    paddingHorizontal: 16,
     borderRadius: PREMIUM.radius.pill,
-    backgroundColor: alpha(PREMIUM.colors.forest, 0.1),
-    borderWidth: 1,
-    borderColor: PREMIUM.colors.lineStrong,
     justifyContent: "center",
+    flex: 1,
   },
-  homeText: { color: PREMIUM.colors.forest, fontWeight: "900" },
 });

@@ -15,6 +15,21 @@ export type RoutePoint = {
   accuracy?: number;
   altitude?: number;
   speed?: number;
+  segmentStart?: boolean;
+};
+
+export type RouteCaptureStatus = "none" | "partial" | "complete";
+
+export type GpsDiagnostics = {
+  rawPoints: number;
+  acceptedPoints: number;
+  rejectedPoints: number;
+  rejectionCounts?: Record<string, number>;
+  lastRejectedReason?: string | null;
+  lastAcceptedAt?: number | null;
+  acceptedDistanceM?: number;
+  averageAccuracy?: number | null;
+  worstAccuracy?: number | null;
 };
 
 export type OutsideSession = {
@@ -42,6 +57,10 @@ export type OutsideSession = {
   sunriseBonus?: boolean;
   sunsetBonus?: boolean;
   paceSecPerMile?: number;
+  routeCaptureStatus?: RouteCaptureStatus;
+  routeCaptureInterrupted?: boolean;
+  routeCaptureGapSec?: number;
+  gpsDiagnostics?: GpsDiagnostics;
 };
 
 export type SummaryStats = {
@@ -169,6 +188,64 @@ function normalizeRoutePoint(value: unknown): RoutePoint | null {
     ...(typeof candidate.speed === "number" && Number.isFinite(candidate.speed)
       ? { speed: candidate.speed }
       : {}),
+    ...(typeof candidate.segmentStart === "boolean" ? { segmentStart: candidate.segmentStart } : {}),
+  };
+}
+
+function normalizeRouteCaptureStatus(value: unknown): RouteCaptureStatus | undefined {
+  if (value === "complete" || value === "partial" || value === "none") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeGpsDiagnostics(value: unknown): GpsDiagnostics | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  const candidate = value as Partial<GpsDiagnostics>;
+  if (
+    typeof candidate.rawPoints !== "number" ||
+    !Number.isFinite(candidate.rawPoints) ||
+    typeof candidate.acceptedPoints !== "number" ||
+    !Number.isFinite(candidate.acceptedPoints) ||
+    typeof candidate.rejectedPoints !== "number" ||
+    !Number.isFinite(candidate.rejectedPoints)
+  ) {
+    return undefined;
+  }
+
+  const rejectionCounts =
+    candidate.rejectionCounts && typeof candidate.rejectionCounts === "object"
+      ? Object.fromEntries(
+          Object.entries(candidate.rejectionCounts).filter(
+            ([key, count]) => typeof key === "string" && typeof count === "number" && Number.isFinite(count)
+          )
+        )
+      : undefined;
+
+  return {
+    rawPoints: Math.max(0, Math.round(candidate.rawPoints)),
+    acceptedPoints: Math.max(0, Math.round(candidate.acceptedPoints)),
+    rejectedPoints: Math.max(0, Math.round(candidate.rejectedPoints)),
+    ...(rejectionCounts && Object.keys(rejectionCounts).length > 0 ? { rejectionCounts } : {}),
+    ...(candidate.lastRejectedReason === null || typeof candidate.lastRejectedReason === "string"
+      ? { lastRejectedReason: candidate.lastRejectedReason ?? null }
+      : {}),
+    ...(candidate.lastAcceptedAt === null ||
+    (typeof candidate.lastAcceptedAt === "number" && Number.isFinite(candidate.lastAcceptedAt))
+      ? { lastAcceptedAt: candidate.lastAcceptedAt ?? null }
+      : {}),
+    ...(typeof candidate.acceptedDistanceM === "number" && Number.isFinite(candidate.acceptedDistanceM)
+      ? { acceptedDistanceM: Math.max(0, candidate.acceptedDistanceM) }
+      : {}),
+    ...(candidate.averageAccuracy === null ||
+    (typeof candidate.averageAccuracy === "number" && Number.isFinite(candidate.averageAccuracy))
+      ? { averageAccuracy: candidate.averageAccuracy ?? null }
+      : {}),
+    ...(candidate.worstAccuracy === null ||
+    (typeof candidate.worstAccuracy === "number" && Number.isFinite(candidate.worstAccuracy))
+      ? { worstAccuracy: candidate.worstAccuracy ?? null }
+      : {}),
   };
 }
 
@@ -250,6 +327,14 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
       : computePaceSecPerMile(resolvePaceDurationSec(session), session.distanceM)
         ? { paceSecPerMile: computePaceSecPerMile(resolvePaceDurationSec(session), session.distanceM) }
         : {}),
+    ...(normalizeRouteCaptureStatus(session.routeCaptureStatus) ? { routeCaptureStatus: session.routeCaptureStatus } : {}),
+    ...(typeof session.routeCaptureInterrupted === "boolean"
+      ? { routeCaptureInterrupted: session.routeCaptureInterrupted }
+      : {}),
+    ...(typeof session.routeCaptureGapSec === "number" && Number.isFinite(session.routeCaptureGapSec)
+      ? { routeCaptureGapSec: Math.max(0, session.routeCaptureGapSec) }
+      : {}),
+    ...(normalizeGpsDiagnostics(session.gpsDiagnostics) ? { gpsDiagnostics: normalizeGpsDiagnostics(session.gpsDiagnostics) } : {}),
     ...(routePoints ? { routePoints } : {}),
   };
 }
@@ -459,6 +544,18 @@ async function readSessions(): Promise<OutsideSession[]> {
               ...(typeof session.paceSecPerMile === "number" && Number.isFinite(session.paceSecPerMile)
                 ? { paceSecPerMile: session.paceSecPerMile }
                 : {}),
+              ...(normalizeRouteCaptureStatus(session.routeCaptureStatus)
+                ? { routeCaptureStatus: session.routeCaptureStatus }
+                : {}),
+              ...(typeof session.routeCaptureInterrupted === "boolean"
+                ? { routeCaptureInterrupted: session.routeCaptureInterrupted }
+                : {}),
+              ...(typeof session.routeCaptureGapSec === "number" && Number.isFinite(session.routeCaptureGapSec)
+                ? { routeCaptureGapSec: session.routeCaptureGapSec }
+                : {}),
+              ...(normalizeGpsDiagnostics(session.gpsDiagnostics)
+                ? { gpsDiagnostics: normalizeGpsDiagnostics(session.gpsDiagnostics) }
+                : {}),
             },
             true
           ),
@@ -543,6 +640,16 @@ function mergeSessionLists(localSessions: OutsideSession[], remoteSessions: Outs
             typeof remote.paceSecPerMile === "number" && Number.isFinite(remote.paceSecPerMile)
               ? remote.paceSecPerMile
               : existing?.paceSecPerMile,
+          routeCaptureStatus: normalizeRouteCaptureStatus(remote.routeCaptureStatus) ?? existing?.routeCaptureStatus,
+          routeCaptureInterrupted:
+            typeof remote.routeCaptureInterrupted === "boolean"
+              ? remote.routeCaptureInterrupted
+              : existing?.routeCaptureInterrupted,
+          routeCaptureGapSec:
+            typeof remote.routeCaptureGapSec === "number" && Number.isFinite(remote.routeCaptureGapSec)
+              ? remote.routeCaptureGapSec
+              : existing?.routeCaptureGapSec,
+          gpsDiagnostics: normalizeGpsDiagnostics(remote.gpsDiagnostics) ?? existing?.gpsDiagnostics,
         },
         true
       )
@@ -616,6 +723,18 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
               : {}),
             ...(typeof remote.paceSecPerMile === "number" && Number.isFinite(remote.paceSecPerMile)
               ? { paceSecPerMile: remote.paceSecPerMile }
+              : {}),
+            ...(normalizeRouteCaptureStatus(remote.routeCaptureStatus)
+              ? { routeCaptureStatus: remote.routeCaptureStatus }
+              : {}),
+            ...(typeof remote.routeCaptureInterrupted === "boolean"
+              ? { routeCaptureInterrupted: remote.routeCaptureInterrupted }
+              : {}),
+            ...(typeof remote.routeCaptureGapSec === "number" && Number.isFinite(remote.routeCaptureGapSec)
+              ? { routeCaptureGapSec: remote.routeCaptureGapSec }
+              : {}),
+            ...(normalizeGpsDiagnostics(remote.gpsDiagnostics)
+              ? { gpsDiagnostics: normalizeGpsDiagnostics(remote.gpsDiagnostics) }
               : {}),
             ...(routePoints && routePoints.length > 0 ? { routePoints } : {}),
           },

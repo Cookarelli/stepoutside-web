@@ -15,6 +15,7 @@ type PreviewPoint = {
   y: number;
   isStart?: boolean;
   isEnd?: boolean;
+  segmentStart?: boolean;
 };
 
 type PreviewSegment = {
@@ -66,6 +67,7 @@ function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
       y,
       isStart: index === 0,
       isEnd: index === sampled.length - 1,
+      segmentStart: Boolean(point.segmentStart),
     };
   });
 }
@@ -77,6 +79,7 @@ function buildSegments(points: PreviewPoint[]): PreviewSegment[] {
     const previous = points[index - 1];
     const current = points[index];
     if (!previous || !current) continue;
+    if (current.segmentStart) continue;
 
     const dx = current.x - previous.x;
     const dy = current.y - previous.y;
@@ -108,6 +111,7 @@ function describeSignal(points: RoutePoint[]): string {
 export function RoutePreview({ points, title = "Your route", subtitle = "Captured from this walk" }: RoutePreviewProps) {
   const previewPoints = useMemo(() => {
     if (points.length < 2) return [];
+
     return buildPreviewPoints(points);
   }, [points]);
   const segments = useMemo(() => buildSegments(previewPoints), [previewPoints]);

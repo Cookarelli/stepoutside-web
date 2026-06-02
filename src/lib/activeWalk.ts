@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import type { RoutePoint } from "./store";
+import type { GpsDiagnostics, RouteCaptureStatus, RoutePoint } from "./store";
 
 export type ActiveWalkSnapshot = {
   startedAt: number;
@@ -10,16 +10,82 @@ export type ActiveWalkSnapshot = {
   movingDurationSec?: number;
   pauseStartedAt?: number | null;
   routePoints?: RoutePoint[];
+  gpsUiState?: "idle" | "primed" | "finding" | "live";
+  routeCaptureStatus?: RouteCaptureStatus;
+  routeCaptureInterrupted?: boolean;
+  routeCaptureGapSec?: number;
+  gpsDiagnostics?: GpsDiagnostics;
   running: boolean;
   updatedAt: number;
 };
 
 export type CompletedWalkDraft = {
   routePoints: RoutePoint[];
+  routeCaptureStatus?: RouteCaptureStatus;
+  routeCaptureInterrupted?: boolean;
+  routeCaptureGapSec?: number;
+  gpsDiagnostics?: GpsDiagnostics;
 };
 
 const KEY_ACTIVE_WALK = "@stepoutside/activeWalk";
 const KEY_COMPLETED_WALK_DRAFT = "@stepoutside/completedWalkDraft";
+
+function normalizeRouteCaptureStatus(value: unknown): RouteCaptureStatus | undefined {
+  if (value === "complete" || value === "partial" || value === "none") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeGpsDiagnostics(value: unknown): GpsDiagnostics | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  const candidate = value as Partial<GpsDiagnostics>;
+  if (
+    typeof candidate.rawPoints !== "number" ||
+    !Number.isFinite(candidate.rawPoints) ||
+    typeof candidate.acceptedPoints !== "number" ||
+    !Number.isFinite(candidate.acceptedPoints) ||
+    typeof candidate.rejectedPoints !== "number" ||
+    !Number.isFinite(candidate.rejectedPoints)
+  ) {
+    return undefined;
+  }
+
+  const rejectionCounts =
+    candidate.rejectionCounts && typeof candidate.rejectionCounts === "object"
+      ? Object.fromEntries(
+          Object.entries(candidate.rejectionCounts).filter(
+            ([key, count]) => typeof key === "string" && typeof count === "number" && Number.isFinite(count)
+          )
+        )
+      : undefined;
+
+  return {
+    rawPoints: Math.max(0, Math.round(candidate.rawPoints)),
+    acceptedPoints: Math.max(0, Math.round(candidate.acceptedPoints)),
+    rejectedPoints: Math.max(0, Math.round(candidate.rejectedPoints)),
+    ...(rejectionCounts && Object.keys(rejectionCounts).length > 0 ? { rejectionCounts } : {}),
+    ...(candidate.lastRejectedReason === null || typeof candidate.lastRejectedReason === "string"
+      ? { lastRejectedReason: candidate.lastRejectedReason ?? null }
+      : {}),
+    ...(candidate.lastAcceptedAt === null ||
+    (typeof candidate.lastAcceptedAt === "number" && Number.isFinite(candidate.lastAcceptedAt))
+      ? { lastAcceptedAt: candidate.lastAcceptedAt ?? null }
+      : {}),
+    ...(typeof candidate.acceptedDistanceM === "number" && Number.isFinite(candidate.acceptedDistanceM)
+      ? { acceptedDistanceM: Math.max(0, candidate.acceptedDistanceM) }
+      : {}),
+    ...(candidate.averageAccuracy === null ||
+    (typeof candidate.averageAccuracy === "number" && Number.isFinite(candidate.averageAccuracy))
+      ? { averageAccuracy: candidate.averageAccuracy ?? null }
+      : {}),
+    ...(candidate.worstAccuracy === null ||
+    (typeof candidate.worstAccuracy === "number" && Number.isFinite(candidate.worstAccuracy))
+      ? { worstAccuracy: candidate.worstAccuracy ?? null }
+      : {}),
+  };
+}
 
 export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
   const raw = await AsyncStorage.getItem(KEY_ACTIVE_WALK);
@@ -69,6 +135,24 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
         ? { pauseStartedAt: parsed.pauseStartedAt ?? null }
         : {}),
       ...(routePoints ? { routePoints } : {}),
+      ...(parsed.gpsUiState === "idle" ||
+      parsed.gpsUiState === "primed" ||
+      parsed.gpsUiState === "finding" ||
+      parsed.gpsUiState === "live"
+        ? { gpsUiState: parsed.gpsUiState }
+        : {}),
+      ...(normalizeRouteCaptureStatus(parsed.routeCaptureStatus)
+        ? { routeCaptureStatus: parsed.routeCaptureStatus }
+        : {}),
+      ...(typeof parsed.routeCaptureInterrupted === "boolean"
+        ? { routeCaptureInterrupted: parsed.routeCaptureInterrupted }
+        : {}),
+      ...(typeof parsed.routeCaptureGapSec === "number" && Number.isFinite(parsed.routeCaptureGapSec)
+        ? { routeCaptureGapSec: Math.max(0, parsed.routeCaptureGapSec) }
+        : {}),
+      ...(normalizeGpsDiagnostics(parsed.gpsDiagnostics)
+        ? { gpsDiagnostics: normalizeGpsDiagnostics(parsed.gpsDiagnostics) }
+        : {}),
       running: parsed.running,
       updatedAt: parsed.updatedAt,
     };
@@ -113,7 +197,21 @@ export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null
         : null;
 
     if (!routePoints) return null;
-    return { routePoints };
+    return {
+      routePoints,
+      ...(normalizeRouteCaptureStatus(parsed.routeCaptureStatus)
+        ? { routeCaptureStatus: parsed.routeCaptureStatus }
+        : {}),
+      ...(typeof parsed.routeCaptureInterrupted === "boolean"
+        ? { routeCaptureInterrupted: parsed.routeCaptureInterrupted }
+        : {}),
+      ...(typeof parsed.routeCaptureGapSec === "number" && Number.isFinite(parsed.routeCaptureGapSec)
+        ? { routeCaptureGapSec: Math.max(0, parsed.routeCaptureGapSec) }
+        : {}),
+      ...(normalizeGpsDiagnostics(parsed.gpsDiagnostics)
+        ? { gpsDiagnostics: normalizeGpsDiagnostics(parsed.gpsDiagnostics) }
+        : {}),
+    };
   } catch {
     return null;
   }
