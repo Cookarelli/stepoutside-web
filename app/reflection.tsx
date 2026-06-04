@@ -1,7 +1,18 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableWithoutFeedback,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { PostWalkTabNav } from "../src/components/PostWalkTabNav";
@@ -18,6 +29,8 @@ function toNumber(value: string | undefined): number {
 
 export default function ReflectionScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView | null>(null);
+  const inputFocusedRef = useRef(false);
   const params = useLocalSearchParams<{
     walkId?: string;
     startedAt?: string;
@@ -41,6 +54,31 @@ export default function ReflectionScreen() {
   const [statusText, setStatusText] = useState("");
   const [saveWarning, setSaveWarning] = useState("");
   const [savedText, setSavedText] = useState("");
+
+  const scrollReflectionIntoView = useCallback((delay = 80) => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, delay);
+  }, []);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSubscription = Keyboard.addListener(showEvent, () => {
+      if (inputFocusedRef.current) {
+        scrollReflectionIntoView(120);
+      }
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      inputFocusedRef.current = false;
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [scrollReflectionIntoView]);
 
   const goToShare = (overrides?: { reflectionText?: string; saveWarning?: string }) => {
     router.push({
@@ -120,72 +158,92 @@ export default function ReflectionScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.keyboardWrap}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 18 : 0}
-      >
-        <ScrollView
-          contentContainerStyle={styles.container}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <KeyboardAvoidingView
+          style={styles.keyboardWrap}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
         >
-          <View style={styles.card}>
-            <Text style={styles.eyebrow}>After your walk</Text>
-            <Text style={styles.title}>Pause for a second</Text>
-            <Text style={styles.prompt}>{prompt}</Text>
-
-            <TextInput
-              value={text}
-              onChangeText={setText}
-              multiline
-              textAlignVertical="top"
-              placeholder="A few words is enough."
-              placeholderTextColor="rgba(11,15,14,0.35)"
-              style={styles.input}
-              maxLength={500}
-            />
-
-            <Text style={styles.helper}>Keep it simple. This is for you, not for a performance.</Text>
-            {statusText ? <Text style={styles.status}>{statusText}</Text> : null}
-          </View>
-        </ScrollView>
-
-        <View style={styles.footerActions}>
-          <Pressable
-            onPress={() => void onSaveReflection()}
-            disabled={saving || text.trim().length === 0}
-            style={({ pressed }) => [
-              styles.primaryBtn,
-              saving || text.trim().length === 0 ? styles.btnDisabled : null,
-              pressed ? { opacity: 0.94 } : null,
-            ]}
+          <ScrollView
+            ref={scrollRef}
+            contentContainerStyle={styles.container}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+            contentInsetAdjustmentBehavior="automatic"
+            onScrollBeginDrag={Keyboard.dismiss}
+            showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.primaryBtnText}>{saving ? "SAVING…" : "SAVE REFLECTION"}</Text>
-          </Pressable>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>After your walk</Text>
+              <Text style={styles.title}>Pause for a second</Text>
+              <Text style={styles.prompt}>{prompt}</Text>
 
-          <View style={styles.secondaryRow}>
-            <Pressable
-              onPress={onShare}
-              style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
-            >
-              <Text style={styles.secondaryBtnText}>SHARE WALK</Text>
-            </Pressable>
+              <TextInput
+                value={text}
+                onChangeText={setText}
+                multiline
+                textAlignVertical="top"
+                placeholder="A few words is enough."
+                placeholderTextColor="rgba(11,15,14,0.35)"
+                style={styles.input}
+                maxLength={500}
+                scrollEnabled
+                onFocus={() => {
+                  inputFocusedRef.current = true;
+                  scrollReflectionIntoView();
+                }}
+                onBlur={() => {
+                  inputFocusedRef.current = false;
+                }}
+                onContentSizeChange={() => {
+                  if (inputFocusedRef.current) {
+                    scrollReflectionIntoView(20);
+                  }
+                }}
+              />
 
-            <Pressable
-              onPress={() => {
-                void Haptics.selectionAsync();
-                router.replace("/(tabs)");
-              }}
-              style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
-            >
-              <Text style={styles.secondaryBtnText}>BACK HOME</Text>
-            </Pressable>
-          </View>
+              <Text style={styles.helper}>Keep it simple. This is for you, not for a performance.</Text>
+              {statusText ? <Text style={styles.status}>{statusText}</Text> : null}
+            </View>
 
-          <PostWalkTabNav current="reflection" params={navParams} />
-        </View>
-      </KeyboardAvoidingView>
+            <View style={styles.footerActions}>
+              <Pressable
+                onPress={() => void onSaveReflection()}
+                disabled={saving || text.trim().length === 0}
+                style={({ pressed }) => [
+                  styles.primaryBtn,
+                  saving || text.trim().length === 0 ? styles.btnDisabled : null,
+                  pressed ? { opacity: 0.94 } : null,
+                ]}
+              >
+                <Text style={styles.primaryBtnText}>{saving ? "SAVING…" : "SAVE REFLECTION"}</Text>
+              </Pressable>
+
+              <View style={styles.secondaryRow}>
+                <Pressable
+                  onPress={onShare}
+                  style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
+                >
+                  <Text style={styles.secondaryBtnText}>SHARE WALK</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    router.replace("/(tabs)");
+                  }}
+                  style={({ pressed }) => [styles.secondaryBtn, pressed ? { opacity: 0.9 } : null]}
+                >
+                  <Text style={styles.secondaryBtnText}>BACK HOME</Text>
+                </Pressable>
+              </View>
+
+              <PostWalkTabNav current="reflection" params={navParams} />
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
     </SafeAreaView>
   );
 }
@@ -196,8 +254,8 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     padding: 20,
-    justifyContent: "center",
-    paddingBottom: 180,
+    justifyContent: "flex-start",
+    paddingBottom: 28,
   },
   card: {
     borderRadius: 28,
@@ -228,7 +286,8 @@ const styles = StyleSheet.create({
   },
   input: {
     marginTop: 18,
-    minHeight: 180,
+    minHeight: 190,
+    maxHeight: 260,
     borderRadius: 18,
     backgroundColor: "rgba(248,244,238,0.92)",
     borderWidth: 1,
@@ -254,13 +313,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   footerActions: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 18,
+    marginTop: 18,
     gap: 10,
-    backgroundColor: "rgba(248,244,238,0.96)",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(11,15,14,0.08)",
   },
   primaryBtn: {
     minHeight: 54,

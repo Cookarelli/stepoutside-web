@@ -33,6 +33,9 @@ type SessionSource = "gps" | "timer";
 type WalkPhase = "idle" | "countdown" | "tracking" | "paused" | "saving" | "completed";
 type GpsUiState = "idle" | "primed" | "finding" | "live";
 
+const GPS_STARTUP_TIMEOUT_MS = 5000;
+const WALKING_GPS_ACCURACY = Location.Accuracy.High;
+
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.max(0, sec % 60);
@@ -462,46 +465,6 @@ export default function Walk() {
 
   const wait = useCallback((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), []);
 
-  const getAcceptableLastKnownPoint = useCallback(async () => {
-    try {
-      const lastKnown = await Location.getLastKnownPositionAsync();
-      if (!lastKnown) return null;
-
-      const point = buildRoutePoint(lastKnown.coords, lastKnown.timestamp || Date.now());
-      const result = evaluateGpsPoint(point, null);
-      if (!result.accepted) {
-        return null;
-      }
-
-      return point;
-    } catch (error) {
-      console.warn("[walk] failed to read last known location", error);
-      return null;
-    }
-  }, [buildRoutePoint]);
-
-  const getFreshStartingPoint = useCallback(async () => {
-    try {
-      const locationOrNull = await Promise.race<Location.LocationObject | null>([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation }),
-        wait((GPS_WARMUP_SECONDS + 1) * 1000).then(() => null),
-      ]);
-
-      if (!locationOrNull) return null;
-
-      const point = buildRoutePoint(locationOrNull.coords, locationOrNull.timestamp || Date.now());
-      const result = evaluateGpsPoint(point, null);
-      if (!result.accepted) {
-        return null;
-      }
-
-      return point;
-    } catch (error) {
-      console.warn("[walk] failed to read fresh start fix", error);
-      return null;
-    }
-  }, [buildRoutePoint, wait]);
-
   const ensureLocationPermission = useCallback(async () => {
     if (permission === "granted") return true;
     if (permission === "denied") return false;
@@ -545,9 +508,10 @@ export default function Walk() {
       try {
         const subscription = await Location.watchPositionAsync(
           {
-            accuracy: Location.Accuracy.BestForNavigation,
-            timeInterval: 1000,
-            distanceInterval: 2,
+            // Start quickly, then let the route filter improve accuracy across the full walk.
+            accuracy: WALKING_GPS_ACCURACY,
+            timeInterval: 2000,
+            distanceInterval: 3,
           },
           (pos) => {
             if (!mountedRef.current || locationGenerationRef.current !== generation || phaseRef.current !== "tracking") {
@@ -643,6 +607,31 @@ export default function Walk() {
       }
     },
     [acceptAnchorPoint, buildRoutePoint, logGps, logWalk, permission, setDistanceSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, trackIgnoredPoint]
+  );
+
+  const startGpsWithTimeout = useCallback(
+    async (reason: string, seededPoint?: RoutePoint | null) => {
+      let timeoutRef: ReturnType<typeof setTimeout> | null = null;
+
+      const timeoutPromise = new Promise<false>((resolve) => {
+        timeoutRef = setTimeout(() => {
+          logWalk("gps startup timeout; walk continues", {
+            reason,
+            timeoutMs: GPS_STARTUP_TIMEOUT_MS,
+          });
+          resolve(false);
+        }, GPS_STARTUP_TIMEOUT_MS);
+      });
+
+      const started = await Promise.race([startGps(reason, seededPoint), timeoutPromise]);
+
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
+      }
+
+      return started;
+    },
+    [logWalk, startGps]
   );
 
   const getElapsedNow = useCallback(() => {
@@ -887,27 +876,12 @@ export default function Walk() {
       transitionTo("countdown", "start warmup");
 
       const permissionPromise = ensureLocationPermission();
-      const warmupPromise = (async () => {
-        const ok = await permissionPromise;
-        if (!ok) return { lastKnownPoint: null as RoutePoint | null, freshPoint: null as RoutePoint | null };
-
-        const lastKnownPoint = await getAcceptableLastKnownPoint();
-        if (lastKnownPoint) {
-          setGpsUiStateSafe("primed");
-        }
-
-        const freshPoint = await getFreshStartingPoint();
-        return { lastKnownPoint, freshPoint };
-      })();
 
       for (let countdown = GPS_WARMUP_SECONDS; countdown >= 1; countdown -= 1) {
         setCountdownSafe(countdown);
         await wait(1000);
       }
       setCountdownSafe(0);
-
-      const ok = await permissionPromise;
-      const { lastKnownPoint, freshPoint } = await warmupPromise;
 
       startedAtRef.current = Date.now();
       elapsedBeforeRunRef.current = 0;
@@ -920,18 +894,16 @@ export default function Walk() {
       setMovingDurationSafe(0);
       distanceRef.current = 0;
       lastPointRef.current = null;
-      rawRoutePointsRef.current = freshPoint ? [freshPoint] : [];
+      rawRoutePointsRef.current = [];
       routePointsRef.current = [];
       hadGpsPointsRef.current = false;
       firstAcceptedElapsedRef.current = null;
-
-      if (ok) {
-        setGpsUiStateSafe(freshPoint ? "live" : lastKnownPoint ? "primed" : "finding");
-      }
+      setGpsUiStateSafe("finding");
 
       transitionTo("tracking", "start");
-      logWalk("walk started", { gpsEnabled: ok, hasFreshStartingPoint: Boolean(freshPoint) });
-      await persistActiveWalk({
+      logWalk("walk started; gps initializes in background");
+      startTimer("start");
+      void persistActiveWalk({
         elapsedSec: 0,
         distanceM: 0,
         movingDurationSec: 0,
@@ -940,11 +912,17 @@ export default function Walk() {
         routePoints: [],
         running: true,
       });
-      startTimer("start");
 
-      if (ok) {
-        await startGps("start", freshPoint);
-      }
+      void (async () => {
+        const ok = await permissionPromise;
+        if (!ok || phaseRef.current !== "tracking") {
+          if (!ok) setGpsUiStateSafe("idle");
+          return;
+        }
+
+        setGpsUiStateSafe("finding");
+        await startGpsWithTimeout("start");
+      })();
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
@@ -1002,6 +980,7 @@ export default function Walk() {
       }
       transitionTo("tracking", "resume");
       logWalk("walk resumed", { elapsedSeconds: elapsedBeforeRunRef.current, gpsEnabled: ok });
+      startTimer("resume");
       await persistActiveWalk({
         elapsedSec: elapsedBeforeRunRef.current,
         pausedDurationSec: pausedDurationSecRef.current,
@@ -1009,10 +988,9 @@ export default function Walk() {
         movingDurationSec: movingDurationSecRef.current,
         running: true,
       });
-      startTimer("resume");
 
       if (ok) {
-        await startGps("resume");
+        await startGpsWithTimeout("resume");
       }
     } catch (error) {
       console.error("[walk] resume failed", error);
@@ -1233,7 +1211,7 @@ export default function Walk() {
         void (async () => {
           const ok = await refreshPermission();
           if (ok && phaseRef.current === "tracking" && !subRef.current) {
-            await startGps("app active restore");
+            await startGpsWithTimeout("app active restore");
           }
         })();
       }
@@ -1248,7 +1226,7 @@ export default function Walk() {
       stopTimer("screen cleanup");
       stopGps("screen cleanup");
     };
-  }, [clearScheduledPersist, markRouteCaptureGap, persistActiveWalk, refreshPermission, startGps, stopGps, stopTimer]);
+  }, [clearScheduledPersist, markRouteCaptureGap, persistActiveWalk, refreshPermission, startGpsWithTimeout, stopGps, stopTimer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1359,7 +1337,7 @@ export default function Walk() {
           startTimer("restore");
           const ok = await refreshPermission();
           if (!cancelled && ok) {
-            await startGps("restore");
+            await startGpsWithTimeout("restore");
           }
         } else {
           setGpsUiStateSafe(routePointsRef.current.length > 0 ? "live" : "idle");
@@ -1379,7 +1357,7 @@ export default function Walk() {
     return () => {
       cancelled = true;
     };
-  }, [logWalk, markRouteCaptureGap, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, setRestoredSafe, startGps, startTimer, transitionTo]);
+  }, [logWalk, markRouteCaptureGap, refreshPermission, resetWalkState, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, setRestoredSafe, startGpsWithTimeout, startTimer, transitionTo]);
 
   useEffect(() => {
     if (restoringRef.current || !startedAtRef.current) return;

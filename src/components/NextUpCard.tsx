@@ -87,8 +87,8 @@ const styles = StyleSheet.create({
     color: PREMIUM.colors.text,
   },
   artWrap: {
-    width: 92,
-    height: 92,
+    width: 132,
+    height: 112,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -98,14 +98,15 @@ const styles = StyleSheet.create({
   },
   artGlow: {
     position: "absolute",
-    width: 72,
-    height: 72,
+    width: 104,
+    height: 104,
     borderRadius: 999,
     backgroundColor: alpha(PREMIUM.colors.gold, 0.16),
   },
   art: {
-    width: 90,
-    height: 90,
+    width: 132,
+    height: 112,
+    backgroundColor: "transparent",
   },
   artCompact: {
     width: 78,
