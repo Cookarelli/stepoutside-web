@@ -17,6 +17,7 @@ import { stopBackgroundWalkTracking } from "./walkLocationTracking";
 import { signOutUser } from "./auth";
 import { db } from "./firebase";
 import { resetAllData } from "./store";
+import { clearLocalUserProfiles } from "./userProfile";
 
 const LOCAL_KEYS_TO_CLEAR = [
   "stepoutside:v2:auth-cache",
@@ -106,6 +107,7 @@ async function clearLocalUserState(): Promise<void> {
     AsyncStorage.multiRemove([...LOCAL_KEYS_TO_CLEAR]),
     clearActiveWalkSnapshot(),
     clearCompletedWalkDraft(),
+    clearLocalUserProfiles(),
     Notifications.cancelAllScheduledNotificationsAsync(),
   ]);
 }

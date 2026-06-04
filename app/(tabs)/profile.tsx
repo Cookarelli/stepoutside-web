@@ -5,6 +5,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -13,6 +15,7 @@ import {
   Switch,
   Text,
   TextInput,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 
@@ -29,6 +32,7 @@ import {
   signOutUser,
   subscribeToAuth,
   type AuthUserSnapshot,
+  updateCurrentAuthDisplayName,
 } from "../../src/lib/auth";
 import { auth } from "../../src/lib/firebase";
 import { resetOnboarding } from "../../src/lib/onboarding";
@@ -40,7 +44,14 @@ import {
   setNotificationPrefs,
   type NotificationPrefs,
 } from "../../src/lib/notifications";
-import { EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
+import { EMPTY_SUMMARY, getSessions, getSummary, type SummaryStats } from "../../src/lib/store";
+import {
+  EMPTY_LOCAL_USER_PROFILE,
+  getLocalUserProfile,
+  saveLocalUserProfile,
+  type LocalUserProfile,
+  type PreferredActivity,
+} from "../../src/lib/userProfile";
 
 type AuthAction = "google" | "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | "deleteAccount" | null;
 
@@ -51,12 +62,28 @@ function firstNonEmpty(...values: (string | null | undefined)[]): string {
   return "";
 }
 
-function getInitials(user: AuthUserSnapshot | null): string {
-  const label = firstNonEmpty(user?.displayName, user?.email, "SO");
+function getInitials(label: string): string {
   const parts = label.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
 }
+
+function emailNameFallback(email: string | null | undefined): string {
+  const prefix = email?.split("@")[0]?.trim();
+  return prefix || "Outside walker";
+}
+
+function formatDistanceMiles(distanceM: number): string {
+  if (!Number.isFinite(distanceM) || distanceM <= 0) return "0.0 mi";
+  return `${(distanceM / 1609.344).toFixed(distanceM >= 16093.44 ? 0 : 1)} mi`;
+}
+
+const PREFERRED_ACTIVITIES: { value: PreferredActivity; label: string }[] = [
+  { value: "walking", label: "Walking" },
+  { value: "hiking", label: "Hiking" },
+  { value: "trail-walks", label: "Trail walks" },
+  { value: "recovery-walks", label: "Recovery walks" },
+];
 
 function formatProviderLabel(user: AuthUserSnapshot | null): string {
   const providerIds = user?.providerIds ?? [];
@@ -187,6 +214,12 @@ export default function ProfileTab() {
   const [authStatus, setAuthStatus] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [localProfile, setLocalProfile] = useState<LocalUserProfile>(EMPTY_LOCAL_USER_PROFILE);
+  const [profileDraft, setProfileDraft] = useState<LocalUserProfile>(EMPTY_LOCAL_USER_PROFILE);
+  const [totalDistanceM, setTotalDistanceM] = useState(0);
+  const [editProfileVisible, setEditProfileVisible] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileStatus, setProfileStatus] = useState("");
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState("");
   const { isPremium } = usePremiumAccess();
@@ -205,21 +238,27 @@ export default function ProfileTab() {
   const weeklyGoal = summary.weeklyGoal ?? 4;
   const monthlyGoal = summary.monthlyGoal ?? 16;
   const weeklyConsistencyStreakCurrent = summary.weeklyConsistencyStreakCurrent ?? 0;
-  const profileHeadline = visibleUser
-    ? firstNonEmpty(visibleUser.displayName, visibleUser.email, "Profile ready")
-    : "Keep your progress close";
-  const profileBody = visibleUser
-    ? firstNonEmpty(
-        visibleUser.email,
-        "This account is attached to your Step Outside profile on this device."
-      )
-    : "Sign in to connect your Premium access to your account instead of only this device.";
-  const profileSupport = visibleUser
-    ? "Walk history is available on this device and Premium access stays linked to your signed-in account."
-    : "Your current walks are still safe on this device even if you stay signed out.";
+  const profileIdentityKey = visibleUser?.uid ?? "device";
+  const profileHeadline = firstNonEmpty(
+    localProfile.displayName,
+    visibleUser?.displayName,
+    emailNameFallback(visibleUser?.email)
+  );
+  const profileEmail = visibleUser?.email ?? "Local profile on this device";
+  const preferredActivityLabel =
+    PREFERRED_ACTIVITIES.find((option) => option.value === localProfile.preferredActivity)?.label ?? "";
+  const profileDetails = [
+    localProfile.location,
+    localProfile.walkingGoal,
+    preferredActivityLabel,
+  ].filter(Boolean);
 
   const loadSettings = useCallback(async () => {
-    const [np, storedSummary] = await Promise.allSettled([getNotificationPrefs(), getSummary()]);
+    const [np, storedSummary, storedSessions] = await Promise.allSettled([
+      getNotificationPrefs(),
+      getSummary(),
+      getSessions(),
+    ]);
     setPrefs(
       np.status === "fulfilled"
         ? np.value
@@ -232,6 +271,18 @@ export default function ProfileTab() {
           }
     );
     setSummary(storedSummary.status === "fulfilled" ? storedSummary.value : EMPTY_SUMMARY);
+    setTotalDistanceM(
+      storedSessions.status === "fulfilled"
+        ? storedSessions.value.reduce(
+            (sum, session) =>
+              sum +
+              (typeof session.distanceM === "number" && Number.isFinite(session.distanceM)
+                ? Math.max(0, session.distanceM)
+                : 0),
+            0
+          )
+        : 0
+    );
   }, []);
 
   useEffect(() => {
@@ -264,6 +315,16 @@ export default function ProfileTab() {
       void loadSettings();
     }, [loadSettings])
   );
+
+  useEffect(() => {
+    let active = true;
+    void getLocalUserProfile(profileIdentityKey).then((profile) => {
+      if (active) setLocalProfile(profile);
+    });
+    return () => {
+      active = false;
+    };
+  }, [profileIdentityKey]);
 
   const onResetOnboarding = () => {
     Alert.alert("Replay welcome screens?", "This will show onboarding again on next app launch.", [
@@ -446,26 +507,92 @@ export default function ProfileTab() {
     }
   };
 
+  const onOpenEditProfile = () => {
+    setProfileStatus("");
+    setProfileDraft({
+      ...localProfile,
+      displayName: firstNonEmpty(localProfile.displayName, visibleUser?.displayName),
+    });
+    setEditProfileVisible(true);
+    void Haptics.selectionAsync();
+  };
+
+  const onSaveProfile = async () => {
+    if (profileSaving) return;
+    setProfileSaving(true);
+    setProfileStatus("");
+    Keyboard.dismiss();
+
+    try {
+      const saved = await saveLocalUserProfile(profileIdentityKey, profileDraft);
+      setLocalProfile(saved);
+
+      let cloudSynced = true;
+      if (visibleUser) {
+        try {
+          const updatedUser = await updateCurrentAuthDisplayName(saved.displayName);
+          if (updatedUser) {
+            setAuthUser(updatedUser);
+            setCachedAuthUser(updatedUser);
+          }
+        } catch (error) {
+          cloudSynced = false;
+          console.warn("[profile] display name cloud sync deferred", error);
+        }
+      }
+
+      setEditProfileVisible(false);
+      setProfileStatus(
+        cloudSynced
+          ? "Profile saved."
+          : "Profile saved on this device. Display name will sync when your connection returns."
+      );
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      setProfileStatus("Couldn’t save your profile right now.");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   return (
     <>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Profile</Text>
-        <Text style={styles.sub}>Your account, reminders, and plan settings in one grounded place.</Text>
+        <Text style={styles.sub}>Your walking rhythm, favorite places, and account in one grounded place.</Text>
 
       <View style={styles.accountCard}>
-        <View style={styles.accountHeader}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{getInitials(visibleUser)}</Text>
+        <View style={styles.profileTopRow}>
+          <View style={styles.accountHeader}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{getInitials(profileHeadline)}</Text>
+            </View>
+            <View style={styles.accountCopy}>
+              <Text style={styles.accountTitle} numberOfLines={2}>{profileHeadline}</Text>
+              <Text style={styles.accountEmail} numberOfLines={1}>{profileEmail}</Text>
+            </View>
           </View>
-          <View style={styles.accountCopy}>
-            <Text style={styles.accountTitle}>{profileHeadline}</Text>
-            <Text style={styles.accountBody}>{profileBody}</Text>
-            <Text style={styles.accountMeta}>
-              {visibleUser ? `${providerLabel} account connected` : "Profile backup is optional for now."}
-            </Text>
-            <Text style={styles.accountMeta}>{profileSupport}</Text>
-          </View>
+          <Pressable
+            onPress={onOpenEditProfile}
+            style={({ pressed }) => [styles.editProfileBtn, pressed ? { opacity: 0.82 } : null]}
+          >
+            <Text style={styles.editProfileBtnText}>Edit Profile</Text>
+          </Pressable>
         </View>
+
+        {localProfile.bio ? <Text style={styles.profileBio}>{localProfile.bio}</Text> : null}
+        {profileDetails.length > 0 ? (
+          <View style={styles.profileDetailRow}>
+            {profileDetails.map((detail) => (
+              <View key={detail} style={styles.profileDetailChip}>
+                <Text style={styles.profileDetailText}>{detail}</Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.profilePrompt}>Add a home trail, walking goal, or mantra to make this space yours.</Text>
+        )}
 
         <View style={styles.profileStatsRow}>
           <View style={styles.profileStatChip}>
@@ -479,6 +606,10 @@ export default function ProfileTab() {
           <View style={styles.profileStatChip}>
             <Text style={styles.profileStatLabel}>Outside</Text>
             <Text style={styles.profileStatValue}>{formatMinutesLabel(summary.totalMinutes)}</Text>
+          </View>
+          <View style={styles.profileStatChip}>
+            <Text style={styles.profileStatLabel}>Miles</Text>
+            <Text style={styles.profileStatValue}>{formatDistanceMiles(totalDistanceM)}</Text>
           </View>
         </View>
 
@@ -587,26 +718,7 @@ export default function ProfileTab() {
         )}
 
         {authStatus ? <Text style={styles.authStatus}>{authStatus}</Text> : null}
-      </View>
-
-      <View style={styles.settingsCard}>
-        <Text style={styles.settingsEyebrow}>Settings / Account</Text>
-        <Text style={styles.settingsTitle}>Delete Account</Text>
-        <Text style={styles.settingsBody}>
-          Deleting your account removes your user profile and associated app data where legally permitted. Shared team records may require server-side cleanup afterward.
-        </Text>
-        <Pressable
-          onPress={onOpenDeleteAccount}
-          disabled={!visibleUser || authAction !== null}
-          style={({ pressed }) => [
-            styles.deleteBtn,
-            (!visibleUser || authAction !== null) ? styles.authBtnDisabled : null,
-            pressed ? { opacity: 0.92 } : null,
-          ]}
-        >
-          <Text style={styles.deleteBtnText}>Delete Account</Text>
-        </Pressable>
-        {!visibleUser ? <Text style={styles.deleteHint}>Sign in to access account deletion.</Text> : null}
+        {profileStatus ? <Text style={styles.authStatus}>{profileStatus}</Text> : null}
       </View>
 
       <View style={styles.streakCard}>
@@ -744,7 +856,146 @@ export default function ProfileTab() {
         <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.btnAlt, pressed ? { opacity: 0.9 } : null]}>
           <Text style={styles.btnAltText}>Replay Welcome Screens</Text>
         </Pressable>
+
+        <View style={styles.settingsCard}>
+          <Text style={styles.settingsEyebrow}>Danger zone</Text>
+          <Text style={styles.settingsTitle}>Delete Account</Text>
+          <Text style={styles.settingsBody}>
+            Permanently remove your signed-in profile and associated account data. Local walking data is also cleared.
+          </Text>
+          <Pressable
+            onPress={onOpenDeleteAccount}
+            disabled={!visibleUser || authAction !== null}
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              (!visibleUser || authAction !== null) ? styles.authBtnDisabled : null,
+              pressed ? { opacity: 0.92 } : null,
+            ]}
+          >
+            <Text style={styles.deleteBtnText}>Delete Account</Text>
+          </Pressable>
+          {!visibleUser ? <Text style={styles.deleteHint}>Sign in to access account deletion.</Text> : null}
+        </View>
       </ScrollView>
+
+      <Modal
+        visible={editProfileVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditProfileVisible(false)}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <KeyboardAvoidingView
+            style={styles.editModalBackdrop}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+          >
+            <View style={styles.editModalCard}>
+              <View style={styles.editModalHeader}>
+                <View style={styles.editModalHeaderCopy}>
+                  <Text style={styles.editModalEyebrow}>Walking profile</Text>
+                  <Text style={styles.editModalTitle}>Make this space yours</Text>
+                </View>
+                <Pressable
+                  onPress={() => setEditProfileVisible(false)}
+                  style={({ pressed }) => [styles.editModalClose, pressed ? { opacity: 0.72 } : null]}
+                >
+                  <Text style={styles.editModalCloseText}>Close</Text>
+                </Pressable>
+              </View>
+
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.editForm}
+              >
+                <Text style={styles.fieldLabel}>Display name</Text>
+                <TextInput
+                  value={profileDraft.displayName}
+                  onChangeText={(displayName) => setProfileDraft((current) => ({ ...current, displayName }))}
+                  placeholder={emailNameFallback(visibleUser?.email)}
+                  placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
+                  autoCapitalize="words"
+                  maxLength={48}
+                  returnKeyType="next"
+                  style={styles.profileInput}
+                />
+
+                <Text style={styles.fieldLabel}>Location, home trail, or favorite park</Text>
+                <TextInput
+                  value={profileDraft.location}
+                  onChangeText={(location) => setProfileDraft((current) => ({ ...current, location }))}
+                  placeholder="Rock Cut State Park"
+                  placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
+                  maxLength={80}
+                  style={styles.profileInput}
+                />
+
+                <Text style={styles.fieldLabel}>Walking goal</Text>
+                <TextInput
+                  value={profileDraft.walkingGoal}
+                  onChangeText={(walkingGoal) => setProfileDraft((current) => ({ ...current, walkingGoal }))}
+                  placeholder="Walk outside 4 days a week"
+                  placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
+                  maxLength={80}
+                  style={styles.profileInput}
+                />
+
+                <Text style={styles.fieldLabel}>Preferred activity</Text>
+                <View style={styles.activityOptions}>
+                  {PREFERRED_ACTIVITIES.map((option) => {
+                    const active = profileDraft.preferredActivity === option.value;
+                    return (
+                      <Pressable
+                        key={option.value}
+                        onPress={() =>
+                          setProfileDraft((current) => ({
+                            ...current,
+                            preferredActivity: active ? null : option.value,
+                          }))
+                        }
+                        style={({ pressed }) => [
+                          styles.activityOption,
+                          active ? styles.activityOptionActive : null,
+                          pressed ? { opacity: 0.82 } : null,
+                        ]}
+                      >
+                        <Text style={[styles.activityOptionText, active ? styles.activityOptionTextActive : null]}>
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <Text style={styles.fieldLabel}>Bio or mantra</Text>
+                <TextInput
+                  value={profileDraft.bio}
+                  onChangeText={(bio) => setProfileDraft((current) => ({ ...current, bio }))}
+                  placeholder="A little farther, a little lighter."
+                  placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
+                  multiline
+                  maxLength={160}
+                  textAlignVertical="top"
+                  style={[styles.profileInput, styles.profileBioInput]}
+                />
+
+                <Pressable
+                  onPress={() => void onSaveProfile()}
+                  disabled={profileSaving}
+                  style={({ pressed }) => [
+                    styles.saveProfileBtn,
+                    profileSaving ? styles.authBtnDisabled : null,
+                    pressed ? { opacity: 0.92 } : null,
+                  ]}
+                >
+                  <Text style={styles.saveProfileBtnText}>{profileSaving ? "Saving..." : "Save Profile"}</Text>
+                </Pressable>
+              </ScrollView>
+            </View>
+          </KeyboardAvoidingView>
+        </TouchableWithoutFeedback>
+      </Modal>
 
       <Modal visible={deleteModalVisible} transparent animationType="fade" onRequestClose={() => setDeleteModalVisible(false)}>
         <View style={styles.modalBackdrop}>
@@ -809,29 +1060,40 @@ const styles = StyleSheet.create({
   accountCard: {
     marginTop: 18,
     borderRadius: PREMIUM.radius.xl,
-    backgroundColor: alpha(PREMIUM.colors.creamSoft, 0.84),
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.82),
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
     padding: 18,
     gap: 14,
-    ...PREMIUM.shadow.soft,
+    ...PREMIUM.shadow.card,
+  },
+  profileTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
   },
   accountHeader: {
     flexDirection: "row",
     gap: 14,
     alignItems: "center",
+    flex: 1,
+    minWidth: 210,
   },
   avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: PREMIUM.colors.forest,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 3,
+    borderColor: alpha(PREMIUM.colors.gold, 0.72),
   },
   avatarText: {
     color: PREMIUM.colors.offWhite,
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "900",
     fontFamily: PREMIUM.type.serifFamily,
   },
@@ -841,28 +1103,72 @@ const styles = StyleSheet.create({
   },
   accountTitle: {
     color: PREMIUM.colors.text,
-    fontSize: 22,
+    fontSize: 28,
+    lineHeight: 32,
     fontWeight: "700",
     fontFamily: PREMIUM.type.serifFamily,
   },
-  accountBody: {
-    color: alpha(PREMIUM.colors.text, 0.8),
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: "600",
-  },
-  accountMeta: {
-    color: alpha(PREMIUM.colors.text, 0.54),
-    fontSize: 12,
-    lineHeight: 17,
+  accountEmail: {
+    color: PREMIUM.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: "700",
+  },
+  editProfileBtn: {
+    minHeight: 42,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.22),
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.34),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  editProfileBtnText: {
+    color: PREMIUM.colors.forestDeep,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  profileBio: {
+    color: PREMIUM.colors.text,
+    fontSize: 16,
+    lineHeight: 23,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  profilePrompt: {
+    color: PREMIUM.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  profileDetailRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+  },
+  profileDetailChip: {
+    borderRadius: PREMIUM.radius.pill,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.08),
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+  },
+  profileDetailText: {
+    color: PREMIUM.colors.forestDeep,
+    fontSize: 12,
+    fontWeight: "800",
   },
   profileStatsRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
   profileStatChip: {
-    flex: 1,
+    width: "48%",
+    flexGrow: 1,
     borderRadius: PREMIUM.radius.md,
     paddingVertical: 12,
     paddingHorizontal: 12,
@@ -880,7 +1186,7 @@ const styles = StyleSheet.create({
   profileStatValue: {
     marginTop: 6,
     color: PREMIUM.colors.text,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
   },
   authLoadingRow: {
@@ -1196,14 +1502,14 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   deleteHint: {
-    color: PREMIUM.colors.textSoft,
+    color: PREMIUM.colors.textMuted,
     fontSize: 12,
     fontWeight: "700",
   },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingVertical: 10 },
   rowCopy: { flex: 1 },
   rowLabel: { fontWeight: "700", color: PREMIUM.colors.text },
-  rowHint: { marginTop: 3, color: PREMIUM.colors.textSoft, fontWeight: "600", fontSize: 12, lineHeight: 17 },
+  rowHint: { marginTop: 3, color: PREMIUM.colors.textMuted, fontWeight: "600", fontSize: 12, lineHeight: 17 },
   testBtn: {
     marginTop: 8,
     alignSelf: "flex-start",
@@ -1222,6 +1528,129 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   btnAltText: { color: PREMIUM.colors.textMuted, fontWeight: "900", letterSpacing: 0.3 },
+  editModalBackdrop: {
+    flex: 1,
+    backgroundColor: alpha(PREMIUM.colors.text, 0.58),
+    justifyContent: "flex-end",
+  },
+  editModalCard: {
+    width: "100%",
+    maxHeight: "92%",
+    borderTopLeftRadius: PREMIUM.radius.hero,
+    borderTopRightRadius: PREMIUM.radius.hero,
+    backgroundColor: PREMIUM.colors.cream,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    ...PREMIUM.shadow.hero,
+  },
+  editModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingBottom: 12,
+  },
+  editModalHeaderCopy: {
+    flex: 1,
+  },
+  editModalEyebrow: {
+    color: PREMIUM.colors.forest,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    fontSize: 11,
+  },
+  editModalTitle: {
+    marginTop: 5,
+    color: PREMIUM.colors.text,
+    fontSize: 26,
+    lineHeight: 31,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  editModalClose: {
+    minHeight: 40,
+    paddingHorizontal: 12,
+    borderRadius: PREMIUM.radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: alpha(PREMIUM.colors.text, 0.08),
+  },
+  editModalCloseText: {
+    color: PREMIUM.colors.text,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  editForm: {
+    paddingBottom: 36,
+  },
+  fieldLabel: {
+    marginTop: 12,
+    marginBottom: 7,
+    color: PREMIUM.colors.forestDeep,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  profileInput: {
+    minHeight: 50,
+    borderRadius: PREMIUM.radius.md,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.lineStrong,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.84),
+    paddingHorizontal: 14,
+    color: PREMIUM.colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  profileBioInput: {
+    minHeight: 92,
+    paddingTop: 13,
+    paddingBottom: 13,
+  },
+  activityOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  activityOption: {
+    minHeight: 42,
+    justifyContent: "center",
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: PREMIUM.radius.pill,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.lineStrong,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.68),
+  },
+  activityOptionActive: {
+    backgroundColor: PREMIUM.colors.forest,
+    borderColor: PREMIUM.colors.forestDeep,
+  },
+  activityOptionText: {
+    color: PREMIUM.colors.forestDeep,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  activityOptionTextActive: {
+    color: PREMIUM.colors.offWhite,
+  },
+  saveProfileBtn: {
+    minHeight: 54,
+    marginTop: 20,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.forest,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  saveProfileBtnText: {
+    color: PREMIUM.colors.offWhite,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: alpha(PREMIUM.colors.text, 0.56),

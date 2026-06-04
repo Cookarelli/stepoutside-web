@@ -8,6 +8,7 @@ import {
   signInWithCredential,
   signInWithEmailAndPassword,
   signOut,
+  updateProfile,
   type User,
 } from "firebase/auth";
 
@@ -139,4 +140,14 @@ export async function createEmailPasswordAccount(email: string, password: string
 
 export async function sendEmailPasswordReset(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, normalizeEmail(email));
+}
+
+export async function updateCurrentAuthDisplayName(displayName: string): Promise<AuthUserSnapshot | null> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) return null;
+
+  await updateProfile(currentUser, { displayName: displayName.trim() || null });
+  const snapshot = toSnapshot(currentUser);
+  await writeCachedUser(snapshot);
+  return snapshot;
 }

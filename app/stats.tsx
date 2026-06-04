@@ -71,7 +71,7 @@ export default function StatsScreen() {
     pageText: PREMIUM.colors.ink,
     pageSub: PREMIUM.colors.textMuted,
     yellowText: PREMIUM.colors.ink,
-    yellowSub: alpha(PREMIUM.colors.ink, 0.74),
+    yellowSub: alpha(PREMIUM.colors.ink, 0.86),
     text: PREMIUM.colors.offWhite,
     sub: alpha(PREMIUM.colors.offWhite, 0.76),
     card: PREMIUM.colors.forest,
@@ -452,7 +452,7 @@ export default function StatsScreen() {
               title="Premium insights"
               body="Unlock Premium for Golden Hour streaks, dual reset tracking, and deeper rhythm insights."
               ctaLabel="Unlock Premium"
-              tone="forest"
+              tone="gold"
             >
               <>
                 <View style={styles.row}>
@@ -514,7 +514,7 @@ export default function StatsScreen() {
                     ]}
                   >
                     <Text style={[styles.sessionTitle, { color: idx % 2 === 0 ? t.text : t.pageText }]}>{mins} min</Text>
-                    <Text style={[styles.sessionSub, { color: idx % 2 === 0 ? t.sub : t.pageSub }]}>{fmtTime(s.endedAt)}</Text>
+                    <Text style={[styles.sessionSub, { color: idx % 2 === 0 ? t.sub : t.yellowSub }]}>{fmtTime(s.endedAt)}</Text>
                   </View>
                 );
               })
@@ -753,7 +753,7 @@ const styles = StyleSheet.create({
     borderRadius: PREMIUM.radius.pill,
   },
   unlockBtnText: {
-    color: PREMIUM.colors.offWhite,
+    color: PREMIUM.colors.ink,
     fontWeight: "900",
   },
 });

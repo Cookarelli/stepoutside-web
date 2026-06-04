@@ -11,7 +11,7 @@ type PremiumFeatureGateProps = {
   body?: string;
   ctaLabel?: string;
   style?: StyleProp<ViewStyle>;
-  tone?: "default" | "forest";
+  tone?: "default" | "forest" | "gold";
 };
 
 export function PremiumFeatureGate({
@@ -24,7 +24,7 @@ export function PremiumFeatureGate({
 }: PremiumFeatureGateProps) {
   const router = useRouter();
   const { isPremium, isLoading } = usePremiumAccess();
-  const palette = tone === "forest" ? forestPalette : defaultPalette;
+  const palette = tone === "forest" ? forestPalette : tone === "gold" ? goldPalette : defaultPalette;
 
   if (isLoading) {
     return (
@@ -82,6 +82,18 @@ const forestPalette = {
   body: alpha(PREMIUM.colors.offWhite, 0.76),
   buttonBg: PREMIUM.colors.gold,
   buttonText: PREMIUM.colors.ink,
+} as const;
+
+const goldPalette = {
+  spinner: PREMIUM.colors.forestDeep,
+  stateText: alpha(PREMIUM.colors.ink, 0.82),
+  background: alpha(PREMIUM.colors.offWhite, 0.34),
+  border: alpha(PREMIUM.colors.ink, 0.18),
+  eyebrow: PREMIUM.colors.forestDeep,
+  title: PREMIUM.colors.ink,
+  body: alpha(PREMIUM.colors.ink, 0.82),
+  buttonBg: alpha(PREMIUM.colors.offWhite, 0.62),
+  buttonText: PREMIUM.colors.forestDeep,
 } as const;
 
 const styles = StyleSheet.create({
