@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Platform, StyleSheet, Text, UIManager, View } from "react-native";
 
 import { ENV } from "../../env";
+import { prepareRoutePreviewPoints } from "../lib/routePreview";
 import type { RoutePoint } from "../lib/store";
 import { RoutePreview } from "./RoutePreview";
 
@@ -127,8 +128,9 @@ export function NativeRouteMapCard({
     return providerMode === "google" ? isManagerAvailable("AIRGoogleMap") || isManagerAvailable("AIRMap") : isManagerAvailable("AIRMap");
   }, [nativeMaps, providerMode]);
 
-  const shouldUseNativeMap = ENV.MAPS.nativeRouteMapsEnabled && Boolean(nativeMaps) && nativeManagerAvailable && points.length > 1;
-  const region = useMemo(() => buildRegion(points), [points]);
+  const previewPoints = useMemo(() => prepareRoutePreviewPoints(points), [points]);
+  const shouldUseNativeMap = ENV.MAPS.nativeRouteMapsEnabled && Boolean(nativeMaps) && nativeManagerAvailable && previewPoints.length > 1;
+  const region = useMemo(() => buildRegion(previewPoints), [previewPoints]);
 
   useEffect(() => {
     if (!shouldUseNativeMap) {
@@ -144,12 +146,12 @@ export function NativeRouteMapCard({
       setTimedOut(true);
       console.warn("[maps] native route map timed out before ready", {
         providerMode,
-        pointCount: points.length,
+        pointCount: previewPoints.length,
       });
     }, 4500);
 
     return () => clearTimeout(timeoutId);
-  }, [points.length, providerMode, shouldUseNativeMap]);
+  }, [previewPoints.length, providerMode, shouldUseNativeMap]);
 
   useEffect(() => {
     if (!shouldUseNativeMap) {
@@ -176,9 +178,9 @@ export function NativeRouteMapCard({
 
   const { default: MapView, Polyline, Marker, PROVIDER_GOOGLE } = nativeMaps!;
   const provider = providerMode === "google" ? PROVIDER_GOOGLE : undefined;
-  const startPoint = points[0];
-  const endPoint = points[points.length - 1];
-  const polylineSegments = splitPolylineSegments(points);
+  const startPoint = previewPoints[0];
+  const endPoint = previewPoints[previewPoints.length - 1];
+  const polylineSegments = splitPolylineSegments(previewPoints);
 
   return (
     <View style={styles.nativeCard}>
@@ -188,7 +190,7 @@ export function NativeRouteMapCard({
       </View>
       <MapView
         style={styles.map}
-        initialRegion={region}
+        region={region}
         provider={provider}
         onMapReady={() => {
           setReady(true);
@@ -264,13 +266,13 @@ const styles = StyleSheet.create({
   nativeCard: {
     width: "100%",
     borderRadius: 22,
-    padding: 16,
+    padding: 12,
     backgroundColor: "rgba(255,255,255,0.7)",
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.08)",
   },
   header: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
   title: {
     color: "#0B0F0E",
@@ -285,11 +287,11 @@ const styles = StyleSheet.create({
   },
   map: {
     width: "100%",
-    height: 220,
+    height: 170,
     borderRadius: 18,
   },
   providerHint: {
-    marginTop: 10,
+    marginTop: 6,
     color: "rgba(11,15,14,0.54)",
     fontSize: 12,
     fontWeight: "700",

@@ -46,7 +46,7 @@ export const GPS_WARMUP_SECONDS = 3;
 export const MIN_DISTANCE_METERS = 1.5;
 export const MAX_ACCEPTABLE_ACCURACY_METERS = 50;
 export const MAX_REASONABLE_WALKING_SPEED_MPS = 4.0;
-export const MIN_DISTANCE_FOR_PACE_DISPLAY = 0.05 * 1609.344;
+export const MIN_DISTANCE_FOR_PACE_DISPLAY = 8;
 
 export const GPS_THRESHOLDS = {
   minAcceptedDeltaSec: 2,
@@ -57,10 +57,11 @@ export const GPS_THRESHOLDS = {
   maxJumpDistanceMeters: 50,
   duplicateCoordinateToleranceMeters: 0.75,
   minPaceDistanceMeters: MIN_DISTANCE_FOR_PACE_DISPLAY,
-  minPaceElapsedSec: 60,
-  suspiciousFastPaceSecPerMile: 10 * 60,
+  minPaceElapsedSec: 10,
+  suspiciousFastPaceSecPerMile: 12 * 60,
+  suspiciousSlowPaceSecPerMile: 45 * 60,
   suspiciousFastMinDistanceMeters: 0.1 * 1609.344,
-  suspiciousFastMinElapsedSec: 180,
+  suspiciousPaceMinElapsedSec: 90,
 } as const;
 
 export function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -100,7 +101,14 @@ export function formatWalkingPace(distanceM: number, elapsedSec: number): string
   if (
     totalSecondsPerMile < GPS_THRESHOLDS.suspiciousFastPaceSecPerMile &&
     (distanceM < GPS_THRESHOLDS.suspiciousFastMinDistanceMeters ||
-      elapsedSec < GPS_THRESHOLDS.suspiciousFastMinElapsedSec)
+      elapsedSec < GPS_THRESHOLDS.suspiciousPaceMinElapsedSec)
+  ) {
+    return null;
+  }
+
+  if (
+    totalSecondsPerMile > GPS_THRESHOLDS.suspiciousSlowPaceSecPerMile &&
+    elapsedSec < GPS_THRESHOLDS.suspiciousPaceMinElapsedSec
   ) {
     return null;
   }
@@ -215,7 +223,7 @@ export function evaluateGpsPoint(
     return { accepted: false, reason: "too_soon", deltaMeters, deltaTimeSec: dtSec, speedMps: effectiveSpeedMps };
   }
 
-  if (deltaMeters < dynamicNoiseFloor && effectiveSpeedMps < 1.8) {
+  if (deltaMeters < dynamicNoiseFloor && speedMps < 1.8) {
     return { accepted: false, reason: "too_close", deltaMeters, deltaTimeSec: dtSec, speedMps: effectiveSpeedMps };
   }
 
@@ -230,8 +238,8 @@ export function evaluateGpsPoint(
     return { accepted: false, reason: "gps_jump", deltaMeters, deltaTimeSec: dtSec, speedMps };
   }
 
-  if (effectiveSpeedMps > GPS_THRESHOLDS.maxNormalWalkingSpeedMps && accuracy !== null && accuracy > 20) {
-    return { accepted: false, reason: "too_fast", deltaMeters, deltaTimeSec: dtSec, speedMps: effectiveSpeedMps };
+  if (speedMps > GPS_THRESHOLDS.maxNormalWalkingSpeedMps && accuracy !== null && accuracy > 20) {
+    return { accepted: false, reason: "too_fast", deltaMeters, deltaTimeSec: dtSec, speedMps };
   }
 
   return {

@@ -1,13 +1,12 @@
 import * as Haptics from "expo-haptics";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BadgeRevealSplash } from "../src/components/BadgeRevealSplash";
 import { NativeRouteMapCard } from "../src/components/NativeRouteMapCard";
-import { PostWalkTabNav } from "../src/components/PostWalkTabNav";
-import { RoutePreview } from "../src/components/RoutePreview";
 import { StepButton } from "../src/components/StepButton";
 import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
 import { BADGE_CATALOG, CHALLENGE_CATALOG } from "../src/lib/challenges/catalog";
@@ -25,14 +24,6 @@ import {
   type SessionSource,
   type SummaryStats,
 } from "../src/lib/store";
-
-function minutesFromDuration(durationSec: number): number {
-  return Math.max(1, Math.round(durationSec / 60));
-}
-
-function fmtNiceMinutes(min: number): string {
-  return min === 1 ? "1 minute" : `${min} minutes`;
-}
 
 function fmtClock(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
@@ -89,7 +80,6 @@ export default function CompleteScreen() {
   )}-${source}`;
 
   const [saving, setSaving] = useState(true);
-  const [minutes, setMinutes] = useState(0);
   const [summary, setSummary] = useState<SummaryStats | null>(null);
   const [errorText, setErrorText] = useState("");
   const [sunriseBonus, setSunriseBonus] = useState(false);
@@ -132,9 +122,6 @@ export default function CompleteScreen() {
       try {
         setErrorText("");
         setSaving(true);
-
-        const mins = minutesFromDuration(durationSec);
-        setMinutes(mins);
 
         const id = `${startedAt}-${endedAt}`;
         const walkDraft = await getCompletedWalkDraft();
@@ -369,6 +356,11 @@ export default function CompleteScreen() {
     } as never);
   };
 
+  const goHome = () => {
+    void Haptics.selectionAsync();
+    router.replace("/(tabs)");
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
       <ScrollView
@@ -386,17 +378,26 @@ export default function CompleteScreen() {
           queueTotal={unlockedBadges.length}
           onContinue={advanceBadgeReveal}
         />
-        <Image source={require("../assets/images/icon.png")} style={styles.logo} />
-        <Text style={styles.title}>Step Outside</Text>
+        <View style={styles.topBar}>
+          <View>
+            <Text style={styles.eyebrow}>Walk complete</Text>
+            <Text style={styles.topBarTitle}>Step Outside</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back home"
+            onPress={goHome}
+            style={({ pressed }) => [styles.homeButton, pressed ? styles.homeButtonPressed : null]}
+          >
+            <Ionicons name="home-outline" size={17} color="#255E36" />
+            <Text style={styles.homeButtonText}>HOME</Text>
+          </Pressable>
+        </View>
 
         <Text style={styles.headline}>{headline}</Text>
 
         {valid ? (
           <>
-            <Text style={styles.big}>
-              {fmtNiceMinutes(minutes || minutesFromDuration(durationSec))}
-            </Text>
-
             <View style={styles.metricsRow}>
               <View style={styles.metricCard}>
                 <Text style={styles.metricK}>Time</Text>
@@ -410,13 +411,44 @@ export default function CompleteScreen() {
 
             {routePoints.length > 1 ? (
               <View style={styles.routeWrap}>
-                {routeCaptureStatus === "partial" ? (
-                  <RoutePreview points={routePoints} title="Captured route" subtitle={routeSubtitle} />
-                ) : (
-                  <NativeRouteMapCard points={routePoints} title="Captured route" subtitle={routeSubtitle} />
-                )}
+                <NativeRouteMapCard points={routePoints} title="Captured route" subtitle={routeSubtitle} />
               </View>
             ) : null}
+
+            <View style={styles.actionsWrap}>
+              <StepButton
+                label={reflectionLabel}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  goReflection();
+                }}
+                disabled={saving}
+                fullWidth
+                style={styles.primaryAction}
+              />
+
+              <View style={styles.secondaryGrid}>
+                <StepButton label="BACK HOME" onPress={goHome} variant="tertiary" style={styles.halfButton} />
+                <StepButton
+                  label="VIEW STATS"
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    router.replace("/(tabs)/stats");
+                  }}
+                  variant="secondary"
+                  style={styles.halfButton}
+                />
+                <StepButton
+                  label="SHARE WALK"
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    goShare();
+                  }}
+                  variant="secondary"
+                  style={styles.halfButton}
+                />
+              </View>
+            </View>
 
             <Text style={styles.sub}>
               {saving ? "Saving your walk…" : errorText ? errorText : streakLine || "Streak updated."}
@@ -493,55 +525,6 @@ export default function CompleteScreen() {
         ) : (
           <Text style={styles.sub}>No session found.</Text>
         )}
-
-        <View style={styles.actionsWrap}>
-          <Text style={styles.actionsLabel}>What next?</Text>
-
-          <StepButton
-            label={reflectionLabel}
-            onPress={() => {
-              void Haptics.selectionAsync();
-              goReflection();
-            }}
-            disabled={saving && valid}
-            fullWidth
-          />
-
-          <View style={styles.secondaryGrid}>
-            <StepButton
-              label="SHARE WALK"
-              onPress={() => {
-                void Haptics.selectionAsync();
-                goShare();
-              }}
-              variant="secondary"
-              style={styles.halfButton}
-            />
-
-            <StepButton
-              label="VIEW STATS"
-              onPress={() => {
-                void Haptics.selectionAsync();
-                router.replace("/(tabs)/stats");
-              }}
-              variant="secondary"
-              style={styles.halfButton}
-            />
-          </View>
-
-          <StepButton
-            label="BACK HOME"
-            onPress={() => {
-              void Haptics.selectionAsync();
-              router.replace("/(tabs)");
-            }}
-            variant="tertiary"
-            fullWidth
-            style={styles.backHomeButton}
-          />
-        </View>
-
-        <PostWalkTabNav params={walkParams} />
       </View>
       </ScrollView>
     </SafeAreaView>
@@ -556,19 +539,56 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: "#F8F4EE",
     alignItems: "center",
-    justifyContent: "center",
     paddingHorizontal: 20,
-    paddingTop: 24,
+    paddingTop: 10,
   },
-  logo: { width: 88, height: 88, borderRadius: 22, marginBottom: 14 },
-  title: { fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
-  headline: { marginTop: 14, fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
-  big: { marginTop: 10, fontSize: 44, fontWeight: "900", color: "#0B0F0E" },
+  topBar: {
+    width: "100%",
+    maxWidth: 540,
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  eyebrow: {
+    color: "rgba(37,94,54,0.72)",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  topBarTitle: {
+    marginTop: 2,
+    color: "#0B0F0E",
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  homeButton: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 13,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.18)",
+  },
+  homeButtonPressed: {
+    opacity: 0.72,
+  },
+  homeButtonText: {
+    color: "#255E36",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
+  headline: { marginTop: 12, fontSize: 24, fontWeight: "900", color: "#0B0F0E" },
 
-  metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
+  metricsRow: { width: "100%", maxWidth: 540, flexDirection: "row", gap: 10, marginTop: 10 },
   metricCard: {
-    minWidth: 140,
-    paddingVertical: 12,
+    flex: 1,
+    paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 16,
     backgroundColor: "rgba(11,15,14,0.06)",
@@ -579,7 +599,7 @@ const styles = StyleSheet.create({
   metricK: { fontSize: 12, fontWeight: "900", color: "rgba(11,15,14,0.62)" },
   metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: "#0B0F0E" },
   routeWrap: {
-    marginTop: 18,
+    marginTop: 12,
     width: "100%",
     maxWidth: 540,
   },
@@ -669,36 +689,21 @@ const styles = StyleSheet.create({
   actionsWrap: {
     width: "100%",
     maxWidth: 540,
-    marginTop: 20,
+    marginTop: 12,
   },
-  actionsLabel: {
-    marginBottom: 10,
-    color: "rgba(11,15,14,0.56)",
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-    textAlign: "center",
-  },
-
-  btnPrimary: {
-    width: "100%",
+  primaryAction: {
+    minHeight: 52,
   },
   secondaryGrid: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 8,
   },
   halfButton: {
     minWidth: "48%",
     flexGrow: 1,
-  },
-  backHomeButton: {
-    marginTop: 12,
-    backgroundColor: "rgba(31,77,54,0.06)",
-  },
-  btnDisabled: {
-    opacity: 0.6,
+    minHeight: 48,
+    paddingHorizontal: 12,
   },
 });

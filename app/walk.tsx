@@ -137,7 +137,7 @@ export default function Walk() {
     console.log("[PACE]", {
       movingSeconds,
       distanceMiles: Number((confirmedDistanceMeters / 1609.344).toFixed(3)),
-      pace: formatWalkingPace(confirmedDistanceMeters, movingSeconds) ?? "Warming up",
+      pace: formatWalkingPace(confirmedDistanceMeters, movingSeconds) ?? "Getting pace…",
     });
   }, []);
 
@@ -1029,7 +1029,7 @@ export default function Walk() {
         movingTimeSeconds: finalMovingElapsed,
         distanceMeters: finalDistance,
         distanceMiles: Number((finalDistance / 1609.344).toFixed(3)),
-        pace: formatWalkingPace(finalDistance, finalMovingElapsed) ?? "Warming up",
+        pace: formatWalkingPace(finalDistance, finalMovingElapsed) ?? "Getting pace…",
         source,
         rawPoints: gpsStatsRef.current.rawPoints,
         acceptedPoints: gpsStatsRef.current.acceptedDistancePoints,
@@ -1403,8 +1403,10 @@ export default function Walk() {
     permission === "denied"
       ? "--"
       : !hasGpsAnchor
-        ? "Finding GPS…"
-        : pace ?? "Warming up";
+        ? elapsedSec < 10
+          ? "Finding GPS…"
+          : "Getting pace…"
+        : pace ?? "Getting pace…";
   const statusText =
     phase === "tracking" && permission !== "denied" && !hasGpsAnchor
       ? "GPS is warming up in the background. Your timer is running and distance begins with the first valid point."

@@ -13,7 +13,7 @@ const BRAND = {
 type NavTarget = {
   label: string;
   icon: React.ComponentProps<typeof Ionicons>["name"];
-  key: "home" | "stats" | "reflection" | "share" | "premium";
+  key: "home" | "stats" | "reflection" | "share";
 };
 
 const NAV_TARGETS: NavTarget[] = [
@@ -21,7 +21,6 @@ const NAV_TARGETS: NavTarget[] = [
   { label: "Stats", icon: "bar-chart", key: "stats" },
   { label: "Reflect", icon: "create", key: "reflection" },
   { label: "Share", icon: "share-social", key: "share" },
-  { label: "Premium", icon: "leaf", key: "premium" },
 ];
 
 type PostWalkTabNavProps = {
@@ -80,9 +79,6 @@ export function PostWalkTabNav({ current = "summary", params }: PostWalkTabNavPr
           params: sharedParams,
         } as never);
         break;
-      case "premium":
-        router.push("/pro");
-        break;
     }
   };
 
@@ -101,7 +97,7 @@ export function PostWalkTabNav({ current = "summary", params }: PostWalkTabNavPr
           >
             <Ionicons
               name={target.icon}
-              size={20}
+              size={18}
               color={current === target.key ? BRAND.bone : BRAND.forest}
             />
             <Text style={[styles.label, current === target.key ? styles.labelActive : null]}>
@@ -117,30 +113,28 @@ export function PostWalkTabNav({ current = "summary", params }: PostWalkTabNavPr
 const styles = StyleSheet.create({
   wrap: {
     width: "100%",
-    marginTop: 18,
+    marginTop: 12,
     alignItems: "center",
   },
   navShell: {
     width: "100%",
     maxWidth: 560,
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 24,
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 20,
     backgroundColor: BRAND.bone,
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.10)",
   },
   item: {
-    width: "31%",
-    minHeight: 58,
-    borderRadius: 18,
+    width: "24%",
+    minHeight: 48,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
+    gap: 3,
   },
   itemActive: {
     backgroundColor: BRAND.forest,

@@ -1,7 +1,8 @@
 import React, { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { computeGpsStrength, smoothRoutePoints } from "../lib/gpsTracking";
+import { computeGpsStrength } from "../lib/gpsTracking";
+import { prepareRoutePreviewPoints } from "../lib/routePreview";
 import type { RoutePoint } from "../lib/store";
 
 type RoutePreviewProps = {
@@ -29,22 +30,9 @@ const PREVIEW_WIDTH = 280;
 const PREVIEW_HEIGHT = 160;
 const PREVIEW_PADDING = 16;
 
-function samplePoints(points: RoutePoint[], maxPoints: number): RoutePoint[] {
-  if (points.length <= maxPoints) return points;
-
-  const lastIndex = points.length - 1;
-  const sampled: RoutePoint[] = [];
-  for (let index = 0; index < maxPoints; index += 1) {
-    const sourceIndex = Math.round((index / (maxPoints - 1)) * lastIndex);
-    sampled.push(points[sourceIndex] ?? points[lastIndex]);
-  }
-  return sampled;
-}
-
 function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
-  const sampled = smoothRoutePoints(samplePoints(points, 48));
-  const lats = sampled.map((point) => point.lat);
-  const lngs = sampled.map((point) => point.lng);
+  const lats = points.map((point) => point.lat);
+  const lngs = points.map((point) => point.lng);
 
   const minLat = Math.min(...lats);
   const maxLat = Math.max(...lats);
@@ -54,7 +42,7 @@ function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
   const latRange = Math.max(maxLat - minLat, 0.0002);
   const lngRange = Math.max(maxLng - minLng, 0.0002);
 
-  return sampled.map((point, index) => {
+  return points.map((point, index) => {
     const x =
       PREVIEW_PADDING + ((point.lng - minLng) / lngRange) * (PREVIEW_WIDTH - PREVIEW_PADDING * 2);
     const y =
@@ -66,7 +54,7 @@ function buildPreviewPoints(points: RoutePoint[]): PreviewPoint[] {
       x,
       y,
       isStart: index === 0,
-      isEnd: index === sampled.length - 1,
+      isEnd: index === points.length - 1,
       segmentStart: Boolean(point.segmentStart),
     };
   });
@@ -112,7 +100,7 @@ export function RoutePreview({ points, title = "Your route", subtitle = "Capture
   const previewPoints = useMemo(() => {
     if (points.length < 2) return [];
 
-    return buildPreviewPoints(points);
+    return buildPreviewPoints(prepareRoutePreviewPoints(points));
   }, [points]);
   const segments = useMemo(() => buildSegments(previewPoints), [previewPoints]);
   const signalLabel = useMemo(() => describeSignal(points), [points]);
