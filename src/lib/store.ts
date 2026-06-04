@@ -24,6 +24,16 @@ export type GpsDiagnostics = {
   rawPoints: number;
   acceptedPoints: number;
   rejectedPoints: number;
+  foregroundPoints?: number;
+  backgroundPoints?: number;
+  largestTrackingGapSec?: number;
+  lastTrackingGapReason?: string | null;
+  lastLocationAt?: number | null;
+  backgroundTaskStarted?: boolean;
+  backgroundTaskLastError?: string | null;
+  appStateChanges?: number;
+  lastAppState?: string | null;
+  locationPermissionStatus?: string | null;
   rejectionCounts?: Record<string, number>;
   lastRejectedReason?: string | null;
   lastAcceptedAt?: number | null;
@@ -227,6 +237,37 @@ function normalizeGpsDiagnostics(value: unknown): GpsDiagnostics | undefined {
     rawPoints: Math.max(0, Math.round(candidate.rawPoints)),
     acceptedPoints: Math.max(0, Math.round(candidate.acceptedPoints)),
     rejectedPoints: Math.max(0, Math.round(candidate.rejectedPoints)),
+    ...(typeof candidate.foregroundPoints === "number" && Number.isFinite(candidate.foregroundPoints)
+      ? { foregroundPoints: Math.max(0, Math.round(candidate.foregroundPoints)) }
+      : {}),
+    ...(typeof candidate.backgroundPoints === "number" && Number.isFinite(candidate.backgroundPoints)
+      ? { backgroundPoints: Math.max(0, Math.round(candidate.backgroundPoints)) }
+      : {}),
+    ...(typeof candidate.largestTrackingGapSec === "number" && Number.isFinite(candidate.largestTrackingGapSec)
+      ? { largestTrackingGapSec: Math.max(0, candidate.largestTrackingGapSec) }
+      : {}),
+    ...(candidate.lastTrackingGapReason === null || typeof candidate.lastTrackingGapReason === "string"
+      ? { lastTrackingGapReason: candidate.lastTrackingGapReason ?? null }
+      : {}),
+    ...(candidate.lastLocationAt === null ||
+    (typeof candidate.lastLocationAt === "number" && Number.isFinite(candidate.lastLocationAt))
+      ? { lastLocationAt: candidate.lastLocationAt ?? null }
+      : {}),
+    ...(typeof candidate.backgroundTaskStarted === "boolean"
+      ? { backgroundTaskStarted: candidate.backgroundTaskStarted }
+      : {}),
+    ...(candidate.backgroundTaskLastError === null || typeof candidate.backgroundTaskLastError === "string"
+      ? { backgroundTaskLastError: candidate.backgroundTaskLastError ?? null }
+      : {}),
+    ...(typeof candidate.appStateChanges === "number" && Number.isFinite(candidate.appStateChanges)
+      ? { appStateChanges: Math.max(0, Math.round(candidate.appStateChanges)) }
+      : {}),
+    ...(candidate.lastAppState === null || typeof candidate.lastAppState === "string"
+      ? { lastAppState: candidate.lastAppState ?? null }
+      : {}),
+    ...(candidate.locationPermissionStatus === null || typeof candidate.locationPermissionStatus === "string"
+      ? { locationPermissionStatus: candidate.locationPermissionStatus ?? null }
+      : {}),
     ...(rejectionCounts && Object.keys(rejectionCounts).length > 0 ? { rejectionCounts } : {}),
     ...(candidate.lastRejectedReason === null || typeof candidate.lastRejectedReason === "string"
       ? { lastRejectedReason: candidate.lastRejectedReason ?? null }

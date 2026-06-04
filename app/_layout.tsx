@@ -4,11 +4,13 @@ import { StatusBar } from "expo-status-bar";
 
 import { AppErrorBoundary } from "../src/components/AppErrorBoundary";
 import { initRevenueCat } from "../src/lib/pro";
+import { reconcileBackgroundWalkTracking } from "../src/lib/walkLocationTracking";
 
 export default function RootLayout() {
   useEffect(() => {
     console.log("[boot] root layout mounted");
     void initRevenueCat();
+    void reconcileBackgroundWalkTracking();
   }, []);
 
   return (

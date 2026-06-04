@@ -275,7 +275,7 @@ export default function CompleteScreen() {
   }, [routeCaptureGapSec]);
 
   const routeSubtitle = useMemo(() => {
-    if (routeCaptureStatus === "partial") return "Partial route captured before tracking paused";
+    if (routeCaptureStatus === "partial") return "Partial route captured around a location update gap";
     return "Saved from this walk";
   }, [routeCaptureStatus]);
 
@@ -288,8 +288,8 @@ export default function CompleteScreen() {
 
     if (routePoints.length > 1 && routeCaptureStatus === "partial") {
       return routeGapLabel
-        ? `Part of this route was captured before tracking paused for ${routeGapLabel}.`
-        : "Part of this route was captured before tracking paused.";
+        ? `Part of this route was captured around a location update gap of ${routeGapLabel}.`
+        : "Part of this route was captured around a meaningful location update gap.";
     }
 
     if (source === "gps") {
@@ -448,6 +448,27 @@ export default function CompleteScreen() {
                 <Text style={styles.devBody}>
                   Raw {gpsDiagnostics.rawPoints} • Accepted {gpsDiagnostics.acceptedPoints} • Rejected {gpsDiagnostics.rejectedPoints}
                 </Text>
+                <Text style={styles.devBody}>
+                  Foreground {gpsDiagnostics.foregroundPoints ?? 0} • Background {gpsDiagnostics.backgroundPoints ?? 0} • Largest gap{" "}
+                  {Math.round(gpsDiagnostics.largestTrackingGapSec ?? 0)} sec
+                </Text>
+                <Text style={styles.devBody}>
+                  Background task {gpsDiagnostics.backgroundTaskStarted ? "started" : "not started"} • App state{" "}
+                  {gpsDiagnostics.lastAppState ?? "unknown"} • Changes {gpsDiagnostics.appStateChanges ?? 0}
+                </Text>
+                <Text style={styles.devBody}>
+                  Last location{" "}
+                  {gpsDiagnostics.lastLocationAt ? new Date(gpsDiagnostics.lastLocationAt).toLocaleTimeString() : "n/a"}
+                </Text>
+                {gpsDiagnostics.lastTrackingGapReason ? (
+                  <Text style={styles.devBody}>Gap reason: {gpsDiagnostics.lastTrackingGapReason}</Text>
+                ) : null}
+                {gpsDiagnostics.locationPermissionStatus ? (
+                  <Text style={styles.devBody}>Permissions: {gpsDiagnostics.locationPermissionStatus}</Text>
+                ) : null}
+                {gpsDiagnostics.backgroundTaskLastError ? (
+                  <Text style={styles.devBody}>Background error: {gpsDiagnostics.backgroundTaskLastError}</Text>
+                ) : null}
                 <Text style={styles.devBody}>
                   Accepted distance {fmtDistance(gpsDiagnostics.acceptedDistanceM ?? 0)} • Avg accuracy{" "}
                   {gpsDiagnostics.averageAccuracy === null || gpsDiagnostics.averageAccuracy === undefined

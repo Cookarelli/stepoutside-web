@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { GpsDiagnostics, RouteCaptureStatus, RoutePoint } from "./store";
 
 export type ActiveWalkSnapshot = {
+  walkId: string;
   startedAt: number;
   elapsedSec: number;
   distanceM: number;
@@ -10,6 +11,8 @@ export type ActiveWalkSnapshot = {
   movingDurationSec?: number;
   pauseStartedAt?: number | null;
   routePoints?: RoutePoint[];
+  lastAcceptedPoint?: RoutePoint | null;
+  lastLocationUpdateAt?: number | null;
   gpsUiState?: "idle" | "primed" | "finding" | "live";
   routeCaptureStatus?: RouteCaptureStatus;
   routeCaptureInterrupted?: boolean;
@@ -29,6 +32,7 @@ export type CompletedWalkDraft = {
 
 const KEY_ACTIVE_WALK = "@stepoutside/activeWalk";
 const KEY_COMPLETED_WALK_DRAFT = "@stepoutside/completedWalkDraft";
+let activeWalkMutationQueue: Promise<void> = Promise.resolve();
 
 function normalizeRouteCaptureStatus(value: unknown): RouteCaptureStatus | undefined {
   if (value === "complete" || value === "partial" || value === "none") {
@@ -65,6 +69,37 @@ function normalizeGpsDiagnostics(value: unknown): GpsDiagnostics | undefined {
     rawPoints: Math.max(0, Math.round(candidate.rawPoints)),
     acceptedPoints: Math.max(0, Math.round(candidate.acceptedPoints)),
     rejectedPoints: Math.max(0, Math.round(candidate.rejectedPoints)),
+    ...(typeof candidate.foregroundPoints === "number" && Number.isFinite(candidate.foregroundPoints)
+      ? { foregroundPoints: Math.max(0, Math.round(candidate.foregroundPoints)) }
+      : {}),
+    ...(typeof candidate.backgroundPoints === "number" && Number.isFinite(candidate.backgroundPoints)
+      ? { backgroundPoints: Math.max(0, Math.round(candidate.backgroundPoints)) }
+      : {}),
+    ...(typeof candidate.largestTrackingGapSec === "number" && Number.isFinite(candidate.largestTrackingGapSec)
+      ? { largestTrackingGapSec: Math.max(0, candidate.largestTrackingGapSec) }
+      : {}),
+    ...(candidate.lastTrackingGapReason === null || typeof candidate.lastTrackingGapReason === "string"
+      ? { lastTrackingGapReason: candidate.lastTrackingGapReason ?? null }
+      : {}),
+    ...(candidate.lastLocationAt === null ||
+    (typeof candidate.lastLocationAt === "number" && Number.isFinite(candidate.lastLocationAt))
+      ? { lastLocationAt: candidate.lastLocationAt ?? null }
+      : {}),
+    ...(typeof candidate.backgroundTaskStarted === "boolean"
+      ? { backgroundTaskStarted: candidate.backgroundTaskStarted }
+      : {}),
+    ...(candidate.backgroundTaskLastError === null || typeof candidate.backgroundTaskLastError === "string"
+      ? { backgroundTaskLastError: candidate.backgroundTaskLastError ?? null }
+      : {}),
+    ...(typeof candidate.appStateChanges === "number" && Number.isFinite(candidate.appStateChanges)
+      ? { appStateChanges: Math.max(0, Math.round(candidate.appStateChanges)) }
+      : {}),
+    ...(candidate.lastAppState === null || typeof candidate.lastAppState === "string"
+      ? { lastAppState: candidate.lastAppState ?? null }
+      : {}),
+    ...(candidate.locationPermissionStatus === null || typeof candidate.locationPermissionStatus === "string"
+      ? { locationPermissionStatus: candidate.locationPermissionStatus ?? null }
+      : {}),
     ...(rejectionCounts && Object.keys(rejectionCounts).length > 0 ? { rejectionCounts } : {}),
     ...(candidate.lastRejectedReason === null || typeof candidate.lastRejectedReason === "string"
       ? { lastRejectedReason: candidate.lastRejectedReason ?? null }
@@ -87,7 +122,7 @@ function normalizeGpsDiagnostics(value: unknown): GpsDiagnostics | undefined {
   };
 }
 
-export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
+async function readActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
   const raw = await AsyncStorage.getItem(KEY_ACTIVE_WALK);
   if (!raw) return null;
 
@@ -121,6 +156,7 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
     }
 
     return {
+      walkId: typeof parsed.walkId === "string" && parsed.walkId ? parsed.walkId : String(parsed.startedAt),
       startedAt: parsed.startedAt,
       elapsedSec: parsed.elapsedSec,
       distanceM: parsed.distanceM,
@@ -135,6 +171,25 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
         ? { pauseStartedAt: parsed.pauseStartedAt ?? null }
         : {}),
       ...(routePoints ? { routePoints } : {}),
+      ...(parsed.lastAcceptedPoint && typeof parsed.lastAcceptedPoint === "object"
+        ? {
+            lastAcceptedPoint: routePoints?.find((point) => point.t === parsed.lastAcceptedPoint?.t) ??
+              (typeof parsed.lastAcceptedPoint.lat === "number" &&
+              Number.isFinite(parsed.lastAcceptedPoint.lat) &&
+              typeof parsed.lastAcceptedPoint.lng === "number" &&
+              Number.isFinite(parsed.lastAcceptedPoint.lng) &&
+              typeof parsed.lastAcceptedPoint.t === "number" &&
+              Number.isFinite(parsed.lastAcceptedPoint.t)
+                ? parsed.lastAcceptedPoint
+                : null),
+          }
+        : parsed.lastAcceptedPoint === null
+          ? { lastAcceptedPoint: null }
+          : {}),
+      ...(parsed.lastLocationUpdateAt === null ||
+      (typeof parsed.lastLocationUpdateAt === "number" && Number.isFinite(parsed.lastLocationUpdateAt))
+        ? { lastLocationUpdateAt: parsed.lastLocationUpdateAt ?? null }
+        : {}),
       ...(parsed.gpsUiState === "idle" ||
       parsed.gpsUiState === "primed" ||
       parsed.gpsUiState === "finding" ||
@@ -161,12 +216,127 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
   }
 }
 
+function enqueueActiveWalkMutation<T>(mutation: () => Promise<T>): Promise<T> {
+  const result = activeWalkMutationQueue.then(mutation, mutation);
+  activeWalkMutationQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+function mergeActiveWalkSnapshot(current: ActiveWalkSnapshot | null, incoming: ActiveWalkSnapshot): ActiveWalkSnapshot {
+  if (!current || current.walkId !== incoming.walkId) return incoming;
+
+  const currentPoints = current.routePoints ?? [];
+  const incomingPoints = incoming.routePoints ?? [];
+  const currentLocationAt = current.lastLocationUpdateAt ?? current.gpsDiagnostics?.lastLocationAt ?? 0;
+  const incomingLocationAt = incoming.lastLocationUpdateAt ?? incoming.gpsDiagnostics?.lastLocationAt ?? 0;
+  const currentDiagnostics = current.gpsDiagnostics;
+  const incomingDiagnostics = incoming.gpsDiagnostics;
+  const mergedDiagnostics =
+    currentDiagnostics || incomingDiagnostics
+      ? {
+          ...currentDiagnostics,
+          ...incomingDiagnostics,
+          rawPoints: Math.max(currentDiagnostics?.rawPoints ?? 0, incomingDiagnostics?.rawPoints ?? 0),
+          acceptedPoints: Math.max(
+            currentDiagnostics?.acceptedPoints ?? 0,
+            incomingDiagnostics?.acceptedPoints ?? 0
+          ),
+          rejectedPoints: Math.max(
+            currentDiagnostics?.rejectedPoints ?? 0,
+            incomingDiagnostics?.rejectedPoints ?? 0
+          ),
+          foregroundPoints: Math.max(
+            currentDiagnostics?.foregroundPoints ?? 0,
+            incomingDiagnostics?.foregroundPoints ?? 0
+          ),
+          backgroundPoints: Math.max(
+            currentDiagnostics?.backgroundPoints ?? 0,
+            incomingDiagnostics?.backgroundPoints ?? 0
+          ),
+          largestTrackingGapSec: Math.max(
+            currentDiagnostics?.largestTrackingGapSec ?? 0,
+            incomingDiagnostics?.largestTrackingGapSec ?? 0
+          ),
+          lastLocationAt:
+            Math.max(currentDiagnostics?.lastLocationAt ?? 0, incomingDiagnostics?.lastLocationAt ?? 0) || null,
+          lastAcceptedAt:
+            Math.max(currentDiagnostics?.lastAcceptedAt ?? 0, incomingDiagnostics?.lastAcceptedAt ?? 0) || null,
+          acceptedDistanceM: Math.max(
+            currentDiagnostics?.acceptedDistanceM ?? 0,
+            incomingDiagnostics?.acceptedDistanceM ?? 0
+          ),
+          backgroundTaskStarted:
+            incomingDiagnostics?.backgroundTaskStarted ?? currentDiagnostics?.backgroundTaskStarted,
+          appStateChanges: Math.max(
+            currentDiagnostics?.appStateChanges ?? 0,
+            incomingDiagnostics?.appStateChanges ?? 0
+          ),
+          lastAppState:
+            (currentDiagnostics?.appStateChanges ?? 0) > (incomingDiagnostics?.appStateChanges ?? 0)
+              ? currentDiagnostics?.lastAppState
+              : incomingDiagnostics?.lastAppState,
+        }
+      : undefined;
+  const keepCurrentLocationData =
+    currentPoints.length > incomingPoints.length ||
+    (currentPoints.length === incomingPoints.length &&
+      (currentLocationAt > incomingLocationAt ||
+        (currentLocationAt === incomingLocationAt && current.lastAcceptedPoint && !incoming.lastAcceptedPoint)));
+  const mergedPoints = keepCurrentLocationData ? currentPoints : incomingPoints;
+  const routeCaptureInterrupted = Boolean(current.routeCaptureInterrupted || incoming.routeCaptureInterrupted);
+
+  return {
+    ...incoming,
+    distanceM: Math.max(current.distanceM, incoming.distanceM, mergedDiagnostics?.acceptedDistanceM ?? 0),
+    movingDurationSec: Math.max(current.movingDurationSec ?? 0, incoming.movingDurationSec ?? 0),
+    routePoints: mergedPoints,
+    lastAcceptedPoint: keepCurrentLocationData
+      ? current.lastAcceptedPoint ?? currentPoints[currentPoints.length - 1] ?? null
+      : incoming.lastAcceptedPoint ?? incomingPoints[incomingPoints.length - 1] ?? null,
+    lastLocationUpdateAt: Math.max(currentLocationAt, incomingLocationAt) || null,
+    gpsUiState: keepCurrentLocationData ? current.gpsUiState ?? incoming.gpsUiState : incoming.gpsUiState,
+    routeCaptureStatus:
+      mergedPoints.length < 2 ? "none" : routeCaptureInterrupted ? "partial" : "complete",
+    routeCaptureInterrupted,
+    routeCaptureGapSec: Math.max(current.routeCaptureGapSec ?? 0, incoming.routeCaptureGapSec ?? 0),
+    gpsDiagnostics: mergedDiagnostics,
+  };
+}
+
+export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
+  await activeWalkMutationQueue;
+  return readActiveWalkSnapshot();
+}
+
 export async function setActiveWalkSnapshot(snapshot: ActiveWalkSnapshot): Promise<void> {
-  await AsyncStorage.setItem(KEY_ACTIVE_WALK, JSON.stringify(snapshot));
+  await enqueueActiveWalkMutation(async () => {
+    const current = await readActiveWalkSnapshot();
+    await AsyncStorage.setItem(KEY_ACTIVE_WALK, JSON.stringify(mergeActiveWalkSnapshot(current, snapshot)));
+  });
+}
+
+export async function updateActiveWalkSnapshot(
+  updater: (snapshot: ActiveWalkSnapshot | null) => ActiveWalkSnapshot | null | Promise<ActiveWalkSnapshot | null>
+): Promise<ActiveWalkSnapshot | null> {
+  return enqueueActiveWalkMutation(async () => {
+    const current = await readActiveWalkSnapshot();
+    const next = await updater(current);
+    if (next) {
+      await AsyncStorage.setItem(KEY_ACTIVE_WALK, JSON.stringify(next));
+    } else {
+      await AsyncStorage.removeItem(KEY_ACTIVE_WALK);
+    }
+    return next;
+  });
 }
 
 export async function clearActiveWalkSnapshot(): Promise<void> {
-  await AsyncStorage.removeItem(KEY_ACTIVE_WALK);
+  await enqueueActiveWalkMutation(async () => {
+    await AsyncStorage.removeItem(KEY_ACTIVE_WALK);
+  });
 }
 
 export async function hasActiveWalkSnapshot(): Promise<boolean> {

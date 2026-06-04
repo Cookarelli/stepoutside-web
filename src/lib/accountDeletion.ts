@@ -13,6 +13,7 @@ import {
 import * as Notifications from "expo-notifications";
 
 import { clearActiveWalkSnapshot, clearCompletedWalkDraft } from "./activeWalk";
+import { stopBackgroundWalkTracking } from "./walkLocationTracking";
 import { signOutUser } from "./auth";
 import { db } from "./firebase";
 import { resetAllData } from "./store";
@@ -99,6 +100,7 @@ async function deleteUserOwnedFirestoreData(uid: string): Promise<DeleteAccountR
 }
 
 async function clearLocalUserState(): Promise<void> {
+  await stopBackgroundWalkTracking();
   await resetAllData();
   await Promise.allSettled([
     AsyncStorage.multiRemove([...LOCAL_KEYS_TO_CLEAR]),

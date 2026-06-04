@@ -44,8 +44,8 @@ export type GpsAcceptedResult =
 
 export const GPS_WARMUP_SECONDS = 3;
 export const MIN_DISTANCE_METERS = 1.5;
-export const MAX_ACCEPTABLE_ACCURACY_METERS = 35;
-export const MAX_REASONABLE_WALKING_SPEED_MPS = 3.0;
+export const MAX_ACCEPTABLE_ACCURACY_METERS = 50;
+export const MAX_REASONABLE_WALKING_SPEED_MPS = 4.0;
 export const MIN_DISTANCE_FOR_PACE_DISPLAY = 0.05 * 1609.344;
 
 export const GPS_THRESHOLDS = {
@@ -53,8 +53,8 @@ export const GPS_THRESHOLDS = {
   minAcceptedDeltaMeters: MIN_DISTANCE_METERS,
   maxAccuracyMeters: MAX_ACCEPTABLE_ACCURACY_METERS,
   maxNormalWalkingSpeedMps: MAX_REASONABLE_WALKING_SPEED_MPS,
-  absoluteMaxSpeedMps: 4.5,
-  maxJumpDistanceMeters: 25,
+  absoluteMaxSpeedMps: 7,
+  maxJumpDistanceMeters: 50,
   duplicateCoordinateToleranceMeters: 0.75,
   minPaceDistanceMeters: MIN_DISTANCE_FOR_PACE_DISPLAY,
   minPaceElapsedSec: 60,

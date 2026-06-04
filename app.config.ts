@@ -26,6 +26,11 @@ const config: ExpoConfig = {
     infoPlist: {
       NSLocationWhenInUseUsageDescription:
         "Step Outside uses your location while you track a walk and when you look for nearby reset routes or local sunrise and sunset timing.",
+      NSLocationAlwaysAndWhenInUseUsageDescription:
+        "Step Outside uses your location during an active walk so distance and route tracking continue when your screen is locked.",
+      NSLocationAlwaysUsageDescription:
+        "Step Outside uses your location during an active walk so distance and route tracking continue when your screen is locked.",
+      UIBackgroundModes: ["location"],
       ITSAppUsesNonExemptEncryption: false,
     },
   },
@@ -62,6 +67,20 @@ const config: ExpoConfig = {
       {
         icon: "./assets/images/icon.png",
         color: "#255E36",
+      },
+    ],
+    [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "Step Outside uses your location while you track a walk and when you look for nearby reset routes.",
+        locationAlwaysAndWhenInUsePermission:
+          "Step Outside uses your location during an active walk so distance and route tracking continue when your screen is locked.",
+        locationAlwaysPermission:
+          "Step Outside uses your location during an active walk so distance and route tracking continue when your screen is locked.",
+        isIosBackgroundLocationEnabled: true,
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
       },
     ],
     [

@@ -154,8 +154,8 @@ export default function SavedRouteScreen() {
                 <Text style={styles.lockedTitle}>Partial route captured</Text>
                 <Text style={styles.lockedBody}>
                   {routeGapLabel
-                    ? `Part of this route was captured before tracking paused for ${routeGapLabel}.`
-                    : "Part of this route was captured before tracking paused."}
+                    ? `Part of this route was captured around a location update gap of ${routeGapLabel}.`
+                    : "Part of this route was captured around a meaningful location update gap."}
                 </Text>
               </View>
             ) : null}
