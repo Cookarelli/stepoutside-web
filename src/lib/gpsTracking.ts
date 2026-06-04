@@ -46,7 +46,6 @@ export const GPS_WARMUP_SECONDS = 3;
 export const MIN_DISTANCE_METERS = 1.5;
 export const MAX_ACCEPTABLE_ACCURACY_METERS = 50;
 export const MAX_REASONABLE_WALKING_SPEED_MPS = 4.0;
-export const MIN_DISTANCE_FOR_PACE_DISPLAY = 8;
 
 export const GPS_THRESHOLDS = {
   minAcceptedDeltaSec: 2,
@@ -56,12 +55,6 @@ export const GPS_THRESHOLDS = {
   absoluteMaxSpeedMps: 7,
   maxJumpDistanceMeters: 50,
   duplicateCoordinateToleranceMeters: 0.75,
-  minPaceDistanceMeters: MIN_DISTANCE_FOR_PACE_DISPLAY,
-  minPaceElapsedSec: 10,
-  suspiciousFastPaceSecPerMile: 12 * 60,
-  suspiciousSlowPaceSecPerMile: 45 * 60,
-  suspiciousFastMinDistanceMeters: 0.1 * 1609.344,
-  suspiciousPaceMinElapsedSec: 90,
 } as const;
 
 export function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -80,42 +73,6 @@ export function haversineMeters(a: { lat: number; lng: number }, b: { lat: numbe
 
 function isFiniteCoord(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-export function formatWalkingPace(distanceM: number, elapsedSec: number): string | null {
-  if (
-    !Number.isFinite(distanceM) ||
-    !Number.isFinite(elapsedSec) ||
-    distanceM < GPS_THRESHOLDS.minPaceDistanceMeters ||
-    elapsedSec < GPS_THRESHOLDS.minPaceElapsedSec
-  ) {
-    return null;
-  }
-
-  const miles = distanceM / 1609.344;
-  if (!Number.isFinite(miles) || miles <= 0) return null;
-
-  const totalSecondsPerMile = Math.round(elapsedSec / miles);
-  if (!Number.isFinite(totalSecondsPerMile) || totalSecondsPerMile <= 0) return null;
-
-  if (
-    totalSecondsPerMile < GPS_THRESHOLDS.suspiciousFastPaceSecPerMile &&
-    (distanceM < GPS_THRESHOLDS.suspiciousFastMinDistanceMeters ||
-      elapsedSec < GPS_THRESHOLDS.suspiciousPaceMinElapsedSec)
-  ) {
-    return null;
-  }
-
-  if (
-    totalSecondsPerMile > GPS_THRESHOLDS.suspiciousSlowPaceSecPerMile &&
-    elapsedSec < GPS_THRESHOLDS.suspiciousPaceMinElapsedSec
-  ) {
-    return null;
-  }
-
-  const mm = Math.floor(totalSecondsPerMile / 60);
-  const ss = totalSecondsPerMile % 60;
-  return `${mm}:${String(ss).padStart(2, "0")} / mi`;
 }
 
 export function computeGpsStrength(

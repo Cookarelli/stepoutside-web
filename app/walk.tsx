@@ -17,10 +17,10 @@ import { StepButton } from "../src/components/StepButton";
 import { ENV } from "../env";
 import {
   computeGpsStrength,
-  formatWalkingPace,
   type GpsAcceptanceStats,
   type GpsIgnoreReason,
 } from "../src/lib/gpsTracking";
+import { formatAverageWalkingPace } from "../src/lib/pace";
 import { PREMIUM, alpha } from "../src/lib/premiumTheme";
 import type { GpsDiagnostics, RouteCaptureStatus, RoutePoint } from "../src/lib/store";
 import {
@@ -62,7 +62,7 @@ export default function Walk() {
   const [phase, setPhase] = useState<WalkPhase>("idle");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [distanceM, setDistanceM] = useState(0);
-  const [movingDurationSec, setMovingDurationSec] = useState(0);
+  const [, setMovingDurationSec] = useState(0);
   const [restored, setRestored] = useState(false);
   const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | "stop" | null>(null);
   const [gpsUiState, setGpsUiState] = useState<GpsUiState>("idle");
@@ -108,8 +108,8 @@ export default function Walk() {
   const backgroundPermissionAlertedRef = useRef(false);
 
   const pace = useMemo(() => {
-    return formatWalkingPace(distanceM, movingDurationSec);
-  }, [distanceM, movingDurationSec]);
+    return formatAverageWalkingPace(distanceM, elapsedSec);
+  }, [distanceM, elapsedSec]);
 
   const logWalk = useCallback((message: string, details?: Record<string, unknown>) => {
     if (details) {
@@ -131,13 +131,13 @@ export default function Walk() {
     console.log(`[GPS] ${message}`);
   }, []);
 
-  const logPace = useCallback((movingSeconds: number, confirmedDistanceMeters: number) => {
+  const logPace = useCallback((activeSeconds: number, confirmedDistanceMeters: number) => {
     if (!__DEV__) return;
 
     console.log("[PACE]", {
-      movingSeconds,
+      activeSeconds,
       distanceMiles: Number((confirmedDistanceMeters / 1609.344).toFixed(3)),
-      pace: formatWalkingPace(confirmedDistanceMeters, movingSeconds) ?? "Getting pace…",
+      averagePace: formatAverageWalkingPace(confirmedDistanceMeters, activeSeconds) ?? "Getting pace…",
     });
   }, []);
 
@@ -1029,7 +1029,7 @@ export default function Walk() {
         movingTimeSeconds: finalMovingElapsed,
         distanceMeters: finalDistance,
         distanceMiles: Number((finalDistance / 1609.344).toFixed(3)),
-        pace: formatWalkingPace(finalDistance, finalMovingElapsed) ?? "Getting pace…",
+        averagePace: formatAverageWalkingPace(finalDistance, finalElapsed) ?? "Getting pace…",
         source,
         rawPoints: gpsStatsRef.current.rawPoints,
         acceptedPoints: gpsStatsRef.current.acceptedDistancePoints,
@@ -1381,8 +1381,8 @@ export default function Walk() {
     if (elapsedSec > 0 && elapsedSec % 15 === 0) {
       logWalk("elapsed seconds", { elapsedSeconds: elapsedSec });
     }
-    logPace(movingDurationSec, distanceM);
-  }, [distanceM, elapsedSec, logPace, logWalk, movingDurationSec, phase]);
+    logPace(elapsedSec, distanceM);
+  }, [distanceM, elapsedSec, logPace, logWalk, phase]);
 
   const hasActiveSession = phase !== "idle";
   const startResumeLabel =
@@ -1402,11 +1402,7 @@ export default function Walk() {
   const paceLabel =
     permission === "denied"
       ? "--"
-      : !hasGpsAnchor
-        ? elapsedSec < 10
-          ? "Finding GPS…"
-          : "Getting pace…"
-        : pace ?? "Getting pace…";
+      : pace ?? "Getting pace…";
   const statusText =
     phase === "tracking" && permission !== "denied" && !hasGpsAnchor
       ? "GPS is warming up in the background. Your timer is running and distance begins with the first valid point."
@@ -1466,7 +1462,7 @@ export default function Walk() {
             <Text style={styles.metricV}>{(distanceM / 1609.344).toFixed(2)} mi</Text>
           </View>
           <View style={styles.metric}>
-            <Text style={styles.metricK}>Pace</Text>
+            <Text style={styles.metricK}>Avg pace</Text>
             <Text style={styles.metricV}>{paceLabel}</Text>
           </View>
         </View>

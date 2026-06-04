@@ -308,12 +308,12 @@ function computePaceSecPerMile(durationSec: number, distanceM?: number): number 
 function resolvePaceDurationSec(
   session: Pick<OutsideSession, "movingDurationSec" | "activeDurationSec" | "durationSec">
 ): number {
-  if (typeof session.movingDurationSec === "number" && Number.isFinite(session.movingDurationSec) && session.movingDurationSec > 0) {
-    return session.movingDurationSec;
-  }
-
   if (typeof session.activeDurationSec === "number" && Number.isFinite(session.activeDurationSec) && session.activeDurationSec > 0) {
     return session.activeDurationSec;
+  }
+
+  if (typeof session.movingDurationSec === "number" && Number.isFinite(session.movingDurationSec) && session.movingDurationSec > 0) {
+    return session.movingDurationSec;
   }
 
   return Math.max(0, finiteNumberOr(session.durationSec));

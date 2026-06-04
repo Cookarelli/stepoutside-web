@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 import {
   GPS_THRESHOLDS,
   evaluateGpsPoint,
-  formatWalkingPace,
   haversineMeters,
 } from "../src/lib/gpsTracking";
+import {
+  FIRST_AVERAGE_PACE_DISTANCE_METERS,
+  computeAveragePaceSecPerMile,
+  computeInstantPaceSecPerMile,
+  formatAverageWalkingPace,
+} from "../src/lib/pace";
 import type { RoutePoint } from "../src/lib/store";
 
 function point(lat: number, lng: number, t: number, accuracy = 12): RoutePoint {
@@ -44,11 +49,22 @@ assert(
 const poorAccuracyResult = evaluateGpsPoint(poorAccuracy, start);
 assert(!poorAccuracyResult.accepted && poorAccuracyResult.reason === "poor_accuracy");
 
-assert.equal(formatWalkingPace(10, 10), "26:49 / mi", "useful early walking pace should appear after ten seconds");
-assert.equal(formatWalkingPace(30, 10), null, "wild early pace spike should stay hidden");
-assert.equal(formatWalkingPace(2, 10), null, "pace should wait for enough movement");
-assert.equal(formatWalkingPace(GPS_THRESHOLDS.minPaceDistanceMeters - 1, 120), null);
-assert.equal(formatWalkingPace(1609.344, 1_080), "18:00 / mi", "steady walking pace should format cleanly");
+assert.equal(
+  formatAverageWalkingPace(FIRST_AVERAGE_PACE_DISTANCE_METERS, 12),
+  "20:00 / mi",
+  "average pace should appear after 0.01 miles without waiting 60 seconds"
+);
+assert.equal(
+  formatAverageWalkingPace(FIRST_AVERAGE_PACE_DISTANCE_METERS - 1, 12),
+  null,
+  "average pace should wait for minimal accepted distance"
+);
+assert.equal(formatAverageWalkingPace(0, 12), null, "zero distance should keep showing Getting pace");
+assert.equal(formatAverageWalkingPace(FIRST_AVERAGE_PACE_DISTANCE_METERS, 4), null, "insanely fast early pace should stay hidden");
+assert.equal(formatAverageWalkingPace(FIRST_AVERAGE_PACE_DISTANCE_METERS, 50), null, "insanely slow early pace should stay hidden");
+assert.equal(formatAverageWalkingPace(1609.344, 1_080), "18:00 / mi", "steady average walking pace should format cleanly");
+assert.equal(computeAveragePaceSecPerMile(1609.344, 1_080), 1_080);
+assert.equal(Math.round(computeInstantPaceSecPerMile(1.5) ?? 0), 1_073);
 
 const staleReportedSpeed = { ...normalWalk, speed: 9 };
 const staleReportedSpeedResult = evaluateGpsPoint(staleReportedSpeed, start);
