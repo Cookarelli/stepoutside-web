@@ -2,6 +2,7 @@ import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  findNodeHandle,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -30,7 +31,9 @@ function toNumber(value: string | undefined): number {
 export default function ReflectionScreen() {
   const router = useRouter();
   const scrollRef = useRef<ScrollView | null>(null);
+  const inputRef = useRef<TextInput | null>(null);
   const inputFocusedRef = useRef(false);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const params = useLocalSearchParams<{
     walkId?: string;
     startedAt?: string;
@@ -56,27 +59,35 @@ export default function ReflectionScreen() {
   const [savedText, setSavedText] = useState("");
 
   const scrollReflectionIntoView = useCallback((delay = 80) => {
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      const inputHandle = findNodeHandle(inputRef.current);
+      const responder = scrollRef.current?.getScrollResponder();
+
+      if (inputHandle && responder) {
+        responder.scrollResponderScrollNativeHandleToKeyboard(inputHandle, 24, true);
+      }
+      scrollTimeoutRef.current = null;
     }, delay);
   }, []);
 
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
     const showSubscription = Keyboard.addListener(showEvent, () => {
       if (inputFocusedRef.current) {
         scrollReflectionIntoView(120);
       }
     });
-    const hideSubscription = Keyboard.addListener(hideEvent, () => {
-      inputFocusedRef.current = false;
-    });
 
     return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
       showSubscription.remove();
-      hideSubscription.remove();
     };
   }, [scrollReflectionIntoView]);
 
@@ -169,7 +180,7 @@ export default function ReflectionScreen() {
             contentContainerStyle={styles.container}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
-            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+            automaticallyAdjustKeyboardInsets={false}
             contentInsetAdjustmentBehavior="automatic"
             onScrollBeginDrag={Keyboard.dismiss}
             showsVerticalScrollIndicator={false}
@@ -180,6 +191,7 @@ export default function ReflectionScreen() {
               <Text style={styles.prompt}>{prompt}</Text>
 
               <TextInput
+                ref={inputRef}
                 value={text}
                 onChangeText={setText}
                 multiline
@@ -255,7 +267,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 20,
     justifyContent: "flex-start",
-    paddingBottom: 28,
+    paddingBottom: 120,
   },
   card: {
     borderRadius: 28,

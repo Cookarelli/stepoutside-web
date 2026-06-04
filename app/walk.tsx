@@ -19,7 +19,6 @@ import {
   computeGpsStrength,
   evaluateGpsPoint,
   formatWalkingPace,
-  GPS_WARMUP_SECONDS,
   type GpsAcceptanceStats,
   type GpsIgnoreReason,
   updateGpsStats,
@@ -30,7 +29,7 @@ import type { GpsDiagnostics, RouteCaptureStatus, RoutePoint } from "../src/lib/
 type PermissionState = "unknown" | "granted" | "denied";
 
 type SessionSource = "gps" | "timer";
-type WalkPhase = "idle" | "countdown" | "tracking" | "paused" | "saving" | "completed";
+type WalkPhase = "idle" | "tracking" | "paused" | "saving" | "completed";
 type GpsUiState = "idle" | "primed" | "finding" | "live";
 
 const GPS_STARTUP_TIMEOUT_MS = 5000;
@@ -58,7 +57,6 @@ export default function Walk() {
   const [movingDurationSec, setMovingDurationSec] = useState(0);
   const [restored, setRestored] = useState(false);
   const [busyAction, setBusyAction] = useState<"start" | "pause" | "resume" | "stop" | null>(null);
-  const [countdownSec, setCountdownSec] = useState(0);
   const [gpsUiState, setGpsUiState] = useState<GpsUiState>("idle");
 
   const mountedRef = useRef(true);
@@ -276,12 +274,6 @@ export default function Walk() {
     }
   }, []);
 
-  const setCountdownSafe = useCallback((next: number) => {
-    if (mountedRef.current) {
-      setCountdownSec(next);
-    }
-  }, []);
-
   const setGpsUiStateSafe = useCallback((next: GpsUiState) => {
     if (mountedRef.current) {
       setGpsUiState(next);
@@ -294,9 +286,7 @@ export default function Walk() {
 
       switch (current) {
         case "idle":
-          return next === "countdown" || next === "tracking";
-        case "countdown":
-          return next === "tracking" || next === "idle";
+          return next === "tracking";
         case "tracking":
           return next === "paused" || next === "saving" || next === "idle";
         case "paused":
@@ -463,8 +453,6 @@ export default function Walk() {
     [logGps, setGpsUiStateSafe]
   );
 
-  const wait = useCallback((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), []);
-
   const ensureLocationPermission = useCallback(async () => {
     if (permission === "granted") return true;
     if (permission === "denied") return false;
@@ -501,7 +489,7 @@ export default function Walk() {
       if (seededPoint) {
         routePointsRef.current = [seededPoint];
         acceptAnchorPoint(seededPoint, "fresh-start-fix");
-      } else if (permission !== "denied") {
+      } else {
         setGpsUiStateSafe("finding");
       }
 
@@ -606,7 +594,7 @@ export default function Walk() {
         return false;
       }
     },
-    [acceptAnchorPoint, buildRoutePoint, logGps, logWalk, permission, setDistanceSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, trackIgnoredPoint]
+    [acceptAnchorPoint, buildRoutePoint, logGps, logWalk, setDistanceSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, trackIgnoredPoint]
   );
 
   const startGpsWithTimeout = useCallback(
@@ -773,6 +761,12 @@ export default function Walk() {
     },
     [buildGpsDiagnostics, getElapsedNow, getPausedDurationNow, getRouteCaptureStatus, gpsUiState]
   );
+  const persistActiveWalkRef = useRef(persistActiveWalk);
+  const stopGpsRef = useRef(stopGps);
+  const stopTimerRef = useRef(stopTimer);
+  persistActiveWalkRef.current = persistActiveWalk;
+  stopGpsRef.current = stopGps;
+  stopTimerRef.current = stopTimer;
 
   const clearScheduledPersist = useCallback(() => {
     if (persistTimeoutRef.current) {
@@ -851,14 +845,13 @@ export default function Walk() {
       gpsStrength: "Weak GPS",
     };
     gpsIgnoreCountsRef.current = {};
-    setCountdownSafe(0);
     setGpsUiStateSafe("idle");
     setElapsedSafe(0);
     setDistanceSafe(0);
     setMovingDurationSafe(0);
     transitionTo("idle", reason);
     await clearActiveWalkSnapshotSafe(reason);
-  }, [clearActiveWalkSnapshotSafe, clearScheduledPersist, setCountdownSafe, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, stopTimer, transitionTo]);
+  }, [clearActiveWalkSnapshotSafe, clearScheduledPersist, setDistanceSafe, setElapsedSafe, setGpsUiStateSafe, setMovingDurationSafe, stopGps, stopTimer, transitionTo]);
 
   useEffect(() => {
     return () => {
@@ -871,17 +864,10 @@ export default function Walk() {
     if (!beginAction("start", ["idle"])) return;
     void Haptics.selectionAsync();
     try {
-      await clearCompletedWalkDraftSafe("start");
-      await resetWalkState("start");
-      transitionTo("countdown", "start warmup");
-
-      const permissionPromise = ensureLocationPermission();
-
-      for (let countdown = GPS_WARMUP_SECONDS; countdown >= 1; countdown -= 1) {
-        setCountdownSafe(countdown);
-        await wait(1000);
-      }
-      setCountdownSafe(0);
+      const cleanupPromise = Promise.all([
+        clearCompletedWalkDraftSafe("start"),
+        resetWalkState("start"),
+      ]);
 
       startedAtRef.current = Date.now();
       elapsedBeforeRunRef.current = 0;
@@ -903,15 +889,7 @@ export default function Walk() {
       transitionTo("tracking", "start");
       logWalk("walk started; gps initializes in background");
       startTimer("start");
-      void persistActiveWalk({
-        elapsedSec: 0,
-        distanceM: 0,
-        movingDurationSec: 0,
-        pausedDurationSec: 0,
-        pauseStartedAt: null,
-        routePoints: [],
-        running: true,
-      });
+      const permissionPromise = ensureLocationPermission();
 
       void (async () => {
         const ok = await permissionPromise;
@@ -923,6 +901,17 @@ export default function Walk() {
         setGpsUiStateSafe("finding");
         await startGpsWithTimeout("start");
       })();
+
+      await cleanupPromise;
+      void persistActiveWalk({
+        elapsedSec: 0,
+        distanceM: 0,
+        movingDurationSec: 0,
+        pausedDurationSec: 0,
+        pauseStartedAt: null,
+        routePoints: [],
+        running: true,
+      });
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
@@ -1193,7 +1182,7 @@ export default function Walk() {
         nextState.match(/inactive|background/)
       ) {
         clearScheduledPersist();
-        void persistActiveWalk();
+        void persistActiveWalkRef.current();
       }
 
       if (
@@ -1219,14 +1208,19 @@ export default function Walk() {
 
     return () => {
       subscription.remove();
+    };
+  }, [clearScheduledPersist, markRouteCaptureGap, refreshPermission, startGpsWithTimeout]);
+
+  useEffect(() => {
+    return () => {
       clearScheduledPersist();
       if (startedAtRef.current && (phaseRef.current === "tracking" || phaseRef.current === "paused")) {
-        void persistActiveWalk();
+        void persistActiveWalkRef.current();
       }
-      stopTimer("screen cleanup");
-      stopGps("screen cleanup");
+      stopTimerRef.current("screen cleanup");
+      stopGpsRef.current("screen cleanup");
     };
-  }, [clearScheduledPersist, markRouteCaptureGap, persistActiveWalk, refreshPermission, startGpsWithTimeout, stopGps, stopTimer]);
+  }, [clearScheduledPersist]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1379,8 +1373,6 @@ export default function Walk() {
       ? "STARTING…"
       : busyAction === "resume"
         ? "RESUMING…"
-        : phase === "countdown"
-          ? "GET READY…"
         : phase === "paused"
           ? "RESUME"
           : phase === "tracking"
@@ -1393,25 +1385,21 @@ export default function Walk() {
   const paceLabel =
     permission === "denied"
       ? "--"
-      : phase === "countdown"
-        ? "--"
-        : !hasGpsAnchor
-          ? "Finding GPS…"
-          : pace ?? "Warming up";
+      : !hasGpsAnchor
+        ? "Finding GPS…"
+        : pace ?? "Warming up";
   const statusText =
-    phase === "countdown"
-      ? "Starting in a moment while we wake up GPS."
-      : phase === "tracking" && permission !== "denied" && !hasGpsAnchor
-        ? "Finding a reliable GPS starting point. Distance begins as soon as the first accurate fix arrives."
+    phase === "tracking" && permission !== "denied" && !hasGpsAnchor
+      ? "GPS is warming up in the background. Your timer is running and distance begins with the first valid point."
       : phase === "tracking"
-      ? "Walk in progress. Pause when you want a breather."
-      : phase === "paused"
-        ? "Your walk is paused. Resume when you're ready."
-        : phase === "saving"
-          ? "Saving your walk now."
-          : permission === "denied"
-            ? "Timer-only mode is ready. Turn location back on anytime for route and distance."
-            : "Start when you're ready. Distance and pace appear automatically when location is on.";
+        ? "Walk in progress. Pause when you want a breather."
+        : phase === "paused"
+          ? "Your walk is paused. Resume when you're ready."
+          : phase === "saving"
+            ? "Saving your walk now."
+            : permission === "denied"
+              ? "Timer-only mode is ready. Turn location back on anytime for route and distance."
+              : "Start when you're ready. Distance and pace appear automatically when location is on.";
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1422,15 +1410,13 @@ export default function Walk() {
         <View style={styles.sessionHeader}>
           <View style={styles.sessionPill}>
             <Text style={styles.sessionPillText}>
-              {phase === "countdown"
-                ? "Get ready"
-                : phase === "tracking"
-                  ? "Walk live"
-                  : phase === "paused"
-                    ? "Paused"
-                    : phase === "saving"
-                      ? "Saving"
-                      : "Ready"}
+              {phase === "tracking"
+                ? "Walk live"
+                : phase === "paused"
+                  ? "Paused"
+                  : phase === "saving"
+                    ? "Saving"
+                    : "Ready"}
             </Text>
           </View>
           <Text style={styles.sessionHint}>
@@ -1445,16 +1431,14 @@ export default function Walk() {
         </View>
 
         <Text style={styles.title}>Walk</Text>
-        <Text style={styles.sub}>{phase === "countdown" ? "Starting in" : "Elapsed"}</Text>
-        <Text style={styles.big}>{phase === "countdown" ? String(countdownSec || GPS_WARMUP_SECONDS) : fmtTime(elapsedSec)}</Text>
+        <Text style={styles.sub}>Elapsed</Text>
+        <Text style={styles.big}>{fmtTime(elapsedSec)}</Text>
         <Text style={styles.sessionSupport}>
-          {phase === "countdown"
-            ? "A quick 3-2-1 while we prep your walk and check location."
-            : permission === "denied"
+          {permission === "denied"
             ? "Timer mode is active. Turn location back on anytime for route and distance."
             : !hasGpsAnchor
-              ? "We’re looking for the first reliable GPS fix. Distance starts after that point is locked."
-            : "Keep your phone with you and Step Outside will track route, distance, and pace."}
+              ? "Your timer is running while GPS warms up. Distance starts with the first valid point."
+              : "Keep your phone with you and Step Outside will track route, distance, and pace."}
         </Text>
 
         <View style={styles.metrics}>
