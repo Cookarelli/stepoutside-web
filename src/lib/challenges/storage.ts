@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { collection, doc, getDocs, setDoc } from "firebase/firestore";
 
 import { auth, db } from "../firebase";
+import { logFirestorePermissionDenied } from "../firestoreDebug";
 import type { OutsideSession, SummaryStats } from "../store";
 import { BADGE_CATALOG } from "./catalog";
 import { buildChallengeHighlights } from "./evaluate";
@@ -175,7 +176,12 @@ export async function readRemoteChallengeSnapshot(): Promise<LocalChallengeSnaps
       completedChallengeIds: progress.filter((item) => item.status === "completed").map((item) => item.challengeId),
       earnedBadgeIds: badges.filter((item) => item.earned).map((item) => item.badge.id),
     };
-  } catch {
+  } catch (error) {
+    logFirestorePermissionDenied(
+      "read remote challenge snapshot",
+      [`users/${currentUser.uid}/challengeProgress`, `users/${currentUser.uid}/badges`],
+      error
+    );
     return null;
   }
 }
@@ -184,20 +190,30 @@ export async function syncChallengeSnapshotToFirestore(snapshot: LocalChallengeS
   const currentUser = auth.currentUser;
   if (!currentUser?.uid) return;
 
-  await Promise.all([
-    ...snapshot.progress.map((progress) =>
-      setDoc(doc(db, "users", currentUser.uid, "challengeProgress", progress.challengeId), {
-        ...progress,
-        updatedAt: progress.updatedAt ?? snapshot.updatedAt,
-      })
-    ),
-    ...snapshot.badges.map((badgeState) =>
-      setDoc(doc(db, "users", currentUser.uid, "badges", badgeState.badge.id), {
-        ...badgeState,
-        updatedAt: badgeState.updatedAt ?? snapshot.updatedAt,
-      })
-    ),
-  ]);
+  const paths = [
+    ...snapshot.progress.map((progress) => `users/${currentUser.uid}/challengeProgress/${progress.challengeId}`),
+    ...snapshot.badges.map((badgeState) => `users/${currentUser.uid}/badges/${badgeState.badge.id}`),
+  ];
+
+  try {
+    await Promise.all([
+      ...snapshot.progress.map((progress) =>
+        setDoc(doc(db, "users", currentUser.uid, "challengeProgress", progress.challengeId), {
+          ...progress,
+          updatedAt: progress.updatedAt ?? snapshot.updatedAt,
+        })
+      ),
+      ...snapshot.badges.map((badgeState) =>
+        setDoc(doc(db, "users", currentUser.uid, "badges", badgeState.badge.id), {
+          ...badgeState,
+          updatedAt: badgeState.updatedAt ?? snapshot.updatedAt,
+        })
+      ),
+    ]);
+  } catch (error) {
+    logFirestorePermissionDenied("sync challenge snapshot", paths, error);
+    throw error;
+  }
 }
 
 export async function hydrateLocalChallengeSnapshotFromFirestore(): Promise<LocalChallengeSnapshot | null> {

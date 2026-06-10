@@ -8,7 +8,6 @@ import { reconcileBackgroundWalkTracking } from "../src/lib/walkLocationTracking
 
 export default function RootLayout() {
   useEffect(() => {
-    console.log("[boot] root layout mounted");
     void initRevenueCat();
     void reconcileBackgroundWalkTracking();
   }, []);

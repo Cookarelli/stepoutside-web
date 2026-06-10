@@ -1,21 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
 import {
   createUserWithEmailAndPassword,
-  GoogleAuthProvider,
   onAuthStateChanged,
   sendPasswordResetEmail,
-  signInWithCredential,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  type UserProfile,
   type User,
-} from "firebase/auth";
+} from "@firebase/auth";
 
 import { auth } from "./firebase";
 import { syncRevenueCatIdentity } from "./pro";
-
-WebBrowser.maybeCompleteAuthSession();
 
 const AUTH_CACHE_KEY = "stepoutside:v2:auth-cache";
 
@@ -83,27 +79,15 @@ export function subscribeToAuth(listener: (user: AuthUserSnapshot | null) => voi
     void (async () => {
       try {
         await writeCachedUser(snapshot);
-        await syncRevenueCatIdentity(snapshot?.uid ?? null);
+        if (snapshot?.uid) {
+          await syncRevenueCatIdentity(snapshot.uid);
+        }
       } catch {
         // Keep auth state changes from crashing profile loads.
       }
     })();
     listener(snapshot);
   });
-}
-
-export async function signInWithGoogleIdToken(idToken: string, accessToken?: string | null): Promise<AuthUserSnapshot> {
-  const credential = GoogleAuthProvider.credential(idToken, accessToken ?? undefined);
-  const result = await signInWithCredential(auth, credential);
-  const snapshot = toSnapshot(result.user);
-
-  if (!snapshot) {
-    throw new Error("Google sign-in did not return a user.");
-  }
-
-  await writeCachedUser(snapshot);
-  await syncRevenueCatIdentity(snapshot.uid);
-  return snapshot;
 }
 
 export async function signOutUser(): Promise<void> {
@@ -124,7 +108,6 @@ async function finishEmailPasswordAuth(user: User, fallback: string): Promise<Au
   }
 
   await writeCachedUser(snapshot);
-  await syncRevenueCatIdentity(snapshot.uid);
   return snapshot;
 }
 
@@ -142,11 +125,22 @@ export async function sendEmailPasswordReset(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, normalizeEmail(email));
 }
 
-export async function updateCurrentAuthDisplayName(displayName: string): Promise<AuthUserSnapshot | null> {
+export async function updateCurrentAuthProfile(input: {
+  displayName?: string | null;
+  photoURL?: string | null;
+}): Promise<AuthUserSnapshot | null> {
   const currentUser = auth.currentUser;
   if (!currentUser) return null;
 
-  await updateProfile(currentUser, { displayName: displayName.trim() || null });
+  const nextProfile: UserProfile = {};
+  if ("displayName" in input) {
+    nextProfile.displayName = input.displayName?.trim() || null;
+  }
+  if ("photoURL" in input) {
+    nextProfile.photoURL = input.photoURL?.trim() || null;
+  }
+
+  await updateProfile(currentUser, nextProfile);
   const snapshot = toSnapshot(currentUser);
   await writeCachedUser(snapshot);
   return snapshot;

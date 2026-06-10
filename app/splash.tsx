@@ -32,7 +32,6 @@ export default function SplashScreen() {
 
   useEffect(() => {
     let alive = true;
-    console.log("[BOOT] splash screen mounted");
 
     Animated.parallel([
       Animated.timing(logoScale, {

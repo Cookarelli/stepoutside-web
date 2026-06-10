@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { onAuthStateChanged } from "@firebase/auth";
 
 import { getPremiumStatus, type PremiumStatus } from "../src/lib/pro";
+import { auth } from "../src/lib/firebase";
 
 type UsePremiumAccessResult = PremiumStatus & {
   isLoading: boolean;
@@ -31,6 +33,12 @@ export function usePremiumAccess(): UsePremiumAccessResult {
 
   useEffect(() => {
     void refreshPremiumStatus();
+  }, [refreshPremiumStatus]);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, () => {
+      void refreshPremiumStatus();
+    });
   }, [refreshPremiumStatus]);
 
   return {

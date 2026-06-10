@@ -52,10 +52,6 @@ export default function Walk() {
   const SNAPSHOT_PERSIST_DEBOUNCE_MS = 2000;
   const ROUTE_CAPTURE_GAP_THRESHOLD_SEC = MEANINGFUL_TRACKING_GAP_SEC;
 
-  useEffect(() => {
-    console.log("[boot] walk screen mounted");
-  }, []);
-
   const [permission, setPermission] = useState<PermissionState>("unknown");
   const [backgroundPermission, setBackgroundPermission] = useState<PermissionState>("unknown");
   const [backgroundTrackingReady, setBackgroundTrackingReady] = useState<boolean | null>(null);

@@ -1,14 +1,10 @@
 import { Tabs } from "expo-router";
-import React, { useEffect } from "react";
+import React from "react";
 import { Ionicons } from "@expo/vector-icons";
 
 import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 
 export default function TabsLayout() {
-  useEffect(() => {
-    console.log("[boot] tabs layout mounted");
-  }, []);
-
   return (
     <Tabs
       screenOptions={{

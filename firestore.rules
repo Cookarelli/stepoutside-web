@@ -10,6 +10,48 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isValidUsername(username) {
+      return username is string &&
+        username.matches('^[a-z0-9_.]{3,20}$') &&
+        !(username in ['admin', 'support', 'stepoutside', 'premium', 'null', 'undefined']);
+    }
+
+    function profileUsernameIsOwned(uid) {
+      return !request.resource.data.keys().hasAny(['username']) ||
+        request.resource.data.username == '' ||
+        (
+          isValidUsername(request.resource.data.username) &&
+          getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid
+        );
+    }
+
+    function profileUidIsValid(uid) {
+      return !request.resource.data.keys().hasAny(['uid']) ||
+        request.resource.data.uid == uid;
+    }
+
+    function profileUsernameLowerIsValid() {
+      return !request.resource.data.keys().hasAny(['usernameLower']) ||
+        !request.resource.data.keys().hasAny(['username']) ||
+        request.resource.data.usernameLower == request.resource.data.username;
+    }
+
+    function isValidUserProfileWrite(uid) {
+      return isOwner(uid) &&
+        profileUidIsValid(uid) &&
+        profileUsernameLowerIsValid() &&
+        profileUsernameIsOwned(uid);
+    }
+
+    function isValidUsernameReservation(username) {
+      return isSignedIn() &&
+        isValidUsername(username) &&
+        request.resource.data.keys().hasOnly(['uid', 'username', 'createdAt']) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.username == username &&
+        request.resource.data.createdAt is timestamp;
+    }
+
     function isCompanyAdmin(companyId) {
       return isSignedIn() &&
         request.auth.uid in get(/databases/$(database)/documents/companies/$(companyId)).data.adminUids;
@@ -21,7 +63,9 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if isOwner(uid);
+      allow create, update: if isValidUserProfileWrite(uid);
+      allow delete: if isOwner(uid);
 
       match /sessions/{sessionId} {
         allow read, write: if isOwner(uid);
@@ -42,6 +86,15 @@ service cloud.firestore {
       match /memberships/{membershipId} {
         allow read, write: if isOwner(uid);
       }
+    }
+
+    match /usernames/{username} {
+      allow read: if isSignedIn();
+      allow create: if isValidUsernameReservation(username);
+      allow update: if isValidUsernameReservation(username) &&
+        resource.data.uid == request.auth.uid &&
+        request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
     }
 
     match /companies/{companyId} {

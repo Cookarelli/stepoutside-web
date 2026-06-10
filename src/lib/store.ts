@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
 
 import { auth, db } from "./firebase";
+import { logFirestorePermissionDenied } from "./firestoreDebug";
 import { getPremiumStatus } from "./pro";
 import type { SolarBonusType } from "./solarBonus";
 
@@ -396,7 +397,13 @@ async function syncSessionToFirestore(session: OutsideSession, includeRoutePoint
   if (!currentUser?.uid) return;
 
   const payload = buildRemoteSessionPayload(session, includeRoutePoints);
-  await setDoc(doc(db, "users", currentUser.uid, "sessions", session.id), payload, { merge: true });
+  const path = `users/${currentUser.uid}/sessions/${session.id}`;
+  try {
+    await setDoc(doc(db, "users", currentUser.uid, "sessions", session.id), payload, { merge: true });
+  } catch (error) {
+    logFirestorePermissionDenied("sync session", [path], error);
+    throw error;
+  }
 }
 
 export function hasSunriseBonus(session: Pick<OutsideSession, "isSunriseBonus" | "sunriseBonus">): boolean {
@@ -783,7 +790,8 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
         );
       })
       .filter((session): session is OutsideSession => session !== null);
-  } catch {
+  } catch (error) {
+    logFirestorePermissionDenied("read remote sessions", [`users/${currentUser.uid}/sessions`], error);
     return [];
   }
 }
@@ -926,7 +934,8 @@ export async function getSessionById(id: string): Promise<OutsideSession | null>
     );
 
     return merged;
-  } catch {
+  } catch (error) {
+    logFirestorePermissionDenied("read remote session", [`users/${currentUser.uid}/sessions/${id}`], error);
     return local;
   }
 }

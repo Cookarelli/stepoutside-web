@@ -5,7 +5,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchases";
 
 import {
-  clearProState,
   getProState,
   getPaywallCatalog,
   getPremiumStatus,
@@ -32,7 +31,6 @@ export default function ProScreen() {
   const [packages, setPackages] = useState<ProPaywallPackage[]>([]);
   const [billingReady, setBillingReady] = useState(false);
   const [catalogSource, setCatalogSource] = useState<ProPaywallCatalog["source"]>("fallback");
-  const [offeringId, setOfferingId] = useState<string | null>(null);
   const [missingPlans, setMissingPlans] = useState<ProPaywallCatalog["missingPlans"]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +48,6 @@ export default function ProScreen() {
       setPackages(catalog.packages);
       setBillingReady(catalog.billingReady);
       setCatalogSource(catalog.source);
-      setOfferingId(catalog.offeringId);
       setMissingPlans(catalog.missingPlans);
       setCatalogError(catalog.errorMessage);
       setProStateLocal(state);
@@ -83,7 +80,6 @@ export default function ProScreen() {
       setPackages([]);
       setBillingReady(false);
       setCatalogSource("error");
-      setOfferingId(null);
       setMissingPlans(["yearly", "monthly"]);
       setCatalogError("We couldn't load subscription plans right now. Please try again in a moment.");
       setProStateLocal(state);
@@ -152,18 +148,6 @@ export default function ProScreen() {
     } finally {
       setBusyAction(null);
     }
-  };
-
-  const clear = async () => {
-    setBusyAction("clear");
-    await clearProState();
-    setProStateLocal({
-      isPro: false,
-      plan: null,
-      productId: null,
-      updatedAt: Date.now(),
-    });
-    setBusyAction(null);
   };
 
   const isPro = proState?.isPro ?? false;
@@ -243,7 +227,6 @@ export default function ProScreen() {
             <Text style={styles.cardTitle}>Current status</Text>
             <Text style={styles.cardBody}>{isPro ? `Premium active (${activePlanLabel})` : "Free plan"}</Text>
             <Text style={styles.cardCaption}>{statusNote}</Text>
-            {__DEV__ && catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
           </View>
 
           {missingPlanMessage ? (
@@ -301,7 +284,7 @@ export default function ProScreen() {
                       <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
                       <Text style={featured ? styles.featuredPeriod : styles.planPeriod}>{pkg.periodLabel}</Text>
                       <Text style={featured ? styles.featuredPlanLabel : styles.planLabel}>
-                        {pkg.plan === "monthly" ? "MONTHLY" : pkg.plan === "yearly" ? "YEARLY" : "LIFETIME"}
+                        {pkg.plan === "monthly" ? "MONTHLY" : "YEARLY"}
                       </Text>
                       {pkg.badge ? (
                         <View style={featured ? styles.featuredBadge : styles.planBadge}>
@@ -351,13 +334,6 @@ export default function ProScreen() {
             <Pressable style={styles.policyBtn} onPress={() => void openExternal(TERMS_URL, "Terms of Use")}>
               <Text style={styles.policyText}>Terms of Use</Text>
             </Pressable>
-            {__DEV__ ? (
-              <Pressable style={styles.policyBtn} onPress={() => void clear()} disabled={busyAction !== null}>
-                <Text style={[styles.policyText, { color: PREMIUM.colors.danger }]}>
-                  {busyAction === "clear" ? "Clearing…" : "Clear Pro (test)"}
-                </Text>
-              </Pressable>
-            ) : null}
           </View>
 
           <Pressable style={styles.done} onPress={() => router.back()}>
@@ -431,7 +407,6 @@ const styles = StyleSheet.create({
   cardTitle: { fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily, fontSize: 22 },
   cardBody: { marginTop: 4, fontWeight: "700", color: PREMIUM.colors.textMuted },
   cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: PREMIUM.colors.textSoft },
-  offeringNote: { marginTop: 8, color: PREMIUM.colors.textSoft, fontSize: 11, fontWeight: "700" },
   noticeCard: {
     marginTop: 14,
     borderRadius: PREMIUM.radius.lg,

@@ -1,7 +1,7 @@
-import * as Google from "expo-auth-session/providers/google";
+import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,21 +18,18 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ENV } from "../../env";
 import { usePremiumAccess } from "../../hooks/use-premium-access";
 import { accountDeletionRequiresRecentLogin, deleteCurrentAccount } from "../../src/lib/accountDeletion";
 import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 import {
   createEmailPasswordAccount,
-  getCachedAuthUser,
   sendEmailPasswordReset,
   signInWithEmailPassword,
-  signInWithGoogleIdToken,
   signOutUser,
   subscribeToAuth,
   type AuthUserSnapshot,
-  updateCurrentAuthDisplayName,
 } from "../../src/lib/auth";
 import { auth } from "../../src/lib/firebase";
 import { resetOnboarding } from "../../src/lib/onboarding";
@@ -40,20 +37,24 @@ import {
   getNotificationPrefs,
   requestNotificationPermission,
   scheduleSmartReminders,
-  sendTestNotification,
   setNotificationPrefs,
   type NotificationPrefs,
 } from "../../src/lib/notifications";
 import { EMPTY_SUMMARY, getSessions, getSummary, type SummaryStats } from "../../src/lib/store";
 import {
   EMPTY_LOCAL_USER_PROFILE,
+  deleteCurrentUserProfilePhotoObject,
   getLocalUserProfile,
+  saveCurrentUserProfilePhotoURL,
   saveLocalUserProfile,
+  uploadCurrentUserProfilePhoto,
+  validateUsername,
   type LocalUserProfile,
   type PreferredActivity,
 } from "../../src/lib/userProfile";
 
-type AuthAction = "google" | "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | "deleteAccount" | null;
+type AuthAction = "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | "deleteAccount" | null;
+type ImagePickerModule = typeof import("expo-image-picker");
 
 function firstNonEmpty(...values: (string | null | undefined)[]): string {
   for (const value of values) {
@@ -87,17 +88,43 @@ const PREFERRED_ACTIVITIES: { value: PreferredActivity; label: string }[] = [
 
 function formatProviderLabel(user: AuthUserSnapshot | null): string {
   const providerIds = user?.providerIds ?? [];
-  if (providerIds.includes("google.com")) return "Google";
   if (providerIds.includes("password")) return "Email";
   if (user?.isAnonymous) return "Anonymous";
   return "Account";
 }
 
 function formatAuthError(error: unknown, fallback: string): string {
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
   const message = error instanceof Error ? error.message : "";
-  if (message.includes("cancel")) return "Sign-in was canceled.";
-  if (message.includes("network")) return "Sign-in needs a connection right now.";
-  return fallback;
+  const devDetail = __DEV__ && (code || message) ? ` (${[code, message].filter(Boolean).join(": ")})` : "";
+  const withDevDetail = (copy: string) => `${copy}${devDetail}`;
+
+  if (code === "auth/invalid-email") return withDevDetail("Enter a valid email address.");
+  if (code === "auth/user-disabled") return withDevDetail("This account has been disabled. Contact support for help.");
+  if (code === "auth/user-not-found") return withDevDetail("No account exists for that email yet. Create an account first.");
+  if (code === "auth/wrong-password") return withDevDetail("That password doesn’t match this email.");
+  if (code === "auth/invalid-credential") return withDevDetail("That email or password doesn’t match an account.");
+  if (code === "auth/email-already-in-use") return withDevDetail("An account already exists for that email. Sign in instead.");
+  if (code === "auth/network-request-failed") return withDevDetail("Sign-in needs a connection right now.");
+  if (code === "auth/too-many-requests") return withDevDetail("Too many attempts. Wait a bit, then try again or reset your password.");
+  if (code === "auth/operation-not-allowed") return withDevDetail("Email/password sign-in is not enabled for this Firebase project.");
+  if (code === "auth/requires-recent-login") return withDevDetail("For security, sign in again and retry.");
+  if (code === "auth/invalid-api-key" || code.includes("api-key")) {
+    return withDevDetail("Firebase sign-in is not configured with a valid API key.");
+  }
+  if (code === "auth/app-not-authorized") {
+    return withDevDetail("This app is not authorized for the configured Firebase project.");
+  }
+  if (message.includes("cancel")) return withDevDetail("Sign-in was canceled.");
+  if (message.includes("network")) return withDevDetail("Sign-in needs a connection right now.");
+  return withDevDetail(fallback);
+}
+
+function logAuthError(context: string, error: unknown): void {
+  if (!__DEV__) return;
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : null;
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[auth] ${context}`, { code, message, error });
 }
 
 function formatMinutesLabel(minutes: number): string {
@@ -112,102 +139,13 @@ function enabledReminderCount(prefs: NotificationPrefs | null): number {
   return [prefs.sunriseQuotes, prefs.sunsetReminders, prefs.streakRiskReminders].filter(Boolean).length;
 }
 
-type GoogleSignInButtonProps = {
-  disabled: boolean;
-  onStart: () => void;
-  onFinish: () => void;
-  onStatus: (message: string) => void;
-};
-
-function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSignInButtonProps) {
-  const [googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
-    iosClientId: ENV.AUTH.googleIosClientId ?? undefined,
-    androidClientId: ENV.AUTH.googleAndroidClientId ?? undefined,
-    webClientId: ENV.AUTH.googleWebClientId ?? undefined,
-    scopes: ["profile", "email"],
-    selectAccount: true,
-  });
-
-  useEffect(() => {
-    if (!googleResponse) return;
-
-    if (googleResponse.type === "cancel" || googleResponse.type === "dismiss") {
-      onFinish();
-      onStatus("Google sign-in was canceled.");
-      return;
-    }
-
-    if (googleResponse.type !== "success") {
-      onFinish();
-      onStatus("Google sign-in didn’t finish cleanly.");
-      return;
-    }
-
-    const response = googleResponse as {
-      params?: Record<string, string | undefined>;
-      authentication?: { accessToken?: string | null } | null;
-    };
-    const idToken = response.params?.id_token;
-
-    if (!idToken) {
-      onFinish();
-      onStatus("Google didn’t return an ID token.");
-      return;
-    }
-
-    void (async () => {
-      try {
-        await signInWithGoogleIdToken(idToken, response.authentication?.accessToken ?? response.params?.access_token ?? null);
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        onStatus("Signed in with Google.");
-      } catch (error) {
-        onStatus(formatAuthError(error, "Google sign-in hit a snag."));
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } finally {
-        onFinish();
-      }
-    })();
-  }, [googleResponse, onFinish, onStatus]);
-
-  const onPress = async () => {
-    if (!googleRequest) {
-      onStatus("Google sign-in isn’t available right now. Use email sign-in below.");
-      return;
-    }
-
-    onStatus("");
-    onStart();
-    void Haptics.selectionAsync();
-
-    try {
-      await promptGoogleAsync();
-    } catch (error) {
-      onFinish();
-      onStatus(formatAuthError(error, "Google sign-in couldn’t open."));
-    }
-  };
-
-  return (
-    <Pressable
-      onPress={() => void onPress()}
-      disabled={disabled}
-      style={({ pressed }) => [
-        styles.googleBtn,
-        disabled ? styles.authBtnDisabled : null,
-        pressed ? { opacity: 0.95 } : null,
-      ]}
-    >
-      <Text style={styles.googleBtnText}>Continue with Google</Text>
-    </Pressable>
-  );
-}
-
 export default function ProfileTab() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const profileScrollRef = useRef<ScrollView | null>(null);
 
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [authUser, setAuthUser] = useState<AuthUserSnapshot | null>(null);
-  const [cachedAuthUser, setCachedAuthUser] = useState<AuthUserSnapshot | null>(null);
   const [summary, setSummary] = useState<SummaryStats>(EMPTY_SUMMARY);
   const [authLoading, setAuthLoading] = useState(true);
   const [authAction, setAuthAction] = useState<AuthAction>(null);
@@ -219,16 +157,13 @@ export default function ProfileTab() {
   const [totalDistanceM, setTotalDistanceM] = useState(0);
   const [editProfileVisible, setEditProfileVisible] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState("");
   const { isPremium } = usePremiumAccess();
 
-  const googleEnabled = Boolean(
-    ENV.AUTH.googleWebClientId && (Platform.OS !== "ios" || ENV.AUTH.googleIosClientId)
-  );
-
-  const visibleUser = authUser ?? cachedAuthUser;
+  const visibleUser = authLoading ? null : authUser;
   const providerLabel = useMemo(() => formatProviderLabel(visibleUser), [visibleUser]);
   const reminderCount = useMemo(() => enabledReminderCount(prefs), [prefs]);
   const currentStreak = summary.currentStreak ?? summary.currentStreakDays ?? 0;
@@ -242,16 +177,33 @@ export default function ProfileTab() {
   const profileHeadline = firstNonEmpty(
     localProfile.displayName,
     visibleUser?.displayName,
-    emailNameFallback(visibleUser?.email)
+    localProfile.username,
+    "Outside walker"
   );
-  const profileEmail = visibleUser?.email ?? "Local profile on this device";
+  const profileHandle = localProfile.username ? `@${localProfile.username}` : "";
+  const profileAccountLine = visibleUser ? `${providerLabel} account` : "Sign in to claim a public username";
   const preferredActivityLabel =
-    PREFERRED_ACTIVITIES.find((option) => option.value === localProfile.preferredActivity)?.label ?? "";
+    localProfile.favoriteActivity ||
+    (PREFERRED_ACTIVITIES.find((option) => option.value === localProfile.preferredActivity)?.label ?? "");
   const profileDetails = [
     localProfile.location,
-    localProfile.walkingGoal,
+    localProfile.outdoorGoal,
     preferredActivityLabel,
   ].filter(Boolean);
+  const draftUsernameValidation = useMemo(
+    () => validateUsername(profileDraft.username),
+    [profileDraft.username]
+  );
+  const canSaveProfile = !profileSaving && (!visibleUser || !draftUsernameValidation.error);
+  const showAuthActionBar = !authLoading && !visibleUser;
+
+  const scrollAuthControlsIntoView = useCallback(() => {
+    if (visibleUser) return;
+
+    setTimeout(() => {
+      profileScrollRef.current?.scrollTo({ y: 210, animated: true });
+    }, 120);
+  }, [visibleUser]);
 
   const loadSettings = useCallback(async () => {
     const [np, storedSummary, storedSessions] = await Promise.allSettled([
@@ -288,19 +240,11 @@ export default function ProfileTab() {
   useEffect(() => {
     let active = true;
 
-    void (async () => {
-      const cached = await getCachedAuthUser();
-      if (active) {
-        setCachedAuthUser(cached);
-      }
-    })();
-
     void loadSettings();
 
     const unsubscribe = subscribeToAuth((user) => {
       if (!active) return;
       setAuthUser(user);
-      setCachedAuthUser(user);
       setAuthLoading(false);
     });
 
@@ -391,6 +335,7 @@ export default function ProfileTab() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Signed in.");
     } catch (error) {
+      logAuthError("email sign-in failed", error);
       setAuthStatus(formatAuthError(error, "Email sign-in hit a snag."));
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -411,6 +356,7 @@ export default function ProfileTab() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Account created.");
     } catch (error) {
+      logAuthError("email sign-up failed", error);
       setAuthStatus(formatAuthError(error, "Email sign-up hit a snag."));
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -430,6 +376,7 @@ export default function ProfileTab() {
       await sendEmailPasswordReset(form.email);
       setAuthStatus("Password reset email sent.");
     } catch (error) {
+      logAuthError("password reset failed", error);
       setAuthStatus(formatAuthError(error, "Password reset couldn’t be sent."));
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -512,13 +459,99 @@ export default function ProfileTab() {
     setProfileDraft({
       ...localProfile,
       displayName: firstNonEmpty(localProfile.displayName, visibleUser?.displayName),
+      username: localProfile.username,
+      favoriteActivity: localProfile.favoriteActivity || preferredActivityLabel,
+      outdoorGoal: localProfile.outdoorGoal || localProfile.walkingGoal,
+      dreamPlaces: localProfile.dreamPlaces || localProfile.bio,
+      photoURL: localProfile.photoURL || visibleUser?.photoURL || "",
     });
     setEditProfileVisible(true);
     void Haptics.selectionAsync();
   };
 
+  const onChooseProfilePhoto = async () => {
+    if (photoBusy) return;
+
+    if (!auth.currentUser) {
+      Alert.alert("Sign in first", "Create or sign into your account before adding a public profile photo.");
+      return;
+    }
+
+    setPhotoBusy(true);
+    setProfileStatus("");
+
+    try {
+      let ImagePicker: ImagePickerModule;
+      try {
+        ImagePicker = await import("expo-image-picker");
+      } catch (error) {
+        console.warn("[profile] image picker module unavailable", error);
+        throw new Error("Photo picking needs a fresh dev build with expo-image-picker installed.");
+      }
+
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Photo access needed", "Allow photo library access to choose a profile picture.");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.82,
+      });
+
+      if (result.canceled) return;
+
+      const selectedUri = result.assets[0]?.uri;
+      if (!selectedUri) {
+        throw new Error("No photo was selected.");
+      }
+
+      const photoURL = await uploadCurrentUserProfilePhoto(selectedUri);
+      const saved = await saveCurrentUserProfilePhotoURL(profileIdentityKey, photoURL);
+      setLocalProfile(saved);
+      setProfileDraft((current) => ({ ...current, photoURL: saved.photoURL }));
+      setProfileStatus("Profile photo updated.");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      setProfileStatus(error instanceof Error ? error.message : "Couldn’t upload that photo. Please try another one.");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const onRemoveProfilePhoto = async () => {
+    if (photoBusy) return;
+
+    setPhotoBusy(true);
+    setProfileStatus("");
+
+    try {
+      if (auth.currentUser && profileDraft.photoURL) {
+        await deleteCurrentUserProfilePhotoObject();
+      }
+      const saved = await saveCurrentUserProfilePhotoURL(profileIdentityKey, "");
+      setLocalProfile(saved);
+      setProfileDraft((current) => ({ ...current, photoURL: "" }));
+      setProfileStatus("Profile photo removed.");
+      void Haptics.selectionAsync();
+    } catch (error) {
+      setProfileStatus(error instanceof Error ? error.message : "Couldn’t remove the profile photo right now.");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
   const onSaveProfile = async () => {
-    if (profileSaving) return;
+    if (!canSaveProfile) {
+      setProfileStatus(draftUsernameValidation.error ?? "Check your profile fields before saving.");
+      return;
+    }
+
     setProfileSaving(true);
     setProfileStatus("");
     Keyboard.dismiss();
@@ -527,29 +560,11 @@ export default function ProfileTab() {
       const saved = await saveLocalUserProfile(profileIdentityKey, profileDraft);
       setLocalProfile(saved);
 
-      let cloudSynced = true;
-      if (visibleUser) {
-        try {
-          const updatedUser = await updateCurrentAuthDisplayName(saved.displayName);
-          if (updatedUser) {
-            setAuthUser(updatedUser);
-            setCachedAuthUser(updatedUser);
-          }
-        } catch (error) {
-          cloudSynced = false;
-          console.warn("[profile] display name cloud sync deferred", error);
-        }
-      }
-
       setEditProfileVisible(false);
-      setProfileStatus(
-        cloudSynced
-          ? "Profile saved."
-          : "Profile saved on this device. Display name will sync when your connection returns."
-      );
+      setProfileStatus(visibleUser ? "Profile saved." : "Profile saved on this device.");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch {
-      setProfileStatus("Couldn’t save your profile right now.");
+    } catch (error) {
+      setProfileStatus(error instanceof Error ? error.message : "Couldn’t save your profile right now.");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setProfileSaving(false);
@@ -558,7 +573,17 @@ export default function ProfileTab() {
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.keyboardRoot}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+      >
+      <ScrollView
+        ref={profileScrollRef}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        contentContainerStyle={[styles.container, showAuthActionBar ? styles.containerWithAuthActionBar : null]}
+      >
         <Text style={styles.title}>Profile</Text>
         <Text style={styles.sub}>Your walking rhythm, favorite places, and account in one grounded place.</Text>
 
@@ -566,11 +591,22 @@ export default function ProfileTab() {
         <View style={styles.profileTopRow}>
           <View style={styles.accountHeader}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{getInitials(profileHeadline)}</Text>
+              {localProfile.photoURL ? (
+                <Image
+                  key={localProfile.photoURL}
+                  source={{ uri: localProfile.photoURL }}
+                  style={styles.avatarImage}
+                  contentFit="cover"
+                  cachePolicy="none"
+                />
+              ) : (
+                <Text style={styles.avatarText}>{getInitials(profileHeadline)}</Text>
+              )}
             </View>
             <View style={styles.accountCopy}>
               <Text style={styles.accountTitle} numberOfLines={2}>{profileHeadline}</Text>
-              <Text style={styles.accountEmail} numberOfLines={1}>{profileEmail}</Text>
+              {profileHandle ? <Text style={styles.accountHandle} numberOfLines={1}>{profileHandle}</Text> : null}
+              <Text style={styles.accountEmail} numberOfLines={1}>{profileAccountLine}</Text>
             </View>
           </View>
           <Pressable
@@ -581,7 +617,7 @@ export default function ProfileTab() {
           </Pressable>
         </View>
 
-        {localProfile.bio ? <Text style={styles.profileBio}>{localProfile.bio}</Text> : null}
+        {localProfile.dreamPlaces ? <Text style={styles.profileBio}>{localProfile.dreamPlaces}</Text> : null}
         {profileDetails.length > 0 ? (
           <View style={styles.profileDetailRow}>
             {profileDetails.map((detail) => (
@@ -591,7 +627,7 @@ export default function ProfileTab() {
             ))}
           </View>
         ) : (
-          <Text style={styles.profilePrompt}>Add a home trail, walking goal, or mantra to make this space yours.</Text>
+          <Text style={styles.profilePrompt}>Add a public username, home trail, activity, or outdoor goal to make this space yours.</Text>
         )}
 
         <View style={styles.profileStatsRow}>
@@ -620,12 +656,13 @@ export default function ProfileTab() {
           </View>
         ) : null}
 
-        {!visibleUser ? (
+        {authLoading ? null : !visibleUser ? (
           <View style={styles.authActions}>
             <View style={styles.emailAuthForm}>
               <TextInput
                 value={authEmail}
                 onChangeText={setAuthEmail}
+                onFocus={scrollAuthControlsIntoView}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
@@ -637,6 +674,7 @@ export default function ProfileTab() {
               <TextInput
                 value={authPassword}
                 onChangeText={setAuthPassword}
+                onFocus={scrollAuthControlsIntoView}
                 autoCapitalize="none"
                 autoCorrect={false}
                 secureTextEntry
@@ -645,34 +683,6 @@ export default function ProfileTab() {
                 placeholderTextColor="rgba(11,15,14,0.42)"
                 style={styles.authInput}
               />
-              <View style={styles.emailButtonRow}>
-                <Pressable
-                  onPress={() => void onEmailSignIn()}
-                  disabled={authAction !== null}
-                  style={({ pressed }) => [
-                    styles.emailPrimaryBtn,
-                    authAction !== null ? styles.authBtnDisabled : null,
-                    pressed ? { opacity: 0.92 } : null,
-                  ]}
-                >
-                  <Text style={styles.emailPrimaryBtnText}>
-                    {authAction === "emailSignIn" ? "Signing in..." : "Sign in"}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => void onEmailSignUp()}
-                  disabled={authAction !== null}
-                  style={({ pressed }) => [
-                    styles.emailSecondaryBtn,
-                    authAction !== null ? styles.authBtnDisabled : null,
-                    pressed ? { opacity: 0.92 } : null,
-                  ]}
-                >
-                  <Text style={styles.emailSecondaryBtnText}>
-                    {authAction === "emailSignUp" ? "Creating..." : "Create account"}
-                  </Text>
-                </Pressable>
-              </View>
               <Pressable
                 onPress={() => void onPasswordReset()}
                 disabled={authAction !== null}
@@ -684,22 +694,13 @@ export default function ProfileTab() {
               </Pressable>
             </View>
 
-            {googleEnabled ? (
-              <GoogleSignInButton
-                disabled={authAction !== null}
-                onStart={() => setAuthAction("google")}
-                onFinish={() => setAuthAction(null)}
-                onStatus={setAuthStatus}
-              />
-            ) : (
-              <Text style={styles.authSetupNote}>Use email sign-in or create an account below.</Text>
-            )}
+            <Text style={styles.authSetupNote}>Use your email and password to continue.</Text>
           </View>
         ) : (
           <View style={styles.signedInRow}>
             <View style={styles.signedInPillWrap}>
               <Text style={styles.signedInPill}>{providerLabel}</Text>
-              <Text style={styles.signedInHelper}>Profile active on this device</Text>
+              <Text style={styles.signedInHelper}>Signed in and synced</Text>
             </View>
             <Pressable
               onPress={() => void onSignOut()}
@@ -846,11 +847,6 @@ export default function ProfileTab() {
           />
         </View>
 
-        {__DEV__ ? (
-          <Pressable style={styles.testBtn} onPress={() => void sendTestNotification()}>
-            <Text style={styles.testBtnText}>Send test notification</Text>
-          </Pressable>
-        ) : null}
       </View>
 
         <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.btnAlt, pressed ? { opacity: 0.9 } : null]}>
@@ -858,7 +854,7 @@ export default function ProfileTab() {
         </Pressable>
 
         <View style={styles.settingsCard}>
-          <Text style={styles.settingsEyebrow}>Danger zone</Text>
+          <Text style={styles.settingsEyebrow}>Settings</Text>
           <Text style={styles.settingsTitle}>Delete Account</Text>
           <Text style={styles.settingsBody}>
             Permanently remove your signed-in profile and associated account data. Local walking data is also cleared.
@@ -877,6 +873,37 @@ export default function ProfileTab() {
           {!visibleUser ? <Text style={styles.deleteHint}>Sign in to access account deletion.</Text> : null}
         </View>
       </ScrollView>
+      {showAuthActionBar ? (
+        <View style={[styles.authActionBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <Pressable
+            onPress={() => void onEmailSignIn()}
+            disabled={authAction !== null}
+            style={({ pressed }) => [
+              styles.emailPrimaryBtn,
+              authAction !== null ? styles.authBtnDisabled : null,
+              pressed ? { opacity: 0.92 } : null,
+            ]}
+          >
+            <Text style={styles.emailPrimaryBtnText}>
+              {authAction === "emailSignIn" ? "Signing in..." : "Sign in"}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => void onEmailSignUp()}
+            disabled={authAction !== null}
+            style={({ pressed }) => [
+              styles.emailSecondaryBtn,
+              authAction !== null ? styles.authBtnDisabled : null,
+              pressed ? { opacity: 0.92 } : null,
+            ]}
+          >
+            <Text style={styles.emailSecondaryBtnText}>
+              {authAction === "emailSignUp" ? "Creating..." : "Create account"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+      </KeyboardAvoidingView>
 
       <Modal
         visible={editProfileVisible}
@@ -921,6 +948,77 @@ export default function ProfileTab() {
                   style={styles.profileInput}
                 />
 
+                <Text style={styles.fieldLabel}>Profile photo</Text>
+                <View style={styles.photoEditorRow}>
+                  <View style={styles.editAvatar}>
+                    {profileDraft.photoURL ? (
+                      <Image
+                        key={profileDraft.photoURL}
+                        source={{ uri: profileDraft.photoURL }}
+                        style={styles.editAvatarImage}
+                        contentFit="cover"
+                        cachePolicy="none"
+                      />
+                    ) : (
+                      <Text style={styles.editAvatarText}>{getInitials(firstNonEmpty(profileDraft.displayName, profileHeadline))}</Text>
+                    )}
+                  </View>
+                  <View style={styles.photoEditorActions}>
+                    <Pressable
+                      onPress={() => void onChooseProfilePhoto()}
+                      disabled={photoBusy}
+                      style={({ pressed }) => [
+                        styles.photoPrimaryBtn,
+                        photoBusy ? styles.authBtnDisabled : null,
+                        pressed ? { opacity: 0.88 } : null,
+                      ]}
+                    >
+                      <Text style={styles.photoPrimaryBtnText}>
+                        {photoBusy ? "Working..." : profileDraft.photoURL ? "Change Photo" : "Add Photo"}
+                      </Text>
+                    </Pressable>
+                    {profileDraft.photoURL ? (
+                      <Pressable
+                        onPress={() => void onRemoveProfilePhoto()}
+                        disabled={photoBusy}
+                        style={({ pressed }) => [
+                          styles.photoRemoveBtn,
+                          photoBusy ? styles.authBtnDisabled : null,
+                          pressed ? { opacity: 0.82 } : null,
+                        ]}
+                      >
+                        <Text style={styles.photoRemoveBtnText}>Remove</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+                {!visibleUser ? (
+                  <Text style={styles.fieldHint}>Sign in with email to upload and reserve a public profile photo.</Text>
+                ) : null}
+
+                <Text style={styles.fieldLabel}>Username</Text>
+                <TextInput
+                  value={profileDraft.username}
+                  onChangeText={(username) =>
+                    setProfileDraft((current) => ({ ...current, username: username.toLowerCase() }))
+                  }
+                  placeholder="trail.friend"
+                  placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={20}
+                  returnKeyType="next"
+                  style={[
+                    styles.profileInput,
+                    visibleUser && draftUsernameValidation.error ? styles.profileInputError : null,
+                  ]}
+                />
+                <Text style={[styles.fieldHint, visibleUser && draftUsernameValidation.error ? styles.fieldError : null]}>
+                  {visibleUser
+                    ? draftUsernameValidation.error ?? "Optional. Public usernames use 3-20 lowercase letters, numbers, underscores, or periods."
+                    : "Sign in with email to reserve a unique public username."}
+                </Text>
+
                 <Text style={styles.fieldLabel}>Location, home trail, or favorite park</Text>
                 <TextInput
                   value={profileDraft.location}
@@ -931,20 +1029,22 @@ export default function ProfileTab() {
                   style={styles.profileInput}
                 />
 
-                <Text style={styles.fieldLabel}>Walking goal</Text>
+                <Text style={styles.fieldLabel}>Favorite activity</Text>
                 <TextInput
-                  value={profileDraft.walkingGoal}
-                  onChangeText={(walkingGoal) => setProfileDraft((current) => ({ ...current, walkingGoal }))}
-                  placeholder="Walk outside 4 days a week"
+                  value={profileDraft.favoriteActivity}
+                  onChangeText={(favoriteActivity) =>
+                    setProfileDraft((current) => ({ ...current, favoriteActivity, preferredActivity: null }))
+                  }
+                  placeholder="Hiking, walking, birding..."
                   placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
-                  maxLength={80}
+                  maxLength={64}
                   style={styles.profileInput}
                 />
-
-                <Text style={styles.fieldLabel}>Preferred activity</Text>
                 <View style={styles.activityOptions}>
                   {PREFERRED_ACTIVITIES.map((option) => {
-                    const active = profileDraft.preferredActivity === option.value;
+                    const active =
+                      profileDraft.preferredActivity === option.value ||
+                      profileDraft.favoriteActivity.trim().toLowerCase() === option.label.toLowerCase();
                     return (
                       <Pressable
                         key={option.value}
@@ -952,6 +1052,7 @@ export default function ProfileTab() {
                           setProfileDraft((current) => ({
                             ...current,
                             preferredActivity: active ? null : option.value,
+                            favoriteActivity: active ? "" : option.label,
                           }))
                         }
                         style={({ pressed }) => [
@@ -968,24 +1069,38 @@ export default function ProfileTab() {
                   })}
                 </View>
 
-                <Text style={styles.fieldLabel}>Bio or mantra</Text>
+                <Text style={styles.fieldLabel}>Outdoor goal</Text>
                 <TextInput
-                  value={profileDraft.bio}
-                  onChangeText={(bio) => setProfileDraft((current) => ({ ...current, bio }))}
-                  placeholder="A little farther, a little lighter."
+                  value={profileDraft.outdoorGoal}
+                  onChangeText={(outdoorGoal) =>
+                    setProfileDraft((current) => ({ ...current, outdoorGoal, walkingGoal: outdoorGoal }))
+                  }
+                  placeholder="Walk outside 4 days a week"
+                  placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
+                  maxLength={180}
+                  style={styles.profileInput}
+                />
+
+                <Text style={styles.fieldLabel}>Dream places / bucket list</Text>
+                <TextInput
+                  value={profileDraft.dreamPlaces}
+                  onChangeText={(dreamPlaces) =>
+                    setProfileDraft((current) => ({ ...current, dreamPlaces, bio: dreamPlaces }))
+                  }
+                  placeholder="Glacier, Acadia, the lake trail at sunrise..."
                   placeholderTextColor={alpha(PREMIUM.colors.ink, 0.4)}
                   multiline
-                  maxLength={160}
+                  maxLength={220}
                   textAlignVertical="top"
                   style={[styles.profileInput, styles.profileBioInput]}
                 />
 
                 <Pressable
                   onPress={() => void onSaveProfile()}
-                  disabled={profileSaving}
+                  disabled={!canSaveProfile}
                   style={({ pressed }) => [
                     styles.saveProfileBtn,
-                    profileSaving ? styles.authBtnDisabled : null,
+                    !canSaveProfile ? styles.authBtnDisabled : null,
                     pressed ? { opacity: 0.92 } : null,
                   ]}
                 >
@@ -1043,11 +1158,18 @@ export default function ProfileTab() {
 }
 
 const styles = StyleSheet.create({
+  keyboardRoot: {
+    flex: 1,
+    backgroundColor: PREMIUM.colors.cream,
+  },
   container: {
     padding: PREMIUM.spacing.screen,
-    paddingBottom: 32,
+    paddingBottom: 168,
     backgroundColor: PREMIUM.colors.cream,
     flexGrow: 1,
+  },
+  containerWithAuthActionBar: {
+    paddingBottom: 220,
   },
   title: { fontSize: 34, lineHeight: 40, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
   sub: {
@@ -1090,6 +1212,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 3,
     borderColor: alpha(PREMIUM.colors.gold, 0.72),
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   avatarText: {
     color: PREMIUM.colors.offWhite,
@@ -1107,6 +1234,12 @@ const styles = StyleSheet.create({
     lineHeight: 32,
     fontWeight: "700",
     fontFamily: PREMIUM.type.serifFamily,
+  },
+  accountHandle: {
+    color: PREMIUM.colors.forest,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "900",
   },
   accountEmail: {
     color: PREMIUM.colors.textMuted,
@@ -1201,6 +1334,16 @@ const styles = StyleSheet.create({
   authActions: {
     gap: 10,
   },
+  authActionBar: {
+    flexDirection: "row",
+    gap: 10,
+    paddingTop: 12,
+    paddingHorizontal: PREMIUM.spacing.screen,
+    backgroundColor: PREMIUM.colors.cream,
+    borderTopWidth: 1,
+    borderTopColor: PREMIUM.colors.line,
+    ...PREMIUM.shadow.soft,
+  },
   emailAuthForm: {
     gap: 10,
   },
@@ -1255,18 +1398,6 @@ const styles = StyleSheet.create({
     color: "rgba(11,15,14,0.58)",
     fontSize: 13,
     fontWeight: "800",
-  },
-  googleBtn: {
-    minHeight: 52,
-    borderRadius: PREMIUM.radius.pill,
-    backgroundColor: PREMIUM.colors.forest,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  googleBtnText: {
-    color: PREMIUM.colors.offWhite,
-    fontWeight: "900",
-    letterSpacing: 0.3,
   },
   authBtnDisabled: {
     opacity: 0.6,
@@ -1510,15 +1641,6 @@ const styles = StyleSheet.create({
   rowCopy: { flex: 1 },
   rowLabel: { fontWeight: "700", color: PREMIUM.colors.text },
   rowHint: { marginTop: 3, color: PREMIUM.colors.textMuted, fontWeight: "600", fontSize: 12, lineHeight: 17 },
-  testBtn: {
-    marginTop: 8,
-    alignSelf: "flex-start",
-    backgroundColor: alpha(PREMIUM.colors.forest, 0.14),
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: PREMIUM.radius.pill,
-  },
-  testBtnText: { color: PREMIUM.colors.forest, fontWeight: "900" },
   btnAlt: {
     marginTop: 12,
     backgroundColor: alpha(PREMIUM.colors.text, 0.08),
@@ -1605,10 +1727,87 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
+  profileInputError: {
+    borderColor: "#B42318",
+    backgroundColor: "rgba(180,35,24,0.06)",
+  },
   profileBioInput: {
     minHeight: 92,
     paddingTop: 13,
     paddingBottom: 13,
+  },
+  fieldHint: {
+    marginTop: 7,
+    color: PREMIUM.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+  },
+  fieldError: {
+    color: "#B42318",
+  },
+  photoEditorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    borderRadius: PREMIUM.radius.lg,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.62),
+    padding: 12,
+  },
+  editAvatar: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: PREMIUM.colors.forest,
+    borderWidth: 3,
+    borderColor: alpha(PREMIUM.colors.gold, 0.7),
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  editAvatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  editAvatarText: {
+    color: PREMIUM.colors.offWhite,
+    fontSize: 24,
+    fontWeight: "900",
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  photoEditorActions: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  photoPrimaryBtn: {
+    minHeight: 42,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: PREMIUM.colors.forest,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  photoPrimaryBtnText: {
+    color: PREMIUM.colors.offWhite,
+    fontWeight: "900",
+  },
+  photoRemoveBtn: {
+    minHeight: 42,
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.danger, 0.08),
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.danger, 0.24),
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  photoRemoveBtnText: {
+    color: "#A32727",
+    fontWeight: "900",
   },
   activityOptions: {
     flexDirection: "row",

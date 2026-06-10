@@ -6,6 +6,7 @@ import {
 import {
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   collection,
   writeBatch,
@@ -16,8 +17,9 @@ import { clearActiveWalkSnapshot, clearCompletedWalkDraft } from "./activeWalk";
 import { stopBackgroundWalkTracking } from "./walkLocationTracking";
 import { signOutUser } from "./auth";
 import { db } from "./firebase";
+import { logFirestorePermissionDenied } from "./firestoreDebug";
 import { resetAllData } from "./store";
-import { clearLocalUserProfiles } from "./userProfile";
+import { clearLocalUserProfiles, deleteProfilePhotoObjectForUid } from "./userProfile";
 
 const LOCAL_KEYS_TO_CLEAR = [
   "stepoutside:v2:auth-cache",
@@ -62,7 +64,11 @@ function isRequiresRecentLogin(error: unknown): boolean {
 }
 
 async function deleteCollectionDocs(uid: string, collectionName: (typeof USER_SUBCOLLECTIONS)[number]) {
-  const snapshot = await getDocs(collection(db, "users", uid, collectionName));
+  const collectionPath = `users/${uid}/${collectionName}`;
+  const snapshot = await getDocs(collection(db, "users", uid, collectionName)).catch((error) => {
+    logFirestorePermissionDenied("account deletion list collection", [collectionPath], error);
+    throw error;
+  });
   if (snapshot.empty) return;
 
   let batch = writeBatch(db);
@@ -73,26 +79,62 @@ async function deleteCollectionDocs(uid: string, collectionName: (typeof USER_SU
     count += 1;
 
     if (count >= 400) {
-      await batch.commit();
+      await batch.commit().catch((error) => {
+        logFirestorePermissionDenied("account deletion batch delete", [collectionPath], error);
+        throw error;
+      });
       batch = writeBatch(db);
       count = 0;
     }
   }
 
   if (count > 0) {
-    await batch.commit();
+    await batch.commit().catch((error) => {
+      logFirestorePermissionDenied("account deletion batch delete", [collectionPath], error);
+      throw error;
+    });
   }
 }
 
 async function deleteUserOwnedFirestoreData(uid: string): Promise<DeleteAccountResult> {
-  const membershipSnapshot = await getDocs(collection(db, "users", uid, "memberships"));
+  const membershipSnapshot = await getDocs(collection(db, "users", uid, "memberships")).catch((error) => {
+    logFirestorePermissionDenied("account deletion list memberships", [`users/${uid}/memberships`], error);
+    throw error;
+  });
   const cloudCleanupTargets = membershipSnapshot.docs.map((entry) => entry.id);
+  const userRef = doc(db, "users", uid);
+  const userSnapshot = await getDoc(userRef).catch((error) => {
+    logFirestorePermissionDenied("account deletion read user profile", [`users/${uid}`], error);
+    throw error;
+  });
+  const username = typeof userSnapshot.data()?.username === "string" ? userSnapshot.data()?.username : "";
 
   for (const collectionName of USER_SUBCOLLECTIONS) {
     await deleteCollectionDocs(uid, collectionName);
   }
 
-  await deleteDoc(doc(db, "users", uid));
+  if (username) {
+    const usernameRef = doc(db, "usernames", username);
+    const usernameSnapshot = await getDoc(usernameRef).catch((error) => {
+      logFirestorePermissionDenied("account deletion read username", [`usernames/${username}`], error);
+      throw error;
+    });
+    if (usernameSnapshot.exists() && usernameSnapshot.data()?.uid === uid) {
+      await deleteDoc(usernameRef).catch((error) => {
+        logFirestorePermissionDenied("account deletion delete username", [`usernames/${username}`], error);
+        throw error;
+      });
+    }
+  }
+
+  await deleteProfilePhotoObjectForUid(uid).catch((error) => {
+    console.warn("[account-delete] profile photo cleanup warning", error);
+  });
+
+  await deleteDoc(userRef).catch((error) => {
+    logFirestorePermissionDenied("account deletion delete user profile", [`users/${uid}`], error);
+    throw error;
+  });
 
   return {
     cloudCleanupRequired: cloudCleanupTargets.length > 0,

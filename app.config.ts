@@ -1,3 +1,4 @@
+import "dotenv/config";
 import type { ExpoConfig } from "expo/config";
 
 const iosGoogleMapsApiKey = process.env.GOOGLE_MAPS_IOS_API_KEY ?? process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -16,6 +17,7 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: "com.cookarell.stepoutside",
+    buildNumber: "30",
     ...(iosGoogleMapsApiKey
       ? {
           config: {
@@ -30,6 +32,8 @@ const config: ExpoConfig = {
         "Step Outside uses your location during an active walk so distance and route tracking continue when your screen is locked.",
       NSLocationAlwaysUsageDescription:
         "Step Outside uses your location during an active walk so distance and route tracking continue when your screen is locked.",
+      NSPhotoLibraryUsageDescription:
+        "Step Outside lets you choose a profile photo from your library.",
       UIBackgroundModes: ["location"],
       ITSAppUsesNonExemptEncryption: false,
     },
@@ -67,6 +71,13 @@ const config: ExpoConfig = {
       {
         icon: "./assets/images/icon.png",
         color: "#255E36",
+      },
+    ],
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "Step Outside lets you choose a profile photo from your library.",
       },
     ],
     [

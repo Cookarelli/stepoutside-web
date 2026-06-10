@@ -41,10 +41,6 @@ export default function CompleteScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  useEffect(() => {
-    console.log("[boot] complete screen mounted");
-  }, []);
-
   const params = useLocalSearchParams<{
     startedAt?: string;
     endedAt?: string;

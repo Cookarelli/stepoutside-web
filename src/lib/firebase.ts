@@ -1,51 +1,73 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
-import { getAuth, initializeAuth, type Auth } from "firebase/auth";
+import * as FirebaseAuth from "@firebase/auth";
+import type { Auth, Persistence } from "@firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
-console.log("[BOOT] firebase.ts loaded");
+import { ENV } from "../../env";
 
-function envOrFallback(name: keyof NodeJS.ProcessEnv, fallback: string): string {
-  const value =
-    name === "EXPO_PUBLIC_FIREBASE_API_KEY"
-      ? process.env.EXPO_PUBLIC_FIREBASE_API_KEY
-      : name === "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN"
-      ? process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN
-      : name === "EXPO_PUBLIC_FIREBASE_PROJECT_ID"
-      ? process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID
-      : name === "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET"
-      ? process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET
-      : name === "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"
-      ? process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-      : name === "EXPO_PUBLIC_FIREBASE_APP_ID"
-      ? process.env.EXPO_PUBLIC_FIREBASE_APP_ID
-      : process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID;
+type RequiredFirebaseEnvKey = Exclude<keyof typeof ENV.FIREBASE, "measurementId" | "usePreviewFallback">;
 
-  if (__DEV__ && !value) {
-    console.warn(`[Firebase] Missing ${name}; using preview fallback.`);
+function requiredFirebaseEnv(name: RequiredFirebaseEnvKey, envName: string): string {
+  const value = ENV.FIREBASE[name];
+  if (!value) {
+    throw new Error(`[Firebase] Missing required ${envName}. Add it to .env or the EAS build environment.`);
   }
 
-  return value || fallback;
+  return value;
 }
 
-const firebaseConfig = {
-  apiKey: envOrFallback("EXPO_PUBLIC_FIREBASE_API_KEY", "preview-api-key"),
-  authDomain: envOrFallback("EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN", "stepoutside-preview.firebaseapp.com"),
-  projectId: envOrFallback("EXPO_PUBLIC_FIREBASE_PROJECT_ID", "stepoutside-preview"),
-  storageBucket: envOrFallback("EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET", "stepoutside-preview.appspot.com"),
-  messagingSenderId: envOrFallback("EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", "000000000000"),
-  appId: envOrFallback("EXPO_PUBLIC_FIREBASE_APP_ID", "1:000000000000:web:preview"),
-  // measurementId is optional and web-only; safe to ignore in native.
-  measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
+const previewFirebaseConfig = {
+  apiKey: "preview-api-key",
+  authDomain: "stepoutside-preview.firebaseapp.com",
+  projectId: "stepoutside-preview",
+  storageBucket: "stepoutside-preview.appspot.com",
+  messagingSenderId: "000000000000",
+  appId: "1:000000000000:web:preview",
+  measurementId: undefined,
 };
+
+const usingFallbackProject = __DEV__ && ENV.FIREBASE.usePreviewFallback;
+
+const firebaseConfig = {
+  apiKey: usingFallbackProject
+    ? previewFirebaseConfig.apiKey
+    : requiredFirebaseEnv("apiKey", "EXPO_PUBLIC_FIREBASE_API_KEY"),
+  authDomain: usingFallbackProject
+    ? previewFirebaseConfig.authDomain
+    : requiredFirebaseEnv("authDomain", "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN"),
+  projectId: usingFallbackProject
+    ? previewFirebaseConfig.projectId
+    : requiredFirebaseEnv("projectId", "EXPO_PUBLIC_FIREBASE_PROJECT_ID"),
+  storageBucket: usingFallbackProject
+    ? previewFirebaseConfig.storageBucket
+    : requiredFirebaseEnv("storageBucket", "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET"),
+  messagingSenderId: usingFallbackProject
+    ? previewFirebaseConfig.messagingSenderId
+    : requiredFirebaseEnv("messagingSenderId", "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"),
+  appId: usingFallbackProject
+    ? previewFirebaseConfig.appId
+    : requiredFirebaseEnv("appId", "EXPO_PUBLIC_FIREBASE_APP_ID"),
+  // measurementId is optional and web-only; safe to ignore in native.
+  measurementId: usingFallbackProject ? previewFirebaseConfig.measurementId : ENV.FIREBASE.measurementId,
+};
+
+const { getAuth, initializeAuth } = FirebaseAuth;
+const getReactNativePersistence = (
+  FirebaseAuth as typeof FirebaseAuth & {
+    getReactNativePersistence?: (storage: typeof AsyncStorage) => Persistence;
+  }
+).getReactNativePersistence;
 
 /**
  * Firebase App (single instance across fast refresh)
  */
 export const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 if (__DEV__) {
-  console.log("[BOOT] Firebase initialized", {
+  console.info("[Firebase] config", {
     projectId: firebaseConfig.projectId,
-    usingFallbackProject: firebaseConfig.projectId === "stepoutside-preview",
+    usingFallbackProject,
   });
 }
 
@@ -54,16 +76,29 @@ if (__DEV__) {
  */
 export const auth: Auth = (() => {
   try {
-    // This Firebase build currently initializes Auth without an RN-specific persistence adapter.
-    // Profile UI caches a lightweight user snapshot locally, but native auth session persistence
-    // still needs validation or a package upgrade before we call it "fully synced."
-    return initializeAuth(app);
+    return initializeAuth(
+      app,
+      getReactNativePersistence
+        ? {
+            persistence: getReactNativePersistence(AsyncStorage),
+          }
+        : undefined
+    );
   } catch {
     return getAuth(app);
   }
 })();
 
+export async function waitForAuthReady(): Promise<void> {
+  await auth.authStateReady();
+}
+
 /**
  * Firestore
  */
 export const db: Firestore = getFirestore(app);
+
+/**
+ * Firebase Storage
+ */
+export const storage: FirebaseStorage = getStorage(app);

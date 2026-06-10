@@ -4,9 +4,9 @@ import { Platform } from "react-native";
 import Purchases, { LOG_LEVEL, type CustomerInfo, type PurchasesOffering, type PurchasesPackage } from "react-native-purchases";
 
 import { ENV } from "../../env";
-import { auth } from "./firebase";
+import { auth, waitForAuthReady } from "./firebase";
 
-export type ProPlan = "monthly" | "yearly" | "lifetime";
+export type ProPlan = "monthly" | "yearly";
 
 export type ProState = {
   isPro: boolean;
@@ -46,7 +46,6 @@ export type PremiumStatus = {
 export const PRO_PRODUCT_IDS = {
   monthly: "step_outside_pro_monthly",
   yearly: "stepoutside_pro_yearly",
-  lifetime: "stepoutside_pro_lifetime_launch",
 } as const;
 
 const PAYWALL_PLANS: ProPlan[] = ["yearly", "monthly"];
@@ -71,7 +70,6 @@ function derivePlan(productId: string | null): ProPlan | null {
   if (!productId) return null;
   if (productId === PRO_PRODUCT_IDS.monthly) return "monthly";
   if (productId === PRO_PRODUCT_IDS.yearly) return "yearly";
-  if (productId === PRO_PRODUCT_IDS.lifetime) return "lifetime";
   return null;
 }
 
@@ -206,9 +204,7 @@ function getPackageFromOfferingByPlan(offering: PurchasesOffering | null, plan: 
   const direct =
     plan === "monthly"
       ? offering.monthly
-      : plan === "yearly"
-        ? offering.annual
-        : offering.lifetime;
+      : offering.annual;
 
   if (direct) return direct;
 
@@ -220,8 +216,7 @@ function getPackageFromOfferingByPlan(offering: PurchasesOffering | null, plan: 
       if (productIdentifier === productId) return true;
       if (identifier === productId) return true;
       if (plan === "monthly") return identifier.includes("month") || productIdentifier.includes("month");
-      if (plan === "yearly") return identifier.includes("year") || identifier.includes("annual") || productIdentifier.includes("year");
-      return identifier.includes("lifetime") || identifier.includes("launch") || productIdentifier.includes("lifetime");
+      return identifier.includes("year") || identifier.includes("annual") || productIdentifier.includes("year");
     }) ?? null
   );
 }
@@ -271,6 +266,12 @@ export async function initRevenueCat(): Promise<boolean> {
   if (isExpoGo()) return false;
 
   rcConfigurePromise = (async () => {
+    await waitForAuthReady().catch((error) => {
+      if (__DEV__) {
+        console.warn("[RevenueCat] continuing before Firebase Auth restore completed", error);
+      }
+    });
+
     const apiKey = getRevenueCatApiKey();
     if (!apiKey) return false;
 
@@ -298,9 +299,15 @@ export async function syncRevenueCatIdentity(appUserID: string | null): Promise<
     const ready = await initRevenueCat();
     if (!ready) return await getProState();
 
-    const info = appUserID
-      ? (await Purchases.logIn(appUserID)).customerInfo
-      : await Purchases.logOut();
+    const currentAppUserID = await Purchases.getAppUserID().catch(() => null);
+    if (appUserID && currentAppUserID === appUserID) {
+      const info = await Purchases.getCustomerInfo();
+      const next = mapCustomerInfoToPro(info);
+      await persist(next);
+      return withPremiumOverride(next);
+    }
+
+    const info = appUserID ? (await Purchases.logIn(appUserID)).customerInfo : await Purchases.logOut();
 
     const next = mapCustomerInfoToPro(info);
     await persist(next);
@@ -384,12 +391,7 @@ export async function setProState(next: ProState): Promise<void> {
 }
 
 export async function setProFromPlan(plan: ProPlan): Promise<ProState> {
-  const productId =
-    plan === "monthly"
-      ? PRO_PRODUCT_IDS.monthly
-      : plan === "yearly"
-        ? PRO_PRODUCT_IDS.yearly
-        : PRO_PRODUCT_IDS.lifetime;
+  const productId = PRO_PRODUCT_IDS[plan];
 
   const next: ProState = {
     isPro: true,
@@ -420,28 +422,15 @@ function buildLivePaywallPackage(
     };
   }
 
-  if (plan === "yearly") {
-    const monthlyEquivalent = product.pricePerMonthString;
-
-    return {
-      plan,
-      title: "Step Outside Premium",
-      periodLabel: "Annual subscription",
-      priceLabel: product.priceString || "See App Store price",
-      detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually.` : "Billed annually through Apple.",
-      badge: "Best Value",
-      productId: product.identifier,
-      rcPackage,
-    };
-  }
+  const monthlyEquivalent = product.pricePerMonthString;
 
   return {
     plan,
-    title: "Lifetime",
-    periodLabel: "One-time purchase",
+    title: "Step Outside Premium",
+    periodLabel: "Annual subscription",
     priceLabel: product.priceString || "See App Store price",
-    detail: "one-time purchase",
-    badge: "Launch",
+    detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually.` : "Billed annually through Apple.",
+    badge: "Best Value",
     productId: product.identifier,
     rcPackage,
   };

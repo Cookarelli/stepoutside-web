@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -232,10 +232,6 @@ async function loadFeaturedResetFromZip(): Promise<FeaturedReset> {
 export default function HomeTab() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-
-  useEffect(() => {
-    console.log("[boot] home screen mounted");
-  }, []);
 
   const [summary, setSummary] = useState<SummaryStats>(EMPTY_SUMMARY);
   const [dailySpark, setDailySpark] = useState<DailySpark | null>(null);
