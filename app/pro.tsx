@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchases";
 
@@ -17,9 +17,18 @@ import {
 } from "../src/lib/pro";
 import { PREMIUM, alpha } from "../src/lib/premiumTheme";
 
-const PRIVACY_URL = "https://www.stepoutside.app/privacy-policy";
-const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
-const MANAGE_SUBSCRIPTIONS_URL = "https://apps.apple.com/account/subscriptions";
+const PRIVACY_URL = "https://www.stepoutside.app/privacy.html";
+const TERMS_URL =
+  Platform.OS === "android" ? "https://www.stepoutside.app/terms.html" : "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const MANAGE_SUBSCRIPTIONS_URL =
+  Platform.OS === "android"
+    ? "https://play.google.com/store/account/subscriptions?package=com.stevencook.stepoutside"
+    : "https://apps.apple.com/account/subscriptions";
+const STORE_LABEL = Platform.OS === "android" ? "Google Play" : "App Store";
+const BILLING_ACCOUNT_LABEL = Platform.OS === "android" ? "Google Play account" : "Apple account";
+const PAYMENT_PROCESSOR_LABEL = Platform.OS === "android" ? "Google Play" : "Apple";
+const MANAGE_SUBSCRIPTION_LABEL =
+  Platform.OS === "android" ? "Manage your subscription in Google Play" : "Manage Subscription";
 const RENEWAL_DISCLOSURE =
   "Renews automatically unless canceled at least 24 hours before the end of the current period.";
 const PRO_DESCRIPTION =
@@ -120,7 +129,7 @@ export default function ProScreen() {
       }
 
       if (isRevenueCatError(error) && error.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR) {
-        Alert.alert("Purchase pending", "Apple is still processing this purchase. We’ll unlock Premium as soon as it clears.");
+        Alert.alert("Purchase pending", `${PAYMENT_PROCESSOR_LABEL} is still processing this purchase. We’ll unlock Premium as soon as it clears.`);
         return;
       }
 
@@ -140,7 +149,7 @@ export default function ProScreen() {
         billingReady
           ? next.isPro
             ? "Your previous Premium access is active again."
-            : "This Apple account doesn’t currently have an active Step Outside Premium entitlement."
+            : `This ${BILLING_ACCOUNT_LABEL} doesn’t currently have an active Step Outside Premium entitlement.`
           : "Restore is live on native builds. In preview mode this screen only shows your saved local Premium state."
       );
     } catch (error) {
@@ -164,7 +173,7 @@ export default function ProScreen() {
     }
 
     if (catalogSource === "live") {
-      return "Plans and pricing are loaded live from the App Store.";
+      return `Plans and pricing are loaded live from ${STORE_LABEL}.`;
     }
 
     if (catalogSource === "empty") {
@@ -219,7 +228,7 @@ export default function ProScreen() {
             <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
             <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
             <Text style={styles.heroSupport}>
-              Monthly and annual subscriptions are billed through Apple using live App Store pricing.
+              Monthly and annual subscriptions are billed through {PAYMENT_PROCESSOR_LABEL} using live {STORE_LABEL} pricing.
             </Text>
           </View>
 
@@ -301,7 +310,7 @@ export default function ProScreen() {
                   </View>
                   <Text style={featured ? styles.featuredDetail : styles.planDetail}>{pkg.detail}</Text>
                   <Text style={featured ? styles.featuredFootnote : styles.planFootnote}>
-                    {busyAction === pkg.plan ? "Starting purchase…" : active ? "Current plan" : "Tap to continue with Apple"}
+                    {busyAction === pkg.plan ? "Starting purchase…" : active ? "Current plan" : `Tap to continue with ${PAYMENT_PROCESSOR_LABEL}`}
                   </Text>
                 </Pressable>
               );
@@ -315,7 +324,9 @@ export default function ProScreen() {
             </Text>
             <Text style={styles.disclosureBody}>{RENEWAL_DISCLOSURE}</Text>
             <Text style={styles.disclosureBody}>
-              Manage or cancel anytime in your Apple ID subscription settings. Restore Purchases is available below.
+              {Platform.OS === "android"
+                ? "Manage or cancel anytime in Google Play. Restore Purchases is available below."
+                : "Manage or cancel anytime in your Apple ID subscription settings. Restore Purchases is available below."}
             </Text>
           </View>
 
@@ -324,7 +335,7 @@ export default function ProScreen() {
           </Pressable>
 
           <Pressable style={styles.manageBtn} onPress={() => void openExternal(MANAGE_SUBSCRIPTIONS_URL, "Manage Subscription")} disabled={busyAction !== null}>
-            <Text style={styles.manageText}>Manage Subscription</Text>
+            <Text style={styles.manageText}>{MANAGE_SUBSCRIPTION_LABEL}</Text>
           </Pressable>
 
           <View style={styles.linksRow}>

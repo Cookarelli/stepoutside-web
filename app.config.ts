@@ -51,6 +51,7 @@ const config: ExpoConfig = {
         }
       : {}),
     permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+    blockedPermissions: ["android.permission.RECORD_AUDIO"],
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/images/android-icon-foreground.png",

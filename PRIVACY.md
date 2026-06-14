@@ -29,7 +29,7 @@ If you allow location access, Step Outside may use your device location:
 - when you ask for nearby route suggestions
 - when the app calculates local sunrise and sunset timing for Golden Hour reminders and bonuses
 
-Step Outside does not use background location tracking for the core app experience.
+Step Outside may use location while you are actively tracking a walk, including limited background location if you leave the app during an active walk. This is used only to record your walk route, distance, pace, and progress.
 
 ### Notification preferences
 If you enable notifications, the app may store your reminder preferences locally, including:
@@ -39,7 +39,7 @@ If you enable notifications, the app may store your reminder preferences locally
 - quiet hours
 
 ### Purchases
-If you purchase Step Outside Pro, Apple handles payment processing. Step Outside and RevenueCat may receive purchase status information needed to unlock and restore your subscription or lifetime access.
+Subscriptions may be managed through Google Play or Apple, depending on your device. Step Outside and RevenueCat may receive purchase status information needed to unlock and restore your subscription access.
 
 We do not receive your full payment card information.
 
@@ -67,7 +67,7 @@ If Firebase-backed reflection syncing is available in a future version, this pol
 Step Outside may use third-party services such as:
 - Firebase, for app infrastructure and optional backend services
 - RevenueCat, for subscription and purchase management
-- Apple, for in-app purchases
+- Google Play and Apple, for in-app purchases
 - Open-Meteo, for sunrise and sunset timing
 
 These services operate under their own privacy policies.

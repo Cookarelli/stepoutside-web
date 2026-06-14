@@ -44,11 +44,13 @@ export type PremiumStatus = {
 };
 
 export const PRO_PRODUCT_IDS = {
-  monthly: "step_outside_pro_monthly",
+  monthly: "stepoutside_pro_monthly",
   yearly: "stepoutside_pro_yearly",
 } as const;
 
 const PAYWALL_PLANS: ProPlan[] = ["yearly", "monthly"];
+const STORE_LABEL = Platform.OS === "android" ? "Google Play" : "App Store";
+const BILLING_PROVIDER_LABEL = Platform.OS === "android" ? "Google Play" : "Apple";
 
 const KEY_PRO_STATE = "@stepoutside/proState";
 const ENTITLEMENT_ID = "pro";
@@ -414,8 +416,8 @@ function buildLivePaywallPackage(
       plan,
       title: "Step Outside Premium",
       periodLabel: "Monthly subscription",
-      priceLabel: product.priceString || "See App Store price",
-      detail: "Billed monthly through Apple.",
+      priceLabel: product.priceString || `See ${STORE_LABEL} price`,
+      detail: `Billed monthly through ${BILLING_PROVIDER_LABEL}.`,
       badge: null,
       productId: product.identifier,
       rcPackage,
@@ -428,8 +430,8 @@ function buildLivePaywallPackage(
     plan,
     title: "Step Outside Premium",
     periodLabel: "Annual subscription",
-    priceLabel: product.priceString || "See App Store price",
-    detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually.` : "Billed annually through Apple.",
+    priceLabel: product.priceString || `See ${STORE_LABEL} price`,
+    detail: monthlyEquivalent ? `${monthlyEquivalent}/month billed annually.` : `Billed annually through ${BILLING_PROVIDER_LABEL}.`,
     badge: "Best Value",
     productId: product.identifier,
     rcPackage,
