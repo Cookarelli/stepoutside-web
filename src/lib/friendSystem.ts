@@ -1,4 +1,16 @@
-import { collection, doc, getDoc, getDocs, limit, query, runTransaction, setDoc, where } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 
 import { auth, db } from "./firebase";
 
@@ -61,6 +73,11 @@ export type FriendDiscoveryResult = {
   photoURL: string;
   relationshipStatus: FriendRelationshipStatus;
   pendingRequestId: string | null;
+};
+
+export type FriendRequestListItem = {
+  request: FriendRequest;
+  profile: FriendDiscoveryResult;
 };
 
 export type FriendSystemUserInput = Partial<FriendSystemUser> & {
@@ -206,6 +223,17 @@ function toDiscoveryResult(
   };
 }
 
+function emptyDiscoveryResult(uid: string): FriendDiscoveryResult {
+  return {
+    uid,
+    username: "step-outside-user",
+    displayName: "Step Outside User",
+    photoURL: "",
+    relationshipStatus: "none",
+    pendingRequestId: null,
+  };
+}
+
 async function getRelationshipStatus(targetUid: string): Promise<{
   relationshipStatus: FriendRelationshipStatus;
   pendingRequestId: string | null;
@@ -299,6 +327,24 @@ async function readDiscoveryProfile(
     },
     uid
   );
+}
+
+async function requestListItemFromRequest(
+  request: FriendRequest,
+  profileUid: string,
+  relationshipStatus: FriendRelationshipStatus
+): Promise<FriendRequestListItem> {
+  const profile = await readDiscoveryProfile(profileUid);
+  return {
+    request,
+    profile: profile
+      ? toDiscoveryResult(profile, relationshipStatus, request.id)
+      : {
+          ...emptyDiscoveryResult(profileUid),
+          relationshipStatus,
+          pendingRequestId: request.id,
+        },
+  };
 }
 
 export async function searchUserByUsername(usernameInput: string): Promise<FriendDiscoveryResult | null> {
@@ -433,4 +479,133 @@ export async function sendFriendRequest(recipientUid: string): Promise<FriendReq
     transaction.set(requestRef, request);
     return request;
   });
+}
+
+export async function getIncomingFriendRequests(): Promise<FriendRequestListItem[]> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) throw new Error("Sign in before viewing friend requests.");
+
+  await upsertCurrentUserDiscoveryProfile();
+
+  const snapshot = await getDocs(
+    query(
+      collection(db, FRIEND_SYSTEM_COLLECTIONS.friendRequests),
+      where("recipientUid", "==", currentUid),
+      where("status", "==", "pending"),
+      orderBy("createdAt", "desc")
+    )
+  );
+
+  const requests = snapshot.docs
+    .map((entry) =>
+      normalizeFriendRequest({
+        id: entry.id,
+        ...(entry.data() as Partial<FriendRequest>),
+      })
+    )
+    .filter((request): request is FriendRequest => request !== null);
+
+  return Promise.all(
+    requests.map((request) => requestListItemFromRequest(request, request.senderUid, "pending_received"))
+  );
+}
+
+export async function getOutgoingFriendRequests(): Promise<FriendRequestListItem[]> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) throw new Error("Sign in before viewing friend requests.");
+
+  await upsertCurrentUserDiscoveryProfile();
+
+  const snapshot = await getDocs(
+    query(
+      collection(db, FRIEND_SYSTEM_COLLECTIONS.friendRequests),
+      where("senderUid", "==", currentUid),
+      where("status", "==", "pending"),
+      orderBy("createdAt", "desc")
+    )
+  );
+
+  const requests = snapshot.docs
+    .map((entry) =>
+      normalizeFriendRequest({
+        id: entry.id,
+        ...(entry.data() as Partial<FriendRequest>),
+      })
+    )
+    .filter((request): request is FriendRequest => request !== null);
+
+  return Promise.all(requests.map((request) => requestListItemFromRequest(request, request.recipientUid, "pending_sent")));
+}
+
+export async function acceptFriendRequest(requestId: string): Promise<Friendship> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) throw new Error("Sign in before accepting friend requests.");
+
+  const requestRef = doc(db, FRIEND_SYSTEM_COLLECTIONS.friendRequests, requestId);
+
+  return runTransaction(db, async (transaction) => {
+    const requestSnapshot = await transaction.get(requestRef);
+    const request = normalizeFriendRequest({
+      id: requestSnapshot.id,
+      ...(requestSnapshot.data() as Partial<FriendRequest> | undefined),
+    });
+
+    if (!requestSnapshot.exists() || !request) {
+      throw new Error("Friend request was not found.");
+    }
+    if (request.recipientUid !== currentUid) {
+      throw new Error("Only the recipient can accept this request.");
+    }
+    if (request.status !== "pending") {
+      throw new Error("This friend request is no longer pending.");
+    }
+
+    const nextFriendshipId = friendshipId(request.senderUid, request.recipientUid);
+    const friendshipRef = doc(db, FRIEND_SYSTEM_COLLECTIONS.friendships, nextFriendshipId);
+    const friendshipSnapshot = await transaction.get(friendshipRef);
+
+    if (friendshipSnapshot.exists()) {
+      transaction.update(requestRef, { status: "accepted" });
+      const existing = normalizeFriendship({
+        id: friendshipSnapshot.id,
+        ...(friendshipSnapshot.data() as Partial<Friendship> | undefined),
+      });
+      if (existing) return existing;
+      throw new Error("Friendship already exists.");
+    }
+
+    const friendship: Friendship = {
+      id: nextFriendshipId,
+      users: [request.senderUid, request.recipientUid].sort() as [string, string],
+      createdAt: Date.now(),
+    };
+
+    transaction.set(friendshipRef, friendship);
+    transaction.update(requestRef, { status: "accepted" });
+    return friendship;
+  });
+}
+
+export async function declineFriendRequest(requestId: string): Promise<void> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) throw new Error("Sign in before declining friend requests.");
+
+  const requestRef = doc(db, FRIEND_SYSTEM_COLLECTIONS.friendRequests, requestId);
+  const requestSnapshot = await getDoc(requestRef);
+  const request = normalizeFriendRequest({
+    id: requestSnapshot.id,
+    ...(requestSnapshot.data() as Partial<FriendRequest> | undefined),
+  });
+
+  if (!requestSnapshot.exists() || !request) {
+    throw new Error("Friend request was not found.");
+  }
+  if (request.recipientUid !== currentUid) {
+    throw new Error("Only the recipient can decline this request.");
+  }
+  if (request.status !== "pending") {
+    throw new Error("This friend request is no longer pending.");
+  }
+
+  await updateDoc(requestRef, { status: "declined" });
 }

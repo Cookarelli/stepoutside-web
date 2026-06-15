@@ -523,6 +523,12 @@ export default function ProfileTab() {
               <Text style={styles.signOutBtnText}>Find Friends</Text>
             </Pressable>
             <Pressable
+              onPress={() => router.push("/friend-requests" as never)}
+              style={({ pressed }) => [styles.signOutBtn, pressed ? { opacity: 0.92 } : null]}
+            >
+              <Text style={styles.signOutBtnText}>Requests</Text>
+            </Pressable>
+            <Pressable
               onPress={() => void onSignOut()}
               disabled={authAction === "signOut"}
               style={({ pressed }) => [

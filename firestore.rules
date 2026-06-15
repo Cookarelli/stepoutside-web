@@ -58,9 +58,29 @@ service cloud.firestore {
         || exists(/databases/$(database)/documents/friendships/$(recipientUid + "_" + senderUid));
     }
 
+    function hasFriendshipAfter(senderUid, recipientUid) {
+      return existsAfter(/databases/$(database)/documents/friendships/$(senderUid + "_" + recipientUid))
+        || existsAfter(/databases/$(database)/documents/friendships/$(recipientUid + "_" + senderUid));
+    }
+
     function hasReversePendingFriendRequest(senderUid, recipientUid) {
       return exists(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid))
         && get(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid)).data.status == 'pending';
+    }
+
+    function hasAcceptedFriendRequestAfter(senderUid, recipientUid) {
+      return (
+          existsAfter(/databases/$(database)/documents/friendRequests/$(senderUid + "_" + recipientUid))
+          && getAfter(/databases/$(database)/documents/friendRequests/$(senderUid + "_" + recipientUid)).data.senderUid == senderUid
+          && getAfter(/databases/$(database)/documents/friendRequests/$(senderUid + "_" + recipientUid)).data.recipientUid == recipientUid
+          && getAfter(/databases/$(database)/documents/friendRequests/$(senderUid + "_" + recipientUid)).data.status == 'accepted'
+        )
+        || (
+          existsAfter(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid))
+          && getAfter(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid)).data.senderUid == recipientUid
+          && getAfter(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid)).data.recipientUid == senderUid
+          && getAfter(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid)).data.status == 'accepted'
+        );
     }
 
     function isValidFriendRequestCreate(requestId) {
@@ -79,7 +99,11 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
         && resource.data.status == 'pending'
         && resource.data.recipientUid == request.auth.uid
-        && request.resource.data.status in ['accepted', 'declined'];
+        && request.resource.data.status in ['accepted', 'declined']
+        && (
+          request.resource.data.status == 'declined'
+          || hasFriendshipAfter(resource.data.senderUid, resource.data.recipientUid)
+        );
     }
 
     function isValidFriendship(data, friendshipId) {
@@ -153,7 +177,11 @@ service cloud.firestore {
 
     match /friendships/{friendshipId} {
       allow read: if isFriendshipParticipant(resource.data);
-      allow create, update, delete: if false;
+      allow create: if request.auth != null
+        && isValidFriendship(request.resource.data, friendshipId)
+        && request.auth.uid in request.resource.data.users
+        && hasAcceptedFriendRequestAfter(request.resource.data.users[0], request.resource.data.users[1]);
+      allow update, delete: if false;
     }
   }
 }

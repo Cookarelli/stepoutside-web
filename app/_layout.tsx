@@ -24,6 +24,7 @@ export default function RootLayout() {
         <Stack.Screen name="share" />
         <Stack.Screen name="saved-route" />
         <Stack.Screen name="friends-search" />
+        <Stack.Screen name="friend-requests" />
         <Stack.Screen name="pro" />
       </Stack>
     </AppErrorBoundary>
