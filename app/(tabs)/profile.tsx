@@ -1,6 +1,7 @@
 import * as Google from "expo-auth-session/providers/google";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -37,6 +38,8 @@ import {
   type NotificationPrefs,
 } from "../../src/lib/notifications";
 import { EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
+
+WebBrowser.maybeCompleteAuthSession();
 
 type AuthAction = "google" | "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | null;
 
@@ -82,6 +85,8 @@ function formatAuthError(error: unknown, fallback: string): string {
       return "Too many attempts. Please wait a bit and try again.";
     case "auth/network-request-failed":
       return "Check your connection and try again.";
+    case "auth/account-exists-with-different-credential":
+      return "That email already uses another sign-in method. Try email sign-in first.";
     case "auth/weak-password":
       return "Password must be at least 6 characters.";
     default:
@@ -92,6 +97,13 @@ function formatAuthError(error: unknown, fallback: string): string {
   if (message.includes("cancel")) return "Sign-in was canceled.";
   if (message.includes("network")) return "Sign-in needs a connection right now.";
   return fallback;
+}
+
+function isGoogleAuthConfigured(): boolean {
+  if (!ENV.AUTH.googleWebClientId) return false;
+  if (Platform.OS === "ios") return Boolean(ENV.AUTH.googleIosClientId);
+  if (Platform.OS === "android") return Boolean(ENV.AUTH.googleAndroidClientId);
+  return true;
 }
 
 function formatMinutesLabel(minutes: number): string {
@@ -108,17 +120,26 @@ function enabledReminderCount(prefs: NotificationPrefs | null): number {
 
 type GoogleSignInButtonProps = {
   disabled: boolean;
+  isLoading: boolean;
   onStart: () => void;
   onFinish: () => void;
+  onAuthenticated: (user: AuthUserSnapshot) => Promise<void>;
   onStatus: (message: string) => void;
 };
 
-function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSignInButtonProps) {
+function GoogleSignInButton({
+  disabled,
+  isLoading,
+  onStart,
+  onFinish,
+  onAuthenticated,
+  onStatus,
+}: GoogleSignInButtonProps) {
   const [googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
     iosClientId: ENV.AUTH.googleIosClientId ?? undefined,
     androidClientId: ENV.AUTH.googleAndroidClientId ?? undefined,
     webClientId: ENV.AUTH.googleWebClientId ?? undefined,
-    scopes: ["profile", "email"],
+    scopes: ["openid", "profile", "email"],
     selectAccount: true,
   });
 
@@ -144,14 +165,18 @@ function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSig
     const idToken = response.params?.id_token;
 
     if (!idToken) {
+      onStatus("Google didn’t return the sign-in token. Please try again.");
       onFinish();
-      onStatus("Google didn’t return an ID token.");
       return;
     }
 
     void (async () => {
       try {
-        await signInWithGoogleIdToken(idToken, response.authentication?.accessToken ?? response.params?.access_token ?? null);
+        const user = await signInWithGoogleIdToken(
+          idToken,
+          response.authentication?.accessToken ?? response.params?.access_token ?? null
+        );
+        await onAuthenticated(user);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onStatus("Signed in with Google.");
       } catch (error) {
@@ -161,11 +186,13 @@ function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSig
         onFinish();
       }
     })();
-  }, [googleResponse, onFinish, onStatus]);
+  }, [googleResponse, onAuthenticated, onFinish, onStatus]);
 
   const onPress = async () => {
+    if (disabled || isLoading) return;
+
     if (!googleRequest) {
-      onStatus("Google sign-in is still warming up.");
+      onStatus("Google sign-in is still getting ready.");
       return;
     }
 
@@ -176,22 +203,31 @@ function GoogleSignInButton({ disabled, onStart, onFinish, onStatus }: GoogleSig
     try {
       await promptGoogleAsync();
     } catch (error) {
-      onFinish();
       onStatus(formatAuthError(error, "Google sign-in couldn’t open."));
+      onFinish();
     }
   };
 
   return (
     <Pressable
       onPress={() => void onPress()}
-      disabled={disabled}
+      disabled={disabled || isLoading}
       style={({ pressed }) => [
         styles.googleBtn,
-        disabled ? styles.authBtnDisabled : null,
+        disabled || isLoading ? styles.authBtnDisabled : null,
         pressed ? { opacity: 0.95 } : null,
       ]}
     >
-      <Text style={styles.googleBtnText}>Continue with Google</Text>
+      {isLoading ? (
+        <ActivityIndicator color="#0B0F0E" />
+      ) : (
+        <View style={styles.googleBtnContent}>
+          <View style={styles.googleIcon}>
+            <Text style={styles.googleIconText}>G</Text>
+          </View>
+          <Text style={styles.googleBtnText}>Continue with Google</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -210,9 +246,7 @@ export default function ProfileTab() {
   const [authPassword, setAuthPassword] = useState("");
   const { isPremium } = usePremiumAccess();
 
-  const googleEnabled = Boolean(
-    ENV.AUTH.googleWebClientId && (Platform.OS !== "ios" || ENV.AUTH.googleIosClientId)
-  );
+  const googleEnabled = isGoogleAuthConfigured();
 
   const visibleUser = authLoading ? authUser ?? cachedAuthUser : authUser;
   const providerLabel = useMemo(() => formatProviderLabel(visibleUser), [visibleUser]);
@@ -339,6 +373,12 @@ export default function ProfileTab() {
     return { email, password };
   };
 
+  const onAuthenticated = useCallback(async (user: AuthUserSnapshot) => {
+    setAuthUser(user);
+    setCachedAuthUser(user);
+    setAuthPassword("");
+  }, []);
+
   const onEmailSignIn = async () => {
     if (authAction !== null) return;
 
@@ -351,9 +391,7 @@ export default function ProfileTab() {
 
     try {
       const user = await signInWithEmailPassword(form.email, form.password);
-      setAuthUser(user);
-      setCachedAuthUser(user);
-      setAuthPassword("");
+      await onAuthenticated(user);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Signed in.");
     } catch (error) {
@@ -376,9 +414,7 @@ export default function ProfileTab() {
 
     try {
       const user = await createEmailPasswordAccount(form.email, form.password);
-      setAuthUser(user);
-      setCachedAuthUser(user);
-      setAuthPassword("");
+      await onAuthenticated(user);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Account created.");
     } catch (error) {
@@ -548,12 +584,14 @@ export default function ProfileTab() {
             {googleEnabled ? (
               <GoogleSignInButton
                 disabled={authAction !== null}
+                isLoading={authAction === "google"}
                 onStart={() => setAuthAction("google")}
                 onFinish={() => setAuthAction(null)}
+                onAuthenticated={onAuthenticated}
                 onStatus={setAuthStatus}
               />
             ) : (
-              <Text style={styles.authSetupNote}>Google sign-in will appear as soon as the client IDs are added to Expo envs.</Text>
+              <Text style={styles.authSetupNote}>Google sign-in will appear after the iOS and web OAuth client IDs are added to the Expo env.</Text>
             )}
           </View>
         ) : (
@@ -897,12 +935,34 @@ const styles = StyleSheet.create({
   googleBtn: {
     minHeight: 52,
     borderRadius: 16,
-    backgroundColor: "#255E36",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(11,15,14,0.13)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  googleBtnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  googleIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#F8F4EE",
     alignItems: "center",
     justifyContent: "center",
   },
+  googleIconText: {
+    color: "#255E36",
+    fontWeight: "900",
+    fontSize: 14,
+  },
   googleBtnText: {
-    color: "#FFFFFF",
+    color: "#0B0F0E",
     fontWeight: "900",
     letterSpacing: 0.3,
   },

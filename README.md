@@ -20,6 +20,10 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 
 Use normal Firebase email/password accounts for social QA. Do not commit real passwords or expose test credentials in production UI. See [docs/test-accounts-qa.md](docs/test-accounts-qa.md) for the safe two-account setup and friend request validation flow.
 
+## Google sign-in
+
+Google sign-in uses Expo Auth Session with Firebase Auth. See [docs/google-sign-in-setup.md](docs/google-sign-in-setup.md) for the required iOS OAuth client, Firebase Console, and Expo environment setup.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

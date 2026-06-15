@@ -1,5 +1,4 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
@@ -16,7 +15,6 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import { syncRevenueCatIdentity } from "./pro";
 
-WebBrowser.maybeCompleteAuthSession();
 
 const AUTH_CACHE_KEY = "stepoutside:v2:auth-cache";
 
@@ -96,15 +94,7 @@ export function subscribeToAuth(listener: (user: AuthUserSnapshot | null) => voi
 export async function signInWithGoogleIdToken(idToken: string, accessToken?: string | null): Promise<AuthUserSnapshot> {
   const credential = GoogleAuthProvider.credential(idToken, accessToken ?? undefined);
   const result = await signInWithCredential(auth, credential);
-  const snapshot = toSnapshot(result.user);
-
-  if (!snapshot) {
-    throw new Error("Google sign-in did not return a user.");
-  }
-
-  await writeCachedUser(snapshot);
-  await syncRevenueCatIdentity(snapshot.uid);
-  return snapshot;
+  return finishFirebaseAuth(result.user, "Google sign-in did not return a user.");
 }
 
 export async function signOutUser(): Promise<void> {
@@ -138,27 +128,35 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function cleanText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function ensureUserProfileDocument(user: User): Promise<void> {
   const userRef = doc(db, "users", user.uid);
   const snapshot = await getDoc(userRef);
   const existing = snapshot.data() as
     | {
         createdAt?: unknown;
+        email?: unknown;
+        emailLower?: unknown;
         displayName?: unknown;
         photoURL?: unknown;
       }
     | undefined;
   const now = Date.now();
+  const emailLower = user.email ? normalizeEmail(user.email) : cleanText(existing?.emailLower);
+  const displayName = cleanText(existing?.displayName) || user.displayName?.trim() || "";
+  const photoURL = cleanText(existing?.photoURL) || user.photoURL?.trim() || "";
 
   await setDoc(
     userRef,
     {
       uid: user.uid,
-      email: user.email ? normalizeEmail(user.email) : null,
-      emailLower: user.email ? normalizeEmail(user.email) : "",
-      displayName:
-        typeof existing?.displayName === "string" ? existing.displayName : user.displayName ?? "",
-      photoURL: typeof existing?.photoURL === "string" ? existing.photoURL : user.photoURL ?? "",
+      email: emailLower || null,
+      emailLower,
+      displayName,
+      photoURL,
       createdAt: typeof existing?.createdAt === "number" ? existing.createdAt : now,
       updatedAt: now,
     },
@@ -166,7 +164,7 @@ async function ensureUserProfileDocument(user: User): Promise<void> {
   );
 }
 
-async function finishEmailPasswordAuth(user: User, fallback: string): Promise<AuthUserSnapshot> {
+async function finishFirebaseAuth(user: User, fallback: string): Promise<AuthUserSnapshot> {
   const snapshot = toSnapshot(user);
 
   if (!snapshot) {
@@ -181,12 +179,12 @@ async function finishEmailPasswordAuth(user: User, fallback: string): Promise<Au
 
 export async function signInWithEmailPassword(email: string, password: string): Promise<AuthUserSnapshot> {
   const result = await signInWithEmailAndPassword(auth, normalizeEmail(email), password);
-  return finishEmailPasswordAuth(result.user, "Email sign-in did not return a user.");
+  return finishFirebaseAuth(result.user, "Email sign-in did not return a user.");
 }
 
 export async function createEmailPasswordAccount(email: string, password: string): Promise<AuthUserSnapshot> {
   const result = await createUserWithEmailAndPassword(auth, normalizeEmail(email), password);
-  return finishEmailPasswordAuth(result.user, "Email sign-up did not return a user.");
+  return finishFirebaseAuth(result.user, "Email sign-up did not return a user.");
 }
 
 export async function sendEmailPasswordReset(email: string): Promise<void> {
