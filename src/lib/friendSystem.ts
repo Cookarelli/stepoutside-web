@@ -23,6 +23,7 @@ export const FRIEND_SYSTEM_COLLECTIONS = {
 } as const;
 
 export const FRIEND_REQUEST_STATUSES = ["pending", "accepted", "declined"] as const;
+const SEARCH_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type FriendRequestStatus = (typeof FRIEND_REQUEST_STATUSES)[number];
 
@@ -117,6 +118,10 @@ function cleanTimestamp(value: unknown, fallback = 0): number {
 
 function normalizeEmail(value: unknown): string {
   return cleanText(value).toLowerCase();
+}
+
+function isSearchableEmail(value: string): boolean {
+  return SEARCH_EMAIL_PATTERN.test(value);
 }
 
 function normalizeSearchUsername(value: unknown): string {
@@ -412,13 +417,13 @@ export async function searchUserByEmail(emailInput: string): Promise<FriendDisco
   await upsertCurrentUserDiscoveryProfile();
 
   const emailLower = normalizeEmail(emailInput);
-  if (!emailLower) return null;
+  if (!emailLower || !isSearchableEmail(emailLower)) return null;
 
   const snapshot = await getDocs(
     query(
       collection(db, FRIEND_SYSTEM_COLLECTIONS.userDiscovery),
       where("emailLower", "==", emailLower),
-      limit(1)
+      limit(5)
     )
   );
   const profile = snapshot.docs

@@ -8,6 +8,7 @@ import {
   signInWithCredential,
   signInWithEmailAndPassword,
   signOut,
+  updateProfile,
   type User,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
@@ -116,6 +117,23 @@ export async function signOutUser(): Promise<void> {
   }
 }
 
+export async function updateAuthProfileFields(input: {
+  displayName?: string | null;
+  photoURL?: string | null;
+}): Promise<AuthUserSnapshot | null> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) return null;
+
+  await updateProfile(currentUser, {
+    displayName: input.displayName ?? null,
+    photoURL: input.photoURL ?? null,
+  });
+
+  const snapshot = toSnapshot(currentUser);
+  await writeCachedUser(snapshot);
+  return snapshot;
+}
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -137,6 +155,7 @@ async function ensureUserProfileDocument(user: User): Promise<void> {
     {
       uid: user.uid,
       email: user.email ? normalizeEmail(user.email) : null,
+      emailLower: user.email ? normalizeEmail(user.email) : "",
       displayName:
         typeof existing?.displayName === "string" ? existing.displayName : user.displayName ?? "",
       photoURL: typeof existing?.photoURL === "string" ? existing.photoURL : user.photoURL ?? "",

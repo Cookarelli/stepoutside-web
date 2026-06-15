@@ -23,6 +23,19 @@ service cloud.firestore {
         );
     }
 
+    function authEmailMatches(emailLower) {
+      return emailLower == ''
+        || (
+          request.auth.token.email is string
+          && request.auth.token.email == emailLower
+        );
+    }
+
+    function discoveryUsernameIsOwned(uid) {
+      return existsAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username))
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid;
+    }
+
     function isValidFriendRequestStatus(status) {
       return status in ['pending', 'accepted', 'declined'];
     }
@@ -41,7 +54,9 @@ service cloud.firestore {
         && request.resource.data.uid == uid
         && isValidUsername(request.resource.data.username)
         && request.resource.data.usernameLower == request.resource.data.username
+        && discoveryUsernameIsOwned(uid)
         && request.resource.data.emailLower is string
+        && authEmailMatches(request.resource.data.emailLower)
         && request.resource.data.displayName is string
         && request.resource.data.photoURL is string
         && request.resource.data.createdAt is number
