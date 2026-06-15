@@ -62,7 +62,32 @@ function formatProviderLabel(user: AuthUserSnapshot | null): string {
   return "Account";
 }
 
+function getAuthErrorCode(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return "";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : "";
+}
+
 function formatAuthError(error: unknown, fallback: string): string {
+  switch (getAuthErrorCode(error)) {
+    case "auth/email-already-in-use":
+      return "That email already has an account. Try signing in instead.";
+    case "auth/invalid-email":
+      return "Enter a valid email address.";
+    case "auth/invalid-credential":
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+      return "Email or password is incorrect.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Please wait a bit and try again.";
+    case "auth/network-request-failed":
+      return "Check your connection and try again.";
+    case "auth/weak-password":
+      return "Password must be at least 6 characters.";
+    default:
+      break;
+  }
+
   const message = error instanceof Error ? error.message : "";
   if (message.includes("cancel")) return "Sign-in was canceled.";
   if (message.includes("network")) return "Sign-in needs a connection right now.";
@@ -189,7 +214,7 @@ export default function ProfileTab() {
     ENV.AUTH.googleWebClientId && (Platform.OS !== "ios" || ENV.AUTH.googleIosClientId)
   );
 
-  const visibleUser = authUser ?? cachedAuthUser;
+  const visibleUser = authLoading ? authUser ?? cachedAuthUser : authUser;
   const providerLabel = useMemo(() => formatProviderLabel(visibleUser), [visibleUser]);
   const reminderCount = useMemo(() => enabledReminderCount(prefs), [prefs]);
   const currentStreak = summary.currentStreak ?? summary.currentStreakDays ?? 0;
@@ -245,6 +270,9 @@ export default function ProfileTab() {
       setAuthUser(user);
       setCachedAuthUser(user);
       setAuthLoading(false);
+      if (!user) {
+        setAuthPassword("");
+      }
     });
 
     return () => {
@@ -312,6 +340,8 @@ export default function ProfileTab() {
   };
 
   const onEmailSignIn = async () => {
+    if (authAction !== null) return;
+
     const form = validateEmailForm(true);
     if (!form) return;
 
@@ -320,7 +350,10 @@ export default function ProfileTab() {
     void Haptics.selectionAsync();
 
     try {
-      await signInWithEmailPassword(form.email, form.password);
+      const user = await signInWithEmailPassword(form.email, form.password);
+      setAuthUser(user);
+      setCachedAuthUser(user);
+      setAuthPassword("");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Signed in.");
     } catch (error) {
@@ -332,6 +365,8 @@ export default function ProfileTab() {
   };
 
   const onEmailSignUp = async () => {
+    if (authAction !== null) return;
+
     const form = validateEmailForm(true);
     if (!form) return;
 
@@ -340,7 +375,10 @@ export default function ProfileTab() {
     void Haptics.selectionAsync();
 
     try {
-      await createEmailPasswordAccount(form.email, form.password);
+      const user = await createEmailPasswordAccount(form.email, form.password);
+      setAuthUser(user);
+      setCachedAuthUser(user);
+      setAuthPassword("");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Account created.");
     } catch (error) {
@@ -352,6 +390,8 @@ export default function ProfileTab() {
   };
 
   const onPasswordReset = async () => {
+    if (authAction !== null) return;
+
     const form = validateEmailForm(false);
     if (!form) return;
 
@@ -371,6 +411,8 @@ export default function ProfileTab() {
   };
 
   const onSignOut = async () => {
+    if (authAction !== null) return;
+
     Alert.alert("Sign out?", "This will sign you out on this device but won’t remove your local walks.", [
       { text: "Cancel", style: "cancel" },
       {
@@ -381,10 +423,14 @@ export default function ProfileTab() {
           setAuthAction("signOut");
           try {
             await signOutUser();
+            setAuthUser(null);
+            setCachedAuthUser(null);
+            setAuthEmail("");
+            setAuthPassword("");
             setAuthStatus("Signed out.");
             void Haptics.selectionAsync();
-          } catch {
-            setAuthStatus("Couldn’t sign out right now.");
+          } catch (error) {
+            setAuthStatus(formatAuthError(error, "Couldn’t sign out right now."));
           } finally {
             setAuthAction(null);
           }
