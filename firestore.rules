@@ -6,13 +6,61 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
+    function isValidUsername(username) {
+      return username is string
+        && username.size() >= 3
+        && username.size() <= 20
+        && username.matches('^[a-z0-9_.]+$')
+        && !(username in ['admin', 'support', 'stepoutside', 'premium', 'null', 'undefined']);
+    }
+
+    function profileUsernameIsOwned(uid) {
+      return !('username' in request.resource.data)
+        || (
+          isValidUsername(request.resource.data.username)
+          && existsAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username))
+          && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid
+        );
+    }
+
     function isValidFriendRequestStatus(status) {
       return status in ['pending', 'accepted', 'declined'];
+    }
+
+    function isValidDiscoveryProfile(uid) {
+      return request.resource.data.keys().hasOnly([
+          'uid',
+          'username',
+          'usernameLower',
+          'emailLower',
+          'displayName',
+          'photoURL',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.uid == uid
+        && isValidUsername(request.resource.data.username)
+        && request.resource.data.usernameLower == request.resource.data.username
+        && request.resource.data.emailLower is string
+        && request.resource.data.displayName is string
+        && request.resource.data.photoURL is string
+        && request.resource.data.createdAt is number
+        && request.resource.data.updatedAt is number;
     }
 
     function isFriendRequestParticipant(data) {
       return request.auth != null
         && (data.senderUid == request.auth.uid || data.recipientUid == request.auth.uid);
+    }
+
+    function hasExistingFriendship(senderUid, recipientUid) {
+      return exists(/databases/$(database)/documents/friendships/$(senderUid + "_" + recipientUid))
+        || exists(/databases/$(database)/documents/friendships/$(recipientUid + "_" + senderUid));
+    }
+
+    function hasReversePendingFriendRequest(senderUid, recipientUid) {
+      return exists(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid))
+        && get(/databases/$(database)/documents/friendRequests/$(recipientUid + "_" + senderUid)).data.status == 'pending';
     }
 
     function isValidFriendRequestCreate(requestId) {
@@ -22,7 +70,9 @@ service cloud.firestore {
         && request.resource.data.recipientUid is string
         && request.resource.data.recipientUid != request.auth.uid
         && request.resource.data.status == 'pending'
-        && request.resource.data.createdAt is number;
+        && request.resource.data.createdAt is number
+        && !hasExistingFriendship(request.resource.data.senderUid, request.resource.data.recipientUid)
+        && !hasReversePendingFriendRequest(request.resource.data.senderUid, request.resource.data.recipientUid);
     }
 
     function isValidFriendRequestResponse() {
@@ -54,8 +104,36 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && isValidUsername(username)
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'createdAt', 'updatedAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.username == username
+        && request.resource.data.createdAt is number
+        && request.resource.data.updatedAt is number;
+      allow update: if request.auth != null
+        && isValidUsername(username)
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'createdAt', 'updatedAt'])
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.username == username
+        && request.resource.data.createdAt is number
+        && request.resource.data.updatedAt is number;
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    match /userDiscovery/{uid} {
+      allow read: if request.auth != null;
+      allow create, update: if isOwner(uid) && isValidDiscoveryProfile(uid);
+      allow delete: if isOwner(uid);
+    }
+
     match /users/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid) && profileUsernameIsOwned(uid);
+      allow delete: if isOwner(uid);
 
       match /sessions/{sessionId} {
         allow read, write: if isOwner(uid);
