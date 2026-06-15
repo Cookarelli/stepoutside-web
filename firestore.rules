@@ -6,6 +6,49 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
+    function isValidFriendRequestStatus(status) {
+      return status in ['pending', 'accepted', 'declined'];
+    }
+
+    function isFriendRequestParticipant(data) {
+      return request.auth != null
+        && (data.senderUid == request.auth.uid || data.recipientUid == request.auth.uid);
+    }
+
+    function isValidFriendRequestCreate(requestId) {
+      return request.resource.data.keys().hasOnly(['id', 'senderUid', 'recipientUid', 'status', 'createdAt'])
+        && request.resource.data.id == requestId
+        && request.resource.data.senderUid == request.auth.uid
+        && request.resource.data.recipientUid is string
+        && request.resource.data.recipientUid != request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt is number;
+    }
+
+    function isValidFriendRequestResponse() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+        && resource.data.status == 'pending'
+        && resource.data.recipientUid == request.auth.uid
+        && request.resource.data.status in ['accepted', 'declined'];
+    }
+
+    function isValidFriendship(data, friendshipId) {
+      return data.keys().hasOnly(['id', 'users', 'createdAt'])
+        && data.id == friendshipId
+        && data.users is list
+        && data.users.size() == 2
+        && data.users[0] is string
+        && data.users[1] is string
+        && data.users[0] != data.users[1]
+        && data.createdAt is number;
+    }
+
+    function isFriendshipParticipant(data) {
+      return request.auth != null
+        && data.users is list
+        && request.auth.uid in data.users;
+    }
+
     match /routes/{routeId} {
       allow read: if true;
       allow write: if false;
@@ -21,6 +64,18 @@ service cloud.firestore {
       match /reflections/{reflectionId} {
         allow read, write: if isOwner(uid);
       }
+    }
+
+    match /friendRequests/{requestId} {
+      allow read: if isFriendRequestParticipant(resource.data);
+      allow create: if request.auth != null && isValidFriendRequestCreate(requestId);
+      allow update: if request.auth != null && isFriendRequestParticipant(resource.data) && isValidFriendRequestResponse();
+      allow delete: if false;
+    }
+
+    match /friendships/{friendshipId} {
+      allow read: if isFriendshipParticipant(resource.data);
+      allow create, update, delete: if false;
     }
   }
 }
