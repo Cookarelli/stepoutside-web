@@ -304,7 +304,10 @@ export default function ProfileTab() {
       setAuthUser(user);
       setCachedAuthUser(user);
       setAuthLoading(false);
-      if (!user) {
+      if (user) {
+        void loadSettings();
+      } else {
+        setSummary(EMPTY_SUMMARY);
         setAuthPassword("");
       }
     });
@@ -373,11 +376,15 @@ export default function ProfileTab() {
     return { email, password };
   };
 
-  const onAuthenticated = useCallback(async (user: AuthUserSnapshot) => {
-    setAuthUser(user);
-    setCachedAuthUser(user);
-    setAuthPassword("");
-  }, []);
+  const onAuthenticated = useCallback(
+    async (user: AuthUserSnapshot) => {
+      setAuthUser(user);
+      setCachedAuthUser(user);
+      await loadSettings();
+      setAuthPassword("");
+    },
+    [loadSettings]
+  );
 
   const onEmailSignIn = async () => {
     if (authAction !== null) return;

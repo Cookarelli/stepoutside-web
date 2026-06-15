@@ -37,8 +37,21 @@ export type SaveReflectionResult = {
   warning?: string;
 };
 
-const LOCAL_REFLECTIONS_KEY = "stepoutside:v2:reflections";
+const LEGACY_LOCAL_REFLECTIONS_KEY = "stepoutside:v2:reflections";
+const LOCAL_REFLECTIONS_PREFIX = "stepoutside:v2:user";
 const LAST_REFLECTION_PROMPT_INDEX_KEY = "stepoutside:v2:lastReflectionPromptIndex";
+
+function localReflectionsKeyForUid(uid: string): string {
+  return `${LOCAL_REFLECTIONS_PREFIX}:${uid}:reflections`;
+}
+
+async function cleanupLegacyLocalReflections(): Promise<void> {
+  await AsyncStorage.removeItem(LEGACY_LOCAL_REFLECTIONS_KEY);
+}
+
+function currentUid(): string | null {
+  return auth.currentUser?.uid ?? null;
+}
 
 function createReflectionId(walkId: string, createdAt: number): string {
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -93,7 +106,12 @@ function normalizeReflectionRecord(value: unknown): ReflectionRecord | null {
 }
 
 async function readLocalReflections(): Promise<ReflectionRecord[]> {
-  const raw = await AsyncStorage.getItem(LOCAL_REFLECTIONS_KEY);
+  await cleanupLegacyLocalReflections();
+
+  const uid = currentUid();
+  if (!uid) return [];
+
+  const raw = await AsyncStorage.getItem(localReflectionsKeyForUid(uid));
   if (!raw) return [];
 
   try {
@@ -110,7 +128,12 @@ async function readLocalReflections(): Promise<ReflectionRecord[]> {
 }
 
 async function writeLocalReflections(reflections: ReflectionRecord[]): Promise<void> {
-  await AsyncStorage.setItem(LOCAL_REFLECTIONS_KEY, JSON.stringify(reflections));
+  await cleanupLegacyLocalReflections();
+
+  const uid = currentUid();
+  if (!uid) return;
+
+  await AsyncStorage.setItem(localReflectionsKeyForUid(uid), JSON.stringify(reflections));
 }
 
 async function saveLocalReflection(record: ReflectionRecord): Promise<void> {
@@ -199,11 +222,10 @@ export async function saveReflection(input: SaveReflectionInput): Promise<SaveRe
   const currentUser = auth.currentUser;
 
   if (!currentUser?.uid) {
-    await saveLocalReflection(record);
     return {
       record,
       mode: "local",
-      warning: "Saved on this device for now.",
+      warning: "Sign in to save reflections to your profile.",
     };
   }
 
