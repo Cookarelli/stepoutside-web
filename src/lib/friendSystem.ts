@@ -80,6 +80,11 @@ export type FriendRequestListItem = {
   profile: FriendDiscoveryResult;
 };
 
+export type FriendListItem = {
+  friendship: Friendship;
+  profile: FriendDiscoveryResult;
+};
+
 export type FriendSystemUserInput = Partial<FriendSystemUser> & {
   uid?: string | null;
 };
@@ -347,6 +352,23 @@ async function requestListItemFromRequest(
   };
 }
 
+async function friendListItemFromFriendship(friendship: Friendship, currentUid: string): Promise<FriendListItem | null> {
+  const friendUid = friendship.users.find((uid) => uid !== currentUid);
+  if (!friendUid) return null;
+
+  const profile = await readDiscoveryProfile(friendUid);
+  return {
+    friendship,
+    profile: profile
+      ? toDiscoveryResult(profile, "friends", null)
+      : {
+          ...emptyDiscoveryResult(friendUid),
+          relationshipStatus: "friends",
+          pendingRequestId: null,
+        },
+  };
+}
+
 export async function searchUserByUsername(usernameInput: string): Promise<FriendDiscoveryResult | null> {
   const currentUid = auth.currentUser?.uid;
   if (!currentUid) throw new Error("Sign in before searching for friends.");
@@ -535,6 +557,33 @@ export async function getOutgoingFriendRequests(): Promise<FriendRequestListItem
     .filter((request): request is FriendRequest => request !== null);
 
   return Promise.all(requests.map((request) => requestListItemFromRequest(request, request.recipientUid, "pending_sent")));
+}
+
+export async function getFriendsList(): Promise<FriendListItem[]> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) throw new Error("Sign in before viewing friends.");
+
+  await upsertCurrentUserDiscoveryProfile();
+
+  const snapshot = await getDocs(
+    query(
+      collection(db, FRIEND_SYSTEM_COLLECTIONS.friendships),
+      where("users", "array-contains", currentUid),
+      orderBy("createdAt", "desc")
+    )
+  );
+
+  const friendships = snapshot.docs
+    .map((entry) =>
+      normalizeFriendship({
+        id: entry.id,
+        ...(entry.data() as Partial<Friendship>),
+      })
+    )
+    .filter((friendship): friendship is Friendship => friendship !== null);
+
+  const items = await Promise.all(friendships.map((friendship) => friendListItemFromFriendship(friendship, currentUid)));
+  return items.filter((item): item is FriendListItem => item !== null);
 }
 
 export async function acceptFriendRequest(requestId: string): Promise<Friendship> {
