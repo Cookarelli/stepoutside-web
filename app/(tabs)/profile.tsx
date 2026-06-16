@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -42,6 +43,14 @@ import {
 } from "../../src/lib/notifications";
 import { EMPTY_SUMMARY, getSessions, getSummary, type SummaryStats } from "../../src/lib/store";
 import {
+  PREMIUM_ENTITLEMENT_ID,
+  PRO_PRODUCT_IDS,
+  restorePurchasesScaffold,
+  type ProPlan,
+  type PremiumStatus,
+  type ProState,
+} from "../../src/lib/pro";
+import {
   EMPTY_LOCAL_USER_PROFILE,
   deleteCurrentUserProfilePhotoObject,
   getLocalUserProfile,
@@ -53,7 +62,7 @@ import {
   type PreferredActivity,
 } from "../../src/lib/userProfile";
 
-type AuthAction = "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | "deleteAccount" | null;
+type AuthAction = "emailSignIn" | "emailSignUp" | "passwordReset" | "signOut" | "deleteAccount" | "restorePurchases" | null;
 type ImagePickerModule = typeof import("expo-image-picker");
 
 function firstNonEmpty(...values: (string | null | undefined)[]): string {
@@ -134,6 +143,37 @@ function formatMinutesLabel(minutes: number): string {
   return hours >= 10 || Number.isInteger(hours) ? `${Math.round(hours)} hr` : `${hours.toFixed(1)} hr`;
 }
 
+function getActivePremiumProductId(customerInfo: PremiumStatus["customerInfo"]): string | null {
+  if (!customerInfo) return null;
+  const entitlement =
+    customerInfo.entitlements.active[PREMIUM_ENTITLEMENT_ID] ??
+    customerInfo.entitlements.active.pro ??
+    customerInfo.entitlements.active.premium;
+  return entitlement?.productIdentifier ?? null;
+}
+
+function formatMembershipLabel(
+  isPremium: boolean,
+  productId: string | null,
+  overrideReason: string | null
+): string {
+  if (!isPremium) return "Free Plan";
+  const normalized = productId?.toLowerCase() ?? "";
+  if (normalized.includes("founder") || normalized.includes("lifetime")) return "Founder Lifetime";
+  if (productId === PRO_PRODUCT_IDS.yearly || normalized.includes("year") || normalized.includes("annual")) {
+    return "Annual Premium";
+  }
+  if (productId === PRO_PRODUCT_IDS.monthly || normalized.includes("month")) return "Monthly Premium";
+  if (overrideReason?.toLowerCase().includes("annual")) return "Annual Premium";
+  return "Premium";
+}
+
+function planFromProductId(productId: string | null): ProPlan | null {
+  if (productId === PRO_PRODUCT_IDS.yearly) return "yearly";
+  if (productId === PRO_PRODUCT_IDS.monthly) return "monthly";
+  return null;
+}
+
 function enabledReminderCount(prefs: NotificationPrefs | null): number {
   if (!prefs) return 0;
   return [prefs.sunriseQuotes, prefs.sunsetReminders, prefs.streakRiskReminders].filter(Boolean).length;
@@ -161,7 +201,7 @@ export default function ProfileTab() {
   const [profileStatus, setProfileStatus] = useState("");
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState("");
-  const { isPremium } = usePremiumAccess();
+  const { isPremium, customerInfo, overrideReason, refreshPremiumStatus } = usePremiumAccess();
 
   const visibleUser = authLoading ? null : authUser;
   const providerLabel = useMemo(() => formatProviderLabel(visibleUser), [visibleUser]);
@@ -196,6 +236,13 @@ export default function ProfileTab() {
   );
   const canSaveProfile = !profileSaving && (!visibleUser || !draftUsernameValidation.error);
   const showAuthActionBar = !authLoading && !visibleUser;
+  const premiumProductId = useMemo(() => getActivePremiumProductId(customerInfo), [customerInfo]);
+  const membershipLabel = useMemo(
+    () => formatMembershipLabel(isPremium, premiumProductId, overrideReason),
+    [isPremium, overrideReason, premiumProductId]
+  );
+  const currentPlan = useMemo(() => planFromProductId(premiumProductId), [premiumProductId]);
+  const isFounderLifetime = membershipLabel === "Founder Lifetime";
 
   const scrollAuthControlsIntoView = useCallback(() => {
     if (visibleUser) return;
@@ -417,6 +464,34 @@ export default function ProfileTab() {
     setDeleteModalVisible(true);
   };
 
+  const onRestorePurchases = async () => {
+    if (authAction !== null) return;
+
+    setAuthStatus("");
+    setAuthAction("restorePurchases");
+    void Haptics.selectionAsync();
+
+    try {
+      const next: ProState = await restorePurchasesScaffold();
+      await refreshPremiumStatus();
+      Alert.alert(
+        next.isPro ? "Purchases restored" : "No Premium purchases found",
+        next.isPro
+          ? "Your Step Outside Premium access is active on this device."
+          : "We did not find an active Premium purchase for this account."
+      );
+    } catch (error) {
+      Alert.alert("Restore failed", error instanceof Error ? error.message : "Please try again in a moment.");
+    } finally {
+      setAuthAction(null);
+    }
+  };
+
+  const onOpenFriendsPlaceholder = (label: string) => {
+    void Haptics.selectionAsync();
+    Alert.alert(label, "The V3 social foundation is being prepared for this build.");
+  };
+
   const onDeleteAccount = async () => {
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -584,10 +659,17 @@ export default function ProfileTab() {
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         contentContainerStyle={[styles.container, showAuthActionBar ? styles.containerWithAuthActionBar : null]}
       >
-        <Text style={styles.title}>Profile</Text>
-        <Text style={styles.sub}>Your walking rhythm, favorite places, and account in one grounded place.</Text>
+        <View style={styles.hero}>
+          <Text style={styles.heroEyebrow}>Step Outside</Text>
+          <Text style={styles.title}>Profile</Text>
+          <Text style={styles.sub}>Your walking rhythm, favorite places, friends, and membership in one grounded place.</Text>
+        </View>
 
       <View style={styles.accountCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>User Card</Text>
+          <Text style={styles.sectionTitle}>Your outdoor identity</Text>
+        </View>
         <View style={styles.profileTopRow}>
           <View style={styles.accountHeader}>
             <View style={styles.avatar}>
@@ -609,12 +691,6 @@ export default function ProfileTab() {
               <Text style={styles.accountEmail} numberOfLines={1}>{profileAccountLine}</Text>
             </View>
           </View>
-          <Pressable
-            onPress={onOpenEditProfile}
-            style={({ pressed }) => [styles.editProfileBtn, pressed ? { opacity: 0.82 } : null]}
-          >
-            <Text style={styles.editProfileBtnText}>Edit Profile</Text>
-          </Pressable>
         </View>
 
         {localProfile.dreamPlaces ? <Text style={styles.profileBio}>{localProfile.dreamPlaces}</Text> : null}
@@ -702,19 +778,6 @@ export default function ProfileTab() {
               <Text style={styles.signedInPill}>{providerLabel}</Text>
               <Text style={styles.signedInHelper}>Signed in and synced</Text>
             </View>
-            <Pressable
-              onPress={() => void onSignOut()}
-              disabled={authAction === "signOut"}
-              style={({ pressed }) => [
-                styles.signOutBtn,
-                authAction === "signOut" ? styles.authBtnDisabled : null,
-                pressed ? { opacity: 0.92 } : null,
-              ]}
-            >
-              <Text style={styles.signOutBtnText}>
-                {authAction === "signOut" ? "Signing out…" : "Sign out"}
-              </Text>
-            </Pressable>
           </View>
         )}
 
@@ -722,8 +785,44 @@ export default function ProfileTab() {
         {profileStatus ? <Text style={styles.authStatus}>{profileStatus}</Text> : null}
       </View>
 
+      <View style={styles.friendsCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>Friends</Text>
+          <Text style={styles.sectionTitle}>Walks are better shared</Text>
+        </View>
+        <View style={styles.socialGrid}>
+          <Pressable
+            onPress={() => onOpenFriendsPlaceholder("Friends")}
+            style={({ pressed }) => [styles.socialTile, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="people-outline" size={21} color={PREMIUM.colors.forest} />
+            <Text style={styles.socialTileTitle}>Friends</Text>
+            <Text style={styles.socialTileHint}>See your accepted friends.</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onOpenFriendsPlaceholder("Find Friends")}
+            style={({ pressed }) => [styles.socialTile, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="search-outline" size={21} color={PREMIUM.colors.forest} />
+            <Text style={styles.socialTileTitle}>Find Friends</Text>
+            <Text style={styles.socialTileHint}>Search by username or email.</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onOpenFriendsPlaceholder("Requests")}
+            style={({ pressed }) => [styles.socialTile, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="mail-unread-outline" size={21} color={PREMIUM.colors.forest} />
+            <Text style={styles.socialTileTitle}>Requests</Text>
+            <Text style={styles.socialTileHint}>Review incoming invites.</Text>
+          </Pressable>
+        </View>
+      </View>
+
       <View style={styles.streakCard}>
-        <Text style={styles.streakEyebrow}>Premium Streaks</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>Stats</Text>
+          <Text style={styles.sectionTitle}>Streaks and progress</Text>
+        </View>
         {isPremium ? (
           <>
             <View style={styles.streakRow}>
@@ -773,15 +872,32 @@ export default function ProfileTab() {
       </View>
 
       <View style={styles.planCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>Premium</Text>
+          <Text style={styles.sectionTitle}>Membership</Text>
+        </View>
         <View style={styles.planTopRow}>
-          <View>
-            <Text style={styles.planEyebrow}>Plan</Text>
-            <Text style={styles.planTitle}>{isPremium ? "Premium Active" : "Free Plan"}</Text>
+          <View style={styles.planCopy}>
+            <View style={styles.planStatusRow}>
+              <Text style={styles.planTitle}>{membershipLabel}</Text>
+              {isFounderLifetime ? (
+                <View style={styles.founderBadge}>
+                  <Text style={styles.founderBadgeText}>Lifetime</Text>
+                </View>
+              ) : null}
+            </View>
             <Text style={styles.planBody}>
               {isPremium
-                ? "Your Step Outside Premium features are available on this device."
+                ? currentPlan
+                  ? `Your ${currentPlan === "yearly" ? "annual" : "monthly"} Premium access is active on this device.`
+                  : "Your Step Outside Premium features are available on this device."
                 : "Upgrade when you want saved route maps, bonus achievements, and deeper progress insights."}
             </Text>
+            <View style={styles.benefitList}>
+              <Text style={styles.benefitItem}>Saved GPS route maps</Text>
+              <Text style={styles.benefitItem}>Bonus achievements and badges</Text>
+              <Text style={styles.benefitItem}>Advanced streak and progress insights</Text>
+            </View>
           </View>
           <Pressable
             onPress={() => router.push("/pro")}
@@ -793,6 +909,23 @@ export default function ProfileTab() {
       </View>
 
       <View style={styles.notificationsCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>Settings</Text>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+        </View>
+        <Pressable
+          onPress={onOpenEditProfile}
+          style={({ pressed }) => [styles.settingAction, pressed ? styles.pressed : null]}
+        >
+          <View style={styles.settingActionIcon}>
+            <Ionicons name="create-outline" size={18} color={PREMIUM.colors.forest} />
+          </View>
+          <View style={styles.settingActionCopy}>
+            <Text style={styles.rowLabel}>Edit Profile</Text>
+            <Text style={styles.rowHint}>Update your photo, username, places, and goals.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={alpha(PREMIUM.colors.ink, 0.42)} />
+        </Pressable>
         <View style={styles.notificationsHeader}>
           <View>
             <Text style={styles.notificationsTitle}>Smart reminders</Text>
@@ -849,12 +982,58 @@ export default function ProfileTab() {
 
       </View>
 
-        <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.btnAlt, pressed ? { opacity: 0.9 } : null]}>
-          <Text style={styles.btnAltText}>Replay Welcome Screens</Text>
-        </Pressable>
-
         <View style={styles.settingsCard}>
-          <Text style={styles.settingsEyebrow}>Settings</Text>
+          <Text style={styles.settingsEyebrow}>Account</Text>
+          <Pressable
+            onPress={() => void onRestorePurchases()}
+            disabled={authAction !== null}
+            style={({ pressed }) => [
+              styles.settingAction,
+              authAction !== null ? styles.authBtnDisabled : null,
+              pressed ? styles.pressed : null,
+            ]}
+          >
+            <View style={styles.settingActionIcon}>
+              <Ionicons name="receipt-outline" size={18} color={PREMIUM.colors.forest} />
+            </View>
+            <View style={styles.settingActionCopy}>
+              <Text style={styles.rowLabel}>Restore Purchases</Text>
+              <Text style={styles.rowHint}>
+                {authAction === "restorePurchases" ? "Restoring purchases..." : "Refresh App Store subscription access."}
+              </Text>
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={onResetOnboarding}
+            style={({ pressed }) => [styles.settingAction, pressed ? styles.pressed : null]}
+          >
+            <View style={styles.settingActionIcon}>
+              <Ionicons name="sparkles-outline" size={18} color={PREMIUM.colors.forest} />
+            </View>
+            <View style={styles.settingActionCopy}>
+              <Text style={styles.rowLabel}>Replay Welcome Screens</Text>
+              <Text style={styles.rowHint}>See onboarding again on next launch.</Text>
+            </View>
+          </Pressable>
+          {visibleUser ? (
+            <Pressable
+              onPress={() => void onSignOut()}
+              disabled={authAction === "signOut"}
+              style={({ pressed }) => [
+                styles.settingAction,
+                authAction === "signOut" ? styles.authBtnDisabled : null,
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <View style={styles.settingActionIcon}>
+                <Ionicons name="log-out-outline" size={18} color={PREMIUM.colors.forest} />
+              </View>
+              <View style={styles.settingActionCopy}>
+                <Text style={styles.rowLabel}>{authAction === "signOut" ? "Signing out..." : "Sign Out"}</Text>
+                <Text style={styles.rowHint}>Leave this device without deleting your account.</Text>
+              </View>
+            </Pressable>
+          ) : null}
           <Text style={styles.settingsTitle}>Delete Account</Text>
           <Text style={styles.settingsBody}>
             Permanently remove your signed-in profile and associated account data. Local walking data is also cleared.
@@ -1171,7 +1350,18 @@ const styles = StyleSheet.create({
   containerWithAuthActionBar: {
     paddingBottom: 220,
   },
-  title: { fontSize: 34, lineHeight: 40, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
+  hero: {
+    paddingTop: 8,
+    paddingBottom: 2,
+  },
+  heroEyebrow: {
+    color: PREMIUM.colors.goldDeep,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  title: { fontSize: 38, lineHeight: 44, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
   sub: {
     marginTop: 10,
     fontSize: 15,
@@ -1179,9 +1369,29 @@ const styles = StyleSheet.create({
     color: PREMIUM.colors.textMuted,
     lineHeight: 22,
   },
+  sectionHeader: {
+    gap: 3,
+  },
+  sectionEyebrow: {
+    color: PREMIUM.colors.goldDeep,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.9,
+    textTransform: "uppercase",
+  },
+  sectionTitle: {
+    color: PREMIUM.colors.text,
+    fontSize: 23,
+    lineHeight: 28,
+    fontWeight: "700",
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  pressed: {
+    opacity: 0.86,
+  },
   accountCard: {
-    marginTop: 18,
-    borderRadius: PREMIUM.radius.xl,
+    marginTop: 20,
+    borderRadius: PREMIUM.radius.lg,
     backgroundColor: alpha(PREMIUM.colors.offWhite, 0.82),
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
@@ -1424,7 +1634,7 @@ const styles = StyleSheet.create({
   signedInRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     gap: 10,
   },
   signedInPillWrap: {
@@ -1461,14 +1671,54 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: "700",
   },
+  friendsCard: {
+    marginTop: 14,
+    width: "100%",
+    borderRadius: PREMIUM.radius.lg,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.72),
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    padding: 18,
+    gap: 14,
+    ...PREMIUM.shadow.soft,
+  },
+  socialGrid: {
+    gap: 10,
+  },
+  socialTile: {
+    minHeight: 72,
+    borderRadius: PREMIUM.radius.md,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.08),
+    paddingVertical: 12,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  socialTileTitle: {
+    width: 96,
+    color: PREMIUM.colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  socialTileHint: {
+    flex: 1,
+    color: PREMIUM.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+  },
   streakCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.xl,
+    borderRadius: PREMIUM.radius.lg,
     backgroundColor: alpha(PREMIUM.colors.gold, 0.14),
     borderWidth: 1,
     borderColor: alpha(PREMIUM.colors.goldDeep, 0.24),
     padding: 18,
+    gap: 8,
   },
   streakEyebrow: {
     color: "#8A5D09",
@@ -1521,15 +1771,25 @@ const styles = StyleSheet.create({
   planCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.xl,
+    borderRadius: PREMIUM.radius.lg,
     backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.12),
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
     padding: 18,
+    gap: 14,
     ...PREMIUM.shadow.soft,
   },
   planTopRow: {
     gap: 14,
+  },
+  planCopy: {
+    gap: 6,
+  },
+  planStatusRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
   },
   planEyebrow: {
     color: "#255E36",
@@ -1539,7 +1799,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   planTitle: {
-    marginTop: 4,
     color: PREMIUM.colors.text,
     fontWeight: "700",
     fontSize: 24,
@@ -1550,6 +1809,31 @@ const styles = StyleSheet.create({
     color: "rgba(11,15,14,0.62)",
     fontWeight: "700",
     lineHeight: 19,
+  },
+  founderBadge: {
+    borderRadius: PREMIUM.radius.pill,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.28),
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.goldDeep, 0.36),
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  founderBadgeText: {
+    color: PREMIUM.colors.forestDeep,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  benefitList: {
+    marginTop: 4,
+    gap: 5,
+  },
+  benefitItem: {
+    color: PREMIUM.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
   },
   btn: {
     backgroundColor: PREMIUM.colors.forest,
@@ -1567,7 +1851,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
     padding: 18,
-    borderRadius: PREMIUM.radius.xl,
+    borderRadius: PREMIUM.radius.lg,
+    gap: 8,
     ...PREMIUM.shadow.soft,
   },
   notificationsHeader: {
@@ -1593,18 +1878,18 @@ const styles = StyleSheet.create({
   settingsCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.xl,
-    backgroundColor: alpha(PREMIUM.colors.danger, 0.05),
+    borderRadius: PREMIUM.radius.lg,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.68),
     borderWidth: 1,
-    borderColor: alpha(PREMIUM.colors.danger, 0.18),
+    borderColor: PREMIUM.colors.line,
     padding: 18,
-    gap: 8,
+    gap: 10,
     ...PREMIUM.shadow.soft,
   },
   settingsEyebrow: {
-    color: "#A32727",
+    color: PREMIUM.colors.goldDeep,
     fontWeight: "900",
-    letterSpacing: 0.4,
+    letterSpacing: 0.9,
     textTransform: "uppercase",
     fontSize: 11,
   },
@@ -1636,6 +1921,30 @@ const styles = StyleSheet.create({
     color: PREMIUM.colors.textMuted,
     fontSize: 12,
     fontWeight: "700",
+  },
+  settingAction: {
+    minHeight: 62,
+    borderRadius: PREMIUM.radius.md,
+    borderWidth: 1,
+    borderColor: PREMIUM.colors.line,
+    backgroundColor: alpha(PREMIUM.colors.cream, 0.74),
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  settingActionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: alpha(PREMIUM.colors.forest, 0.1),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  settingActionCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingVertical: 10 },
   rowCopy: { flex: 1 },
