@@ -63,6 +63,7 @@ const DEFAULT_PRO_STATE: ProState = {
 let rcConfigured = false;
 let rcListenerAttached = false;
 let rcConfigurePromise: Promise<boolean> | null = null;
+let rcIdentitySyncPromise: Promise<ProState> | null = null;
 
 function derivePlan(productId: string | null): ProPlan | null {
   if (!productId) return null;
@@ -182,18 +183,48 @@ export async function initRevenueCat(): Promise<boolean> {
   return await rcConfigurePromise;
 }
 
-export async function syncRevenueCatIdentity(appUserID: string | null): Promise<ProState> {
+async function syncRevenueCatIdentityNow(appUserID: string | null): Promise<ProState> {
   try {
     const ready = await initRevenueCat();
     if (!ready) return await getProState();
 
-    const info = appUserID
-      ? (await Purchases.logIn(appUserID)).customerInfo
-      : await Purchases.logOut();
+    let info: CustomerInfo;
+
+    if (appUserID) {
+      const currentAppUserID = await Purchases.getAppUserID();
+      info =
+        currentAppUserID === appUserID
+          ? await Purchases.getCustomerInfo()
+          : (await Purchases.logIn(appUserID)).customerInfo;
+    } else {
+      const isAnonymous = await Purchases.isAnonymous();
+      info = isAnonymous ? await Purchases.getCustomerInfo() : await Purchases.logOut();
+    }
 
     return await persist(mapCustomerInfoToPro(info));
   } catch {
     return await getProState();
+  }
+}
+
+export async function syncRevenueCatIdentity(appUserID: string | null): Promise<ProState> {
+  const previousSync = rcIdentitySyncPromise;
+  const nextSync = (async () => {
+    if (previousSync) {
+      await previousSync.catch(() => undefined);
+    }
+
+    return await syncRevenueCatIdentityNow(appUserID);
+  })();
+
+  rcIdentitySyncPromise = nextSync;
+
+  try {
+    return await nextSync;
+  } finally {
+    if (rcIdentitySyncPromise === nextSync) {
+      rcIdentitySyncPromise = null;
+    }
   }
 }
 
