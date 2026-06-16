@@ -6,6 +6,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BrandBadge } from "../src/components/BrandBadge";
 import { PremiumFeatureGate } from "../src/components/PremiumFeatureGate";
+import {
+  getLeaderboardEntries,
+  refreshCurrentUserLeaderboardEntry,
+  type LeaderboardPeriod,
+  type LeaderboardScope,
+  type RankedLeaderboardEntry,
+} from "../src/lib/leaderboard";
 import { buildMonthlyActivityStats } from "../src/lib/monthlyStats";
 import { dayKeyLocal, EMPTY_SUMMARY, getSessions, getSummary, type OutsideSession, type SummaryStats } from "../src/lib/store";
 
@@ -46,6 +53,22 @@ function formatDurationLabel(durationSec: number): string {
   return formatMinutesLabel(minutes);
 }
 
+function initialsForLeaderboardEntry(entry: RankedLeaderboardEntry): string {
+  const parts = entry.displayName.split(/\s+/).filter(Boolean);
+  const initials = parts.length >= 2 ? `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}` : entry.displayName.slice(0, 2);
+  return initials.toUpperCase() || "SO";
+}
+
+function periodLabel(period: LeaderboardPeriod): string {
+  if (period === "weekly") return "Weekly";
+  if (period === "monthly") return "Monthly";
+  return "All-time";
+}
+
+function walkCountLabel(count: number): string {
+  return `${count} walk${count === 1 ? "" : "s"}`;
+}
+
 function formatDayKeyLabel(dayKey: string | null): string {
   if (!dayKey) return "No standout day yet";
   const [year, month, day] = dayKey.split("-").map((value) => Number(value));
@@ -81,13 +104,22 @@ export default function StatsScreen() {
   const [summary, setSummary] = useState<SummaryStats | null>(null);
   const [sessions, setSessions] = useState<OutsideSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [leaderboardScope, setLeaderboardScope] = useState<LeaderboardScope>("friends");
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState<LeaderboardPeriod>("weekly");
+  const [leaderboardEntries, setLeaderboardEntries] = useState<RankedLeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
 
   const last7 = useMemo(() => lastNDaysKeys(7), []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    let nextSessions: OutsideSession[] = [];
+    let loadedStats = false;
     try {
       setLoading(true);
       const [s, sess] = await Promise.all([getSummary(), getSessions()]);
+      nextSessions = sess;
+      loadedStats = true;
       setSummary(s);
       setSessions(sess);
     } catch {
@@ -96,16 +128,35 @@ export default function StatsScreen() {
     } finally {
       setLoading(false);
     }
-  };
+
+    try {
+      setLeaderboardLoading(true);
+      setLeaderboardError(null);
+      if (loadedStats) {
+        try {
+          await refreshCurrentUserLeaderboardEntry(nextSessions);
+        } catch {
+          // The leaderboard can still show previously synced rankings if refresh is unavailable.
+        }
+      }
+      const nextLeaderboardEntries = await getLeaderboardEntries(leaderboardScope, leaderboardPeriod);
+      setLeaderboardEntries(nextLeaderboardEntries);
+    } catch {
+      setLeaderboardEntries([]);
+      setLeaderboardError("Leaderboard rankings are unavailable right now.");
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, [leaderboardPeriod, leaderboardScope]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [])
+    }, [load])
   );
 
   const totalMinutes = summary?.totalMinutes ?? 0;
@@ -258,6 +309,109 @@ export default function StatsScreen() {
               <Text style={[styles.cardValue, { color: t.text }]}>{totalSessions}</Text>
               <Text style={[styles.cardSub, { color: t.sub }]}>completed</Text>
             </View>
+          </View>
+
+          <View style={styles.leaderboardHeader}>
+            <Text style={[styles.sectionTitle, { color: t.text }]}>Leaderboard</Text>
+            <Text style={[styles.leaderboardMeta, { color: t.sub }]}>{periodLabel(leaderboardPeriod)} minutes</Text>
+          </View>
+          <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
+
+          <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
+            <View style={[styles.segmentedControl, { backgroundColor: "rgba(255,255,255,0.58)", borderColor: t.cardBorder }]}>
+              {(["friends", "global"] as LeaderboardScope[]).map((scope) => {
+                const selected = leaderboardScope === scope;
+                return (
+                  <Pressable
+                    key={scope}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      setLeaderboardScope(scope);
+                    }}
+                    style={[styles.segmentButton, selected ? { backgroundColor: "#255E36" } : null]}
+                  >
+                    <Text style={[styles.segmentButtonText, { color: selected ? "white" : t.text }]}>
+                      {scope === "friends" ? "Friends" : "Global"}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.periodRow}>
+              {(["weekly", "monthly", "allTime"] as LeaderboardPeriod[]).map((period) => {
+                const selected = leaderboardPeriod === period;
+                return (
+                  <Pressable
+                    key={period}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      setLeaderboardPeriod(period);
+                    }}
+                    style={[
+                      styles.periodButton,
+                      { borderColor: selected ? "#255E36" : t.cardBorder, backgroundColor: selected ? t.greenTint : "transparent" },
+                    ]}
+                  >
+                    <Text style={[styles.periodButtonText, { color: selected ? t.text : t.sub }]}>{periodLabel(period)}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {leaderboardLoading ? (
+              <View style={styles.emptyPanel}>
+                <Text style={[styles.emptyTitle, { color: t.text }]}>Loading rankings…</Text>
+                <Text style={[styles.emptyBody, { color: t.sub }]}>Finding the latest {leaderboardScope} leaderboard.</Text>
+              </View>
+            ) : leaderboardError ? (
+              <View style={styles.emptyPanel}>
+                <Text style={[styles.emptyTitle, { color: t.text }]}>Leaderboard unavailable</Text>
+                <Text style={[styles.emptyBody, { color: t.sub }]}>{leaderboardError}</Text>
+              </View>
+            ) : leaderboardEntries.length === 0 ? (
+              <View style={styles.emptyPanel}>
+                <Text style={[styles.emptyTitle, { color: t.text }]}>No rankings yet</Text>
+                <Text style={[styles.emptyBody, { color: t.sub }]}>
+                  {leaderboardScope === "friends"
+                    ? "Add friends and complete a walk to start a friends-only ranking."
+                    : "Global rankings appear as Step Outside users sync completed walks."}
+                </Text>
+              </View>
+            ) : (
+              leaderboardEntries.slice(0, 10).map((entry) => (
+                <View
+                  key={entry.uid}
+                  style={[
+                    styles.leaderboardRow,
+                    entry.isCurrentUser ? { backgroundColor: t.greenTint, borderColor: t.greenBorder } : { borderColor: t.cardBorder },
+                  ]}
+                >
+                  <Text style={[styles.rankText, { color: t.text }]}>#{entry.rank}</Text>
+                  <View style={styles.leaderboardAvatar}>
+                    {entry.photoURL ? (
+                      <Image source={{ uri: entry.photoURL }} style={styles.leaderboardAvatarImage} />
+                    ) : (
+                      <Text style={styles.leaderboardAvatarText}>{initialsForLeaderboardEntry(entry)}</Text>
+                    )}
+                  </View>
+                  <View style={styles.leaderboardCopy}>
+                    <Text style={[styles.leaderboardName, { color: t.text }]} numberOfLines={1}>
+                      {entry.displayName}
+                      {entry.isCurrentUser ? " (You)" : ""}
+                    </Text>
+                    <Text style={[styles.leaderboardSub, { color: t.sub }]} numberOfLines={1}>
+                      @{entry.username} • {walkCountLabel(entry.scoreSessions)} • {formatDistanceMiles(entry.scoreDistanceM)}
+                    </Text>
+                  </View>
+                  <Text style={[styles.leaderboardScore, { color: t.text }]}>{formatMinutesLabel(entry.scoreMinutes)}</Text>
+                </View>
+              ))
+            )}
           </View>
 
           <Text style={[styles.sectionTitle, { color: t.text }]}>Last 7 days</Text>
@@ -585,6 +739,105 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   cardSub: { fontWeight: "800", marginTop: 2, fontSize: 13 },
+
+  leaderboardHeader: {
+    marginTop: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  leaderboardMeta: {
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 4,
+    marginBottom: 10,
+  },
+  segmentButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentButtonText: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  periodRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  periodButton: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  periodButtonText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  leaderboardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 10,
+    marginTop: 8,
+  },
+  rankText: {
+    width: 34,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  leaderboardAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#255E36",
+    overflow: "hidden",
+  },
+  leaderboardAvatarImage: {
+    width: "100%",
+    height: "100%",
+  },
+  leaderboardAvatarText: {
+    color: "white",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  leaderboardCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  leaderboardName: {
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  leaderboardSub: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  leaderboardScore: {
+    maxWidth: 78,
+    textAlign: "right",
+    fontSize: 14,
+    fontWeight: "900",
+  },
 
   sectionTitle: {
     fontSize: 20,

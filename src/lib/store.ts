@@ -4,6 +4,7 @@ import { calculateElevationGain } from "../utils/elevation";
 import { calculateMovingTimeSeconds, calculatePaceMinutesPerMile } from "../utils/pace";
 
 import { auth, db } from "./firebase";
+import { refreshCurrentUserLeaderboardEntry } from "./leaderboard";
 import { getPremiumStatus } from "./pro";
 import type { SolarBonusType } from "./solarBonus";
 
@@ -1097,6 +1098,11 @@ export async function addCompletedSession(
   const nextSummary = summarizeSessions(sessions);
 
   await writeSummary(nextSummary);
+  try {
+    await refreshCurrentUserLeaderboardEntry(sessions);
+  } catch {
+    // Leaderboard sync should never block saving a completed walk.
+  }
   try {
     await syncSessionToFirestore(normalized, includeRoutePoints);
   } catch {
