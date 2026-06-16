@@ -36,6 +36,8 @@ export type ProPaywallCatalog = {
 
 export type PremiumStatus = {
   isPremium: boolean;
+  plan: ProPlan | null;
+  membershipLabel: string;
   customerInfo: CustomerInfo | null;
   error: Error | null;
 };
@@ -46,7 +48,7 @@ export const PRO_PRODUCT_IDS = {
   lifetime: "stepoutside_pro_lifetime_launch",
 } as const;
 
-const PAYWALL_PLANS: ProPlan[] = ["yearly", "monthly"];
+const PAYWALL_PLANS: ProPlan[] = ["yearly", "monthly", "lifetime"];
 
 const KEY_PRO_STATE = "@stepoutside/proState";
 const ENTITLEMENT_ID = "pro";
@@ -65,12 +67,31 @@ let rcListenerAttached = false;
 let rcConfigurePromise: Promise<boolean> | null = null;
 let rcIdentitySyncPromise: Promise<ProState> | null = null;
 
-function derivePlan(productId: string | null): ProPlan | null {
-  if (!productId) return null;
+type ActiveEntitlement = CustomerInfo["entitlements"]["active"][string];
+
+function isProPlan(value: unknown): value is ProPlan {
+  return value === "monthly" || value === "yearly" || value === "lifetime";
+}
+
+function derivePlan(productId: string | null, entitlement?: ActiveEntitlement): ProPlan | null {
   if (productId === PRO_PRODUCT_IDS.monthly) return "monthly";
   if (productId === PRO_PRODUCT_IDS.yearly) return "yearly";
   if (productId === PRO_PRODUCT_IDS.lifetime) return "lifetime";
+  if (entitlement?.store === "PROMOTIONAL") {
+    return entitlement.expirationDate ? "yearly" : "lifetime";
+  }
+  if (entitlement?.expirationDate === null) return "lifetime";
   return null;
+}
+
+export function formatProMembershipLabel(state: Pick<ProState, "isPro" | "plan"> | null | undefined): string {
+  if (!state?.isPro) return "Free Plan";
+
+  if (state.plan === "monthly") return "Monthly Premium";
+  if (state.plan === "yearly") return "Annual Premium";
+  if (state.plan === "lifetime") return "Founder Lifetime";
+
+  return "Premium";
 }
 
 function mapCustomerInfoToPro(info: CustomerInfo): ProState {
@@ -78,7 +99,7 @@ function mapCustomerInfoToPro(info: CustomerInfo): ProState {
   const productId = entitlement?.productIdentifier ?? null;
   return {
     isPro: Boolean(entitlement),
-    plan: derivePlan(productId),
+    plan: derivePlan(productId, entitlement),
     productId,
     updatedAt: Date.now(),
   };
@@ -233,10 +254,11 @@ export async function getProState(): Promise<ProState> {
   if (!raw) return DEFAULT_PRO_STATE;
   try {
     const parsed = JSON.parse(raw) as ProState;
+    const productId = parsed?.productId ?? null;
     return {
       isPro: Boolean(parsed?.isPro),
-      plan: parsed?.plan ?? null,
-      productId: parsed?.productId ?? null,
+      plan: isProPlan(parsed?.plan) ? parsed.plan : derivePlan(productId),
+      productId,
       updatedAt: parsed?.updatedAt ?? null,
     };
   } catch {
@@ -264,6 +286,8 @@ export async function getPremiumStatus(): Promise<PremiumStatus> {
       const cached = await getProState();
       return {
         isPremium: cached.isPro,
+        plan: cached.plan,
+        membershipLabel: formatProMembershipLabel(cached),
         customerInfo: null,
         error: null,
       };
@@ -275,6 +299,8 @@ export async function getPremiumStatus(): Promise<PremiumStatus> {
 
     return {
       isPremium: next.isPro,
+      plan: next.plan,
+      membershipLabel: formatProMembershipLabel(next),
       customerInfo,
       error: null,
     };
@@ -282,6 +308,8 @@ export async function getPremiumStatus(): Promise<PremiumStatus> {
     const cached = await getProState();
     return {
       isPremium: cached.isPro,
+      plan: cached.plan,
+      membershipLabel: formatProMembershipLabel(cached),
       customerInfo: null,
       error: normalizeError(error, "We couldn't confirm Premium access right now."),
     };
@@ -363,11 +391,11 @@ function buildLivePaywallPackage(
 
   return {
     plan,
-    title: "Lifetime",
-    periodLabel: "One-time purchase",
-    priceLabel: product.priceString || "$X.XX",
-    detail: "one-time purchase",
-    badge: "Launch",
+    title: "Founder Lifetime",
+    periodLabel: "Lifetime access",
+    priceLabel: product.priceString || "$76",
+    detail: "One payment for lifetime Premium access.",
+    badge: "Founder",
     productId: product.identifier,
     rcPackage,
   };

@@ -244,7 +244,7 @@ export default function ProfileTab() {
   const [authStatus, setAuthStatus] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const { isPremium } = usePremiumAccess();
+  const { isPremium, membershipLabel } = usePremiumAccess();
 
   const googleEnabled = isGoogleAuthConfigured();
 
@@ -698,10 +698,10 @@ export default function ProfileTab() {
         <View style={styles.planTopRow}>
           <View>
             <Text style={styles.planEyebrow}>Plan</Text>
-            <Text style={styles.planTitle}>{isPremium ? "Premium Active" : "Free Plan"}</Text>
+            <Text style={styles.planTitle}>{membershipLabel}</Text>
             <Text style={styles.planBody}>
               {isPremium
-                ? "Your Step Outside Premium features are available on this device."
+                ? `${membershipLabel} features are available on this device.`
                 : "Upgrade when you want saved route maps, bonus achievements, and deeper progress insights."}
             </Text>
           </View>

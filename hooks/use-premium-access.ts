@@ -9,6 +9,8 @@ type UsePremiumAccessResult = PremiumStatus & {
 
 export function usePremiumAccess(): UsePremiumAccessResult {
   const [isPremium, setIsPremium] = useState(false);
+  const [plan, setPlan] = useState<PremiumStatus["plan"]>(null);
+  const [membershipLabel, setMembershipLabel] = useState("Free Plan");
   const [customerInfo, setCustomerInfo] = useState<PremiumStatus["customerInfo"]>(null);
   const [error, setError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -18,6 +20,8 @@ export function usePremiumAccess(): UsePremiumAccessResult {
     try {
       const next = await getPremiumStatus();
       setIsPremium(next.isPremium);
+      setPlan(next.plan);
+      setMembershipLabel(next.membershipLabel);
       setCustomerInfo(next.customerInfo);
       setError(next.error);
     } finally {
@@ -31,6 +35,8 @@ export function usePremiumAccess(): UsePremiumAccessResult {
 
   return {
     isPremium,
+    plan,
+    membershipLabel,
     isLoading,
     customerInfo,
     error,

@@ -6,6 +6,7 @@ import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchase
 
 import {
   clearProState,
+  formatProMembershipLabel,
   getProState,
   getPaywallCatalog,
   purchaseProPlan,
@@ -30,7 +31,7 @@ const PRIVACY_URL = "https://stepoutside.app/privacy-policy";
 const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 const MANAGE_SUBSCRIPTIONS_URL = "https://apps.apple.com/account/subscriptions";
 const RENEWAL_DISCLOSURE =
-  "Renews automatically unless canceled at least 24 hours before the end of the current period.";
+  "Monthly and annual plans renew automatically unless canceled at least 24 hours before the end of the current period. Lifetime access does not renew.";
 const PRO_DESCRIPTION =
   "Unlock saved GPS route maps, advanced streaks, monthly progress insights, and sunrise and sunset bonus achievements.";
 
@@ -142,13 +143,7 @@ export default function ProScreen() {
     setBusyAction(null);
   };
 
-  const isPro = proState?.isPro ?? false;
-  const activePlanLabel =
-    proState?.plan === "yearly"
-      ? "Annual subscription"
-      : proState?.plan === "monthly"
-        ? "Monthly subscription"
-        : proState?.plan ?? "plan";
+  const membershipLabel = formatProMembershipLabel(proState);
   const statusNote = (() => {
     if (catalogSource === "live") {
       return "Plans and pricing are loaded live from the App Store through RevenueCat.";
@@ -186,13 +181,13 @@ export default function ProScreen() {
             <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
             <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
             <Text style={styles.heroSupport}>
-              Monthly and annual subscriptions are billed through Apple using live App Store pricing.
+              Monthly, annual, and lifetime options are billed through Apple using live App Store pricing.
             </Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Current status</Text>
-            <Text style={styles.cardBody}>{isPro ? `Premium active (${activePlanLabel})` : "Free plan"}</Text>
+            <Text style={styles.cardBody}>{membershipLabel}</Text>
             <Text style={styles.cardCaption}>{statusNote}</Text>
             {__DEV__ && catalogSource === "live" && offeringId ? <Text style={styles.offeringNote}>Offering: {offeringId}</Text> : null}
           </View>
@@ -263,7 +258,7 @@ export default function ProScreen() {
           <View style={styles.disclosureCard}>
             <Text style={styles.disclosureTitle}>Subscription details</Text>
             <Text style={styles.disclosureBody}>
-              Step Outside Premium is available as a monthly subscription or annual subscription.
+              Step Outside Premium is available as a monthly subscription, annual subscription, or one-time lifetime purchase.
             </Text>
             <Text style={styles.disclosureBody}>{RENEWAL_DISCLOSURE}</Text>
             <Text style={styles.disclosureBody}>
