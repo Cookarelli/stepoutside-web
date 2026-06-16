@@ -13,13 +13,15 @@ import {
 } from "firebase/firestore";
 import * as Notifications from "expo-notifications";
 
-import { clearActiveWalkSnapshot, clearCompletedWalkDraft } from "./activeWalk";
+import { clearActiveWalkSnapshot, clearActiveWalkStorageForUid, clearCompletedWalkDraft } from "./activeWalk";
 import { stopBackgroundWalkTracking } from "./walkLocationTracking";
 import { signOutUser } from "./auth";
 import { db } from "./firebase";
 import { logFirestorePermissionDenied } from "./firestoreDebug";
-import { resetAllData } from "./store";
+import { clearUserOwnedWalkStorageForUid } from "./store";
 import { clearLocalUserProfiles, deleteProfilePhotoObjectForUid } from "./userProfile";
+import { clearLocalChallengeSnapshotForUid } from "./challenges/storage";
+import { clearLocalReflectionsForUid } from "./reflections";
 
 const LOCAL_KEYS_TO_CLEAR = [
   "stepoutside:v2:auth-cache",
@@ -142,23 +144,28 @@ async function deleteUserOwnedFirestoreData(uid: string): Promise<DeleteAccountR
   };
 }
 
-async function clearLocalUserState(): Promise<void> {
+async function clearLocalUserState(uid: string): Promise<void> {
   await stopBackgroundWalkTracking();
-  await resetAllData();
+  await clearUserOwnedWalkStorageForUid(uid);
   await Promise.allSettled([
     AsyncStorage.multiRemove([...LOCAL_KEYS_TO_CLEAR]),
     clearActiveWalkSnapshot(),
     clearCompletedWalkDraft(),
+    clearActiveWalkStorageForUid(uid),
+    clearLocalChallengeSnapshotForUid(uid),
+    clearLocalReflectionsForUid(uid),
+    AsyncStorage.removeItem(`@stepoutside/user:${uid}:savedWalks`),
     clearLocalUserProfiles(),
     Notifications.cancelAllScheduledNotificationsAsync(),
   ]);
 }
 
 export async function deleteCurrentAccount(currentUser: User): Promise<DeleteAccountResult> {
+  const uid = currentUser.uid;
   const firestoreResult = await deleteUserOwnedFirestoreData(currentUser.uid);
   await deleteUser(currentUser);
 
-  const cleanupResults = await Promise.allSettled([signOutUser(), clearLocalUserState()]);
+  const cleanupResults = await Promise.allSettled([signOutUser(), clearLocalUserState(uid)]);
   const cleanupErrors = cleanupResults.filter((result): result is PromiseRejectedResult => result.status === "rejected");
 
   if (cleanupErrors.length > 0) {

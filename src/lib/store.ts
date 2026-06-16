@@ -101,8 +101,10 @@ type PersistedSummaryStats = SummaryStats & {
   version?: number;
 };
 
-const KEY_SESSIONS = "stepoutside:v2:sessions";
-const KEY_SUMMARY = "stepoutside:v2:summary";
+const LEGACY_KEY_SESSIONS = "stepoutside:v2:sessions";
+const LEGACY_KEY_SUMMARY = "stepoutside:v2:summary";
+const KEY_DATA_SCOPE_MIGRATION = "stepoutside:v2:user-data-scope-cleanup:v1";
+const USER_DATA_PREFIX = "stepoutside:v2:user";
 const SUMMARY_VERSION = 3;
 const DEFAULT_WEEKLY_GOAL = 4;
 const DEFAULT_MONTHLY_GOAL = 16;
@@ -129,6 +131,49 @@ export const EMPTY_SUMMARY: SummaryStats = {
   dualResetDaysCount: 0,
   daysCompleted: {},
 };
+
+function getCurrentDataUid(): string | null {
+  return auth.currentUser?.uid ?? null;
+}
+
+function sessionsKeyForUid(uid: string): string {
+  return `${USER_DATA_PREFIX}:${uid}:sessions`;
+}
+
+function summaryKeyForUid(uid: string): string {
+  return `${USER_DATA_PREFIX}:${uid}:summary`;
+}
+
+async function cleanupLegacyUnscopedWalkStorage(): Promise<void> {
+  const alreadyCleaned = await AsyncStorage.getItem(KEY_DATA_SCOPE_MIGRATION);
+  await AsyncStorage.multiRemove([LEGACY_KEY_SESSIONS, LEGACY_KEY_SUMMARY]);
+
+  if (alreadyCleaned !== "done") {
+    await AsyncStorage.setItem(KEY_DATA_SCOPE_MIGRATION, "done");
+  }
+}
+
+async function getUserStorageScope(): Promise<{ sessionsKey: string; summaryKey: string } | null> {
+  await cleanupLegacyUnscopedWalkStorage();
+
+  const uid = getCurrentDataUid();
+  if (!uid) return null;
+
+  return {
+    sessionsKey: sessionsKeyForUid(uid),
+    summaryKey: summaryKeyForUid(uid),
+  };
+}
+
+export async function clearUserOwnedWalkStorageForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_SESSIONS, LEGACY_KEY_SUMMARY];
+  if (uid) {
+    keys.push(sessionsKeyForUid(uid), summaryKeyForUid(uid));
+  }
+
+  await AsyncStorage.multiRemove(keys);
+  await AsyncStorage.setItem(KEY_DATA_SCOPE_MIGRATION, "done");
+}
 
 function finiteNumberOr(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -396,7 +441,11 @@ async function syncSessionToFirestore(session: OutsideSession, includeRoutePoint
   const currentUser = auth.currentUser;
   if (!currentUser?.uid) return;
 
-  const payload = buildRemoteSessionPayload(session, includeRoutePoints);
+  const payload = {
+    ...buildRemoteSessionPayload(session, includeRoutePoints),
+    ownerUid: currentUser.uid,
+    userId: currentUser.uid,
+  };
   const path = `users/${currentUser.uid}/sessions/${session.id}`;
   try {
     await setDoc(doc(db, "users", currentUser.uid, "sessions", session.id), payload, { merge: true });
@@ -531,7 +580,10 @@ function computeWeeklyConsistencyStreak(
 }
 
 async function readSessions(): Promise<OutsideSession[]> {
-  const raw = await AsyncStorage.getItem(KEY_SESSIONS);
+  const scope = await getUserStorageScope();
+  if (!scope) return [];
+
+  const raw = await AsyncStorage.getItem(scope.sessionsKey);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as OutsideSession[];
@@ -616,7 +668,10 @@ async function readSessions(): Promise<OutsideSession[]> {
 }
 
 async function writeSessions(sessions: OutsideSession[]) {
-  await AsyncStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions));
+  const scope = await getUserStorageScope();
+  if (!scope) return;
+
+  await AsyncStorage.setItem(scope.sessionsKey, JSON.stringify(sessions));
 }
 
 function mergeSessionLists(localSessions: OutsideSession[], remoteSessions: OutsideSession[]): OutsideSession[] {
@@ -797,7 +852,10 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
 }
 
 async function readSummary(): Promise<{ summary: SummaryStats; version: number }> {
-  const raw = await AsyncStorage.getItem(KEY_SUMMARY);
+  const scope = await getUserStorageScope();
+  if (!scope) return { summary: EMPTY_SUMMARY, version: SUMMARY_VERSION };
+
+  const raw = await AsyncStorage.getItem(scope.summaryKey);
   if (!raw) return { summary: EMPTY_SUMMARY, version: 0 };
   try {
     const parsed = JSON.parse(raw) as PersistedSummaryStats;
@@ -850,11 +908,14 @@ async function readSummary(): Promise<{ summary: SummaryStats; version: number }
 }
 
 async function writeSummary(summary: SummaryStats) {
+  const scope = await getUserStorageScope();
+  if (!scope) return;
+
   const payload: PersistedSummaryStats = {
     ...summary,
     version: SUMMARY_VERSION,
   };
-  await AsyncStorage.setItem(KEY_SUMMARY, JSON.stringify(payload));
+  await AsyncStorage.setItem(scope.summaryKey, JSON.stringify(payload));
 }
 
 export async function getSessions(): Promise<OutsideSession[]> {
@@ -876,7 +937,7 @@ export async function getSessionById(id: string): Promise<OutsideSession | null>
   const local = sessions.find((session) => session.id === id) ?? null;
   const currentUser = auth.currentUser;
 
-  if (!currentUser?.uid) return local;
+  if (!currentUser?.uid) return null;
   if (local?.routePoints && local.routePoints.length > 1) return local;
 
   try {
@@ -1065,13 +1126,17 @@ export async function getSummary(): Promise<SummaryStats> {
 }
 
 export async function resetAllData(): Promise<void> {
-  await AsyncStorage.multiRemove([KEY_SESSIONS, KEY_SUMMARY]);
+  await clearUserOwnedWalkStorageForUid(getCurrentDataUid());
 }
 
 /** Returns summary so Complete screen can render streak immediately */
 export async function addCompletedSession(
   session: OutsideSession
 ): Promise<{ summary: SummaryStats; sessions: OutsideSession[] }> {
+  if (!getCurrentDataUid()) {
+    return { summary: EMPTY_SUMMARY, sessions: [] };
+  }
+
   const premiumStatus = await getPremiumStatus();
   const includeRoutePoints = premiumStatus.isPremium;
   const normalized = buildSessionForStorage(session, includeRoutePoints);

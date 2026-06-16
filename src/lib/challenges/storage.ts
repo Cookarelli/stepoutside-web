@@ -8,7 +8,8 @@ import { BADGE_CATALOG } from "./catalog";
 import { buildChallengeHighlights } from "./evaluate";
 import type { BadgeArtKey, BadgeDefinition, ChallengeStatus, ChallengeUnlockResult, LocalChallengeSnapshot } from "./types";
 
-const KEY_CHALLENGE_SNAPSHOT = "stepoutside:v2:challengeSnapshot";
+const LEGACY_KEY_CHALLENGE_SNAPSHOT = "stepoutside:v2:challengeSnapshot";
+const CHALLENGE_SNAPSHOT_PREFIX = "stepoutside:v2:user";
 const CHALLENGE_SNAPSHOT_VERSION = 1;
 
 type RefreshChallengeSnapshotInput = {
@@ -19,6 +20,27 @@ type RefreshChallengeSnapshotInput = {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function currentUid(): string | null {
+  return auth.currentUser?.uid ?? null;
+}
+
+function challengeSnapshotKeyForUid(uid: string): string {
+  return `${CHALLENGE_SNAPSHOT_PREFIX}:${uid}:challengeSnapshot`;
+}
+
+async function cleanupLegacyChallengeSnapshot(): Promise<void> {
+  await AsyncStorage.removeItem(LEGACY_KEY_CHALLENGE_SNAPSHOT);
+}
+
+export async function clearLocalChallengeSnapshotForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_CHALLENGE_SNAPSHOT];
+  if (uid) {
+    keys.push(challengeSnapshotKeyForUid(uid));
+  }
+
+  await AsyncStorage.multiRemove(keys);
 }
 
 function isBadgeArtKey(value: unknown): value is BadgeArtKey {
@@ -101,7 +123,12 @@ function normalizeSnapshot(value: unknown): LocalChallengeSnapshot | null {
 }
 
 export async function readLocalChallengeSnapshot(): Promise<LocalChallengeSnapshot | null> {
-  const raw = await AsyncStorage.getItem(KEY_CHALLENGE_SNAPSHOT);
+  await cleanupLegacyChallengeSnapshot();
+
+  const uid = currentUid();
+  if (!uid) return null;
+
+  const raw = await AsyncStorage.getItem(challengeSnapshotKeyForUid(uid));
   if (!raw) return null;
 
   try {
@@ -112,7 +139,12 @@ export async function readLocalChallengeSnapshot(): Promise<LocalChallengeSnapsh
 }
 
 async function writeLocalChallengeSnapshot(snapshot: LocalChallengeSnapshot): Promise<void> {
-  await AsyncStorage.setItem(KEY_CHALLENGE_SNAPSHOT, JSON.stringify(snapshot));
+  await cleanupLegacyChallengeSnapshot();
+
+  const uid = currentUid();
+  if (!uid) return;
+
+  await AsyncStorage.setItem(challengeSnapshotKeyForUid(uid), JSON.stringify(snapshot));
 }
 
 function normalizeRemoteProgress(value: unknown) {

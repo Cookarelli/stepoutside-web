@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { auth } from "./firebase";
 import type { GpsDiagnostics, RouteCaptureStatus, RoutePoint } from "./store";
 
 export type ActiveWalkSnapshot = {
@@ -30,9 +31,53 @@ export type CompletedWalkDraft = {
   gpsDiagnostics?: GpsDiagnostics;
 };
 
-const KEY_ACTIVE_WALK = "@stepoutside/activeWalk";
-const KEY_COMPLETED_WALK_DRAFT = "@stepoutside/completedWalkDraft";
+const LEGACY_KEY_ACTIVE_WALK = "@stepoutside/activeWalk";
+const LEGACY_KEY_COMPLETED_WALK_DRAFT = "@stepoutside/completedWalkDraft";
+const ACTIVE_WALK_PREFIX = "@stepoutside/user";
 let activeWalkMutationQueue: Promise<void> = Promise.resolve();
+
+function currentUid(): string | null {
+  return auth.currentUser?.uid ?? null;
+}
+
+function activeWalkKeyForUid(uid: string): string {
+  return `${ACTIVE_WALK_PREFIX}:${uid}:activeWalk`;
+}
+
+function completedWalkDraftKeyForUid(uid: string): string {
+  return `${ACTIVE_WALK_PREFIX}:${uid}:completedWalkDraft`;
+}
+
+async function removeLegacyActiveWalkStorage(): Promise<void> {
+  await AsyncStorage.multiRemove([LEGACY_KEY_ACTIVE_WALK, LEGACY_KEY_COMPLETED_WALK_DRAFT]);
+}
+
+export async function clearActiveWalkStorageForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_ACTIVE_WALK, LEGACY_KEY_COMPLETED_WALK_DRAFT];
+  if (uid) {
+    keys.push(activeWalkKeyForUid(uid), completedWalkDraftKeyForUid(uid));
+  }
+
+  await AsyncStorage.multiRemove(keys);
+}
+
+async function clearActiveWalkSnapshotForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_ACTIVE_WALK];
+  if (uid) {
+    keys.push(activeWalkKeyForUid(uid));
+  }
+
+  await AsyncStorage.multiRemove(keys);
+}
+
+async function clearCompletedWalkDraftForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_COMPLETED_WALK_DRAFT];
+  if (uid) {
+    keys.push(completedWalkDraftKeyForUid(uid));
+  }
+
+  await AsyncStorage.multiRemove(keys);
+}
 
 function normalizeRouteCaptureStatus(value: unknown): RouteCaptureStatus | undefined {
   if (value === "complete" || value === "partial" || value === "none") {
@@ -123,7 +168,12 @@ function normalizeGpsDiagnostics(value: unknown): GpsDiagnostics | undefined {
 }
 
 async function readActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
-  const raw = await AsyncStorage.getItem(KEY_ACTIVE_WALK);
+  await removeLegacyActiveWalkStorage();
+
+  const uid = currentUid();
+  if (!uid) return null;
+
+  const raw = await AsyncStorage.getItem(activeWalkKeyForUid(uid));
   if (!raw) return null;
 
   try {
@@ -313,8 +363,12 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
 
 export async function setActiveWalkSnapshot(snapshot: ActiveWalkSnapshot): Promise<void> {
   await enqueueActiveWalkMutation(async () => {
+    await removeLegacyActiveWalkStorage();
+    const uid = currentUid();
+    if (!uid) return;
+
     const current = await readActiveWalkSnapshot();
-    await AsyncStorage.setItem(KEY_ACTIVE_WALK, JSON.stringify(mergeActiveWalkSnapshot(current, snapshot)));
+    await AsyncStorage.setItem(activeWalkKeyForUid(uid), JSON.stringify(mergeActiveWalkSnapshot(current, snapshot)));
   });
 }
 
@@ -322,12 +376,16 @@ export async function updateActiveWalkSnapshot(
   updater: (snapshot: ActiveWalkSnapshot | null) => ActiveWalkSnapshot | null | Promise<ActiveWalkSnapshot | null>
 ): Promise<ActiveWalkSnapshot | null> {
   return enqueueActiveWalkMutation(async () => {
+    await removeLegacyActiveWalkStorage();
+    const uid = currentUid();
+    if (!uid) return null;
+
     const current = await readActiveWalkSnapshot();
     const next = await updater(current);
     if (next) {
-      await AsyncStorage.setItem(KEY_ACTIVE_WALK, JSON.stringify(next));
+      await AsyncStorage.setItem(activeWalkKeyForUid(uid), JSON.stringify(next));
     } else {
-      await AsyncStorage.removeItem(KEY_ACTIVE_WALK);
+      await clearActiveWalkSnapshotForUid(uid);
     }
     return next;
   });
@@ -335,7 +393,7 @@ export async function updateActiveWalkSnapshot(
 
 export async function clearActiveWalkSnapshot(): Promise<void> {
   await enqueueActiveWalkMutation(async () => {
-    await AsyncStorage.removeItem(KEY_ACTIVE_WALK);
+    await clearActiveWalkSnapshotForUid(currentUid());
   });
 }
 
@@ -344,7 +402,12 @@ export async function hasActiveWalkSnapshot(): Promise<boolean> {
 }
 
 export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null> {
-  const raw = await AsyncStorage.getItem(KEY_COMPLETED_WALK_DRAFT);
+  await removeLegacyActiveWalkStorage();
+
+  const uid = currentUid();
+  if (!uid) return null;
+
+  const raw = await AsyncStorage.getItem(completedWalkDraftKeyForUid(uid));
   if (!raw) return null;
 
   try {
@@ -388,9 +451,14 @@ export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null
 }
 
 export async function setCompletedWalkDraft(draft: CompletedWalkDraft): Promise<void> {
-  await AsyncStorage.setItem(KEY_COMPLETED_WALK_DRAFT, JSON.stringify(draft));
+  await removeLegacyActiveWalkStorage();
+
+  const uid = currentUid();
+  if (!uid) return;
+
+  await AsyncStorage.setItem(completedWalkDraftKeyForUid(uid), JSON.stringify(draft));
 }
 
 export async function clearCompletedWalkDraft(): Promise<void> {
-  await AsyncStorage.removeItem(KEY_COMPLETED_WALK_DRAFT);
+  await clearCompletedWalkDraftForUid(currentUid());
 }

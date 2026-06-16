@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { usePremiumAccess } from "../../hooks/use-premium-access";
 import { NativeRouteMapCard } from "../../src/components/NativeRouteMapCard";
+import { auth } from "../../src/lib/firebase";
 import { PREMIUM, alpha } from "../../src/lib/premiumTheme";
 import { getSavedRouteSessions, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../../src/lib/store";
 import {
@@ -45,7 +46,8 @@ const BRAND = {
   charcoal: PREMIUM.colors.ink,
 } as const;
 
-const SAVED_WALKS_KEY = "@stepoutside/savedWalks";
+const LEGACY_SAVED_WALKS_KEY = "@stepoutside/savedWalks";
+const SAVED_WALKS_PREFIX = "@stepoutside/user";
 const ZIP_CODE_KEY = "@stepoutside/routeZipCode";
 const GYM_LOOKUP_TIMEOUT_MS = 2200;
 
@@ -92,6 +94,11 @@ function fromCatalogRoute(route: RouteSuggestion): TrailSuggestion {
     isIndoor: route.isIndoor,
     source: route.source,
   };
+}
+
+function savedWalksKeyForCurrentUser(): string | null {
+  const uid = auth.currentUser?.uid;
+  return uid ? `${SAVED_WALKS_PREFIX}:${uid}:savedWalks` : null;
 }
 
 async function openInMaps(item: TrailSuggestion) {
@@ -218,12 +225,24 @@ export default function StepsTab() {
 
   const loadSavedWalks = useCallback(async () => {
     try {
-      const raw = await AsyncStorage.getItem(SAVED_WALKS_KEY);
-      if (!raw) return;
+      await AsyncStorage.removeItem(LEGACY_SAVED_WALKS_KEY);
+
+      const storageKey = savedWalksKeyForCurrentUser();
+      if (!storageKey) {
+        setSavedWalks([]);
+        return;
+      }
+
+      const raw = await AsyncStorage.getItem(storageKey);
+      if (!raw) {
+        setSavedWalks([]);
+        return;
+      }
+
       const parsed = JSON.parse(raw) as TrailSuggestion[];
       setSavedWalks(Array.isArray(parsed) ? parsed : []);
     } catch {
-      // ignore local storage parse issues
+      setSavedWalks([]);
     }
   }, []);
 
@@ -253,7 +272,12 @@ export default function StepsTab() {
   }, []);
 
   const persistSavedWalks = useCallback(async (walks: TrailSuggestion[]) => {
-    await AsyncStorage.setItem(SAVED_WALKS_KEY, JSON.stringify(walks));
+    await AsyncStorage.removeItem(LEGACY_SAVED_WALKS_KEY);
+
+    const storageKey = savedWalksKeyForCurrentUser();
+    if (!storageKey) return;
+
+    await AsyncStorage.setItem(storageKey, JSON.stringify(walks));
   }, []);
 
   const loadSavedZip = useCallback(async () => {
@@ -272,6 +296,8 @@ export default function StepsTab() {
 
   const toggleSaveWalk = useCallback(
     async (walk: TrailSuggestion) => {
+      if (!savedWalksKeyForCurrentUser()) return;
+
       setSavedWalks((prev) => {
         const exists = prev.some((w) => w.id === walk.id);
         if (!exists && !isPremium && prev.length >= 3) {
@@ -287,6 +313,8 @@ export default function StepsTab() {
 
   const removeSavedWalk = useCallback(
     async (id: string) => {
+      if (!savedWalksKeyForCurrentUser()) return;
+
       setSavedWalks((prev) => {
         const next = prev.filter((w) => w.id !== id);
         void persistSavedWalks(next);
@@ -503,8 +531,8 @@ export default function StepsTab() {
 
   useFocusEffect(
     useCallback(() => {
-      void Promise.all([loadSavedRouteSessions()]);
-    }, [loadSavedRouteSessions])
+      void Promise.all([loadSavedWalks(), loadSavedRouteSessions()]);
+    }, [loadSavedRouteSessions, loadSavedWalks])
   );
 
   return (

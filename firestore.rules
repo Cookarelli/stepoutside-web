@@ -57,6 +57,11 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/companies/$(companyId)).data.adminUids;
     }
 
+    function sessionOwnerMatchesPath(uid) {
+      return (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == uid)
+        && (!('userId' in request.resource.data) || request.resource.data.userId == uid);
+    }
+
     match /routes/{routeId} {
       allow read: if true;
       allow write: if false;
@@ -68,7 +73,8 @@ service cloud.firestore {
       allow delete: if isOwner(uid);
 
       match /sessions/{sessionId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow write: if isOwner(uid) && sessionOwnerMatchesPath(uid);
       }
 
       match /reflections/{reflectionId} {

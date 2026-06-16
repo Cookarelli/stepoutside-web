@@ -293,6 +293,13 @@ export default function ProfileTab() {
       if (!active) return;
       setAuthUser(user);
       setAuthLoading(false);
+      if (user) {
+        void loadSettings();
+      } else {
+        setSummary(EMPTY_SUMMARY);
+        setTotalDistanceM(0);
+        setAuthPassword("");
+      }
     });
 
     return () => {
@@ -370,6 +377,8 @@ export default function ProfileTab() {
   };
 
   const onEmailSignIn = async () => {
+    if (authAction !== null) return;
+
     const form = validateEmailForm(true);
     if (!form) return;
 
@@ -378,7 +387,10 @@ export default function ProfileTab() {
     void Haptics.selectionAsync();
 
     try {
-      await signInWithEmailPassword(form.email, form.password);
+      const user = await signInWithEmailPassword(form.email, form.password);
+      setAuthUser(user);
+      await loadSettings();
+      setAuthPassword("");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Signed in.");
     } catch (error) {
@@ -391,6 +403,8 @@ export default function ProfileTab() {
   };
 
   const onEmailSignUp = async () => {
+    if (authAction !== null) return;
+
     const form = validateEmailForm(true);
     if (!form) return;
 
@@ -399,7 +413,10 @@ export default function ProfileTab() {
     void Haptics.selectionAsync();
 
     try {
-      await createEmailPasswordAccount(form.email, form.password);
+      const user = await createEmailPasswordAccount(form.email, form.password);
+      setAuthUser(user);
+      await loadSettings();
+      setAuthPassword("");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Account created.");
     } catch (error) {
@@ -412,6 +429,8 @@ export default function ProfileTab() {
   };
 
   const onPasswordReset = async () => {
+    if (authAction !== null) return;
+
     const form = validateEmailForm(false);
     if (!form) return;
 
@@ -432,6 +451,8 @@ export default function ProfileTab() {
   };
 
   const onSignOut = async () => {
+    if (authAction !== null) return;
+
     Alert.alert("Sign out?", "This will sign you out on this device but won’t remove your local walks.", [
       { text: "Cancel", style: "cancel" },
       {
@@ -442,10 +463,15 @@ export default function ProfileTab() {
           setAuthAction("signOut");
           try {
             await signOutUser();
+            setAuthUser(null);
+            setSummary(EMPTY_SUMMARY);
+            setTotalDistanceM(0);
+            setAuthEmail("");
+            setAuthPassword("");
             setAuthStatus("Signed out.");
             void Haptics.selectionAsync();
-          } catch {
-            setAuthStatus("Couldn’t sign out right now.");
+          } catch (error) {
+            setAuthStatus(formatAuthError(error, "Couldn’t sign out right now."));
           } finally {
             setAuthAction(null);
           }

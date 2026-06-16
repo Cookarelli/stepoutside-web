@@ -9,8 +9,9 @@ import {
   type UserProfile,
   type User,
 } from "@firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
-import { auth } from "./firebase";
+import { auth, db } from "./firebase";
 import { syncRevenueCatIdentity } from "./pro";
 
 const AUTH_CACHE_KEY = "stepoutside:v2:auth-cache";
@@ -92,12 +93,43 @@ export function subscribeToAuth(listener: (user: AuthUserSnapshot | null) => voi
 
 export async function signOutUser(): Promise<void> {
   await signOut(auth);
-  await syncRevenueCatIdentity(null);
   await writeCachedUser(null);
+  try {
+    await syncRevenueCatIdentity(null);
+  } catch {
+    // Auth sign-out and local cache clearing should not depend on RevenueCat availability.
+  }
 }
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+async function ensureUserProfileDocument(user: User): Promise<void> {
+  const userRef = doc(db, "users", user.uid);
+  const snapshot = await getDoc(userRef);
+  const existing = snapshot.data() as
+    | {
+        createdAt?: unknown;
+        displayName?: unknown;
+        photoURL?: unknown;
+      }
+    | undefined;
+  const now = Date.now();
+
+  await setDoc(
+    userRef,
+    {
+      uid: user.uid,
+      email: user.email ? normalizeEmail(user.email) : null,
+      displayName:
+        typeof existing?.displayName === "string" ? existing.displayName : user.displayName ?? "",
+      photoURL: typeof existing?.photoURL === "string" ? existing.photoURL : user.photoURL ?? "",
+      createdAt: typeof existing?.createdAt === "number" ? existing.createdAt : now,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
 }
 
 async function finishEmailPasswordAuth(user: User, fallback: string): Promise<AuthUserSnapshot> {
@@ -107,7 +139,9 @@ async function finishEmailPasswordAuth(user: User, fallback: string): Promise<Au
     throw new Error(fallback);
   }
 
+  await ensureUserProfileDocument(user);
   await writeCachedUser(snapshot);
+  await syncRevenueCatIdentity(snapshot.uid);
   return snapshot;
 }
 
