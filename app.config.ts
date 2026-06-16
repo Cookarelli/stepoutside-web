@@ -8,7 +8,7 @@ const androidGoogleMapsApiKey =
 const config: ExpoConfig = {
   name: "Step Outside",
   slug: "step-outside-v2",
-  version: "2.1.0",
+  version: "2.1.1",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "stepoutsidev2",
@@ -17,7 +17,7 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: "com.cookarell.stepoutside",
-    buildNumber: "30",
+    buildNumber: "33",
     ...(iosGoogleMapsApiKey
       ? {
           config: {
