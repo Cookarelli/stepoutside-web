@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, initializeAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 function envOrFallback(name: keyof NodeJS.ProcessEnv, fallback: string): string {
   const value =
@@ -55,3 +56,8 @@ export const auth: Auth = (() => {
  * Firestore
  */
 export const db: Firestore = getFirestore(app);
+
+/**
+ * Firebase Storage
+ */
+export const storage: FirebaseStorage = getStorage(app);

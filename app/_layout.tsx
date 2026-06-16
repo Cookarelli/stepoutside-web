@@ -23,6 +23,7 @@ export default function RootLayout() {
         <Stack.Screen name="reflection" />
         <Stack.Screen name="share" />
         <Stack.Screen name="saved-route" />
+        <Stack.Screen name="edit-profile" />
         <Stack.Screen name="friends" />
         <Stack.Screen name="friends-search" />
         <Stack.Screen name="friend-requests" />
