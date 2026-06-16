@@ -687,29 +687,34 @@ export default function ProfileTab() {
       >
         <View style={styles.hero}>
           <Text style={styles.heroEyebrow}>Step Outside</Text>
-          <Text style={styles.title}>Profile</Text>
-          <Text style={styles.sub}>Your walking rhythm, favorite places, friends, and membership in one grounded place.</Text>
+          <Text style={styles.heroTitle}>Profile</Text>
+          <Text style={styles.heroSub}>Your walking rhythm, favorite places, friends, and membership in one grounded place.</Text>
         </View>
 
       <View style={styles.accountCard}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionEyebrow}>User Card</Text>
-          <Text style={styles.sectionTitle}>Your outdoor identity</Text>
+          <Text style={[styles.sectionEyebrow, styles.sectionEyebrowOnDark]}>User Card</Text>
+          <Text style={[styles.sectionTitle, styles.sectionTitleOnDark]}>Your outdoor identity</Text>
         </View>
         <View style={styles.profileTopRow}>
           <View style={styles.accountHeader}>
-            <View style={styles.avatar}>
-              {localProfile.photoURL ? (
-                <Image
-                  key={localProfile.photoURL}
-                  source={{ uri: localProfile.photoURL }}
-                  style={styles.avatarImage}
-                  contentFit="cover"
-                  cachePolicy="none"
-                />
-              ) : (
-                <Text style={styles.avatarText}>{getInitials(profileHeadline)}</Text>
-              )}
+            <View style={styles.avatarStack}>
+              <Pressable onPress={onOpenEditProfile} style={({ pressed }) => [styles.avatarButton, pressed ? styles.pressed : null]}>
+                <View style={styles.avatar}>
+                  {localProfile.photoURL ? (
+                    <Image
+                      key={localProfile.photoURL}
+                      source={{ uri: localProfile.photoURL }}
+                      style={styles.avatarImage}
+                      contentFit="cover"
+                      cachePolicy="none"
+                    />
+                  ) : (
+                    <Text style={styles.avatarText}>{getInitials(profileHeadline)}</Text>
+                  )}
+                </View>
+              </Pressable>
+              <Text style={styles.avatarHint}>Edit photo</Text>
             </View>
             <View style={styles.accountCopy}>
               <Text style={styles.accountTitle} numberOfLines={2}>{profileHeadline}</Text>
@@ -717,6 +722,13 @@ export default function ProfileTab() {
               <Text style={styles.accountEmail} numberOfLines={1}>{profileAccountLine}</Text>
             </View>
           </View>
+          <Pressable
+            onPress={onOpenEditProfile}
+            style={({ pressed }) => [styles.editProfileBtn, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="create-outline" size={15} color={PREMIUM.colors.forestDeep} />
+            <Text style={styles.editProfileBtnText}>Edit</Text>
+          </Pressable>
         </View>
 
         {localProfile.dreamPlaces ? <Text style={styles.profileBio}>{localProfile.dreamPlaces}</Text> : null}
@@ -813,8 +825,8 @@ export default function ProfileTab() {
 
       <View style={styles.friendsCard}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionEyebrow}>Friends</Text>
-          <Text style={styles.sectionTitle}>Walks are better shared</Text>
+          <Text style={[styles.sectionEyebrow, styles.sectionEyebrowOnDark]}>Friends</Text>
+          <Text style={[styles.sectionTitle, styles.sectionTitleOnDark]}>Walks are better shared</Text>
         </View>
         <View style={styles.socialGrid}>
           <Pressable
@@ -899,8 +911,8 @@ export default function ProfileTab() {
 
       <View style={styles.planCard}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionEyebrow}>Premium</Text>
-          <Text style={styles.sectionTitle}>Membership</Text>
+          <Text style={[styles.sectionEyebrow, styles.sectionEyebrowOnDark]}>Premium</Text>
+          <Text style={[styles.sectionTitle, styles.sectionTitleOnDark]}>Membership</Text>
         </View>
         <View style={styles.planTopRow}>
           <View style={styles.planCopy}>
@@ -1370,22 +1382,44 @@ const styles = StyleSheet.create({
   container: {
     padding: PREMIUM.spacing.screen,
     paddingBottom: 168,
-    backgroundColor: PREMIUM.colors.cream,
+    backgroundColor: PREMIUM.colors.creamSoft,
     flexGrow: 1,
   },
   containerWithAuthActionBar: {
     paddingBottom: 220,
   },
   hero: {
-    paddingTop: 8,
-    paddingBottom: 2,
+    paddingTop: 22,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    borderRadius: PREMIUM.radius.hero,
+    backgroundColor: PREMIUM.colors.forest,
+    borderWidth: 1,
+    borderColor: alpha(PREMIUM.colors.gold, 0.34),
+    overflow: "hidden",
+    ...PREMIUM.shadow.card,
   },
   heroEyebrow: {
-    color: PREMIUM.colors.goldDeep,
+    color: PREMIUM.colors.gold,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1,
     textTransform: "uppercase",
+  },
+  heroTitle: {
+    marginTop: 8,
+    fontSize: 40,
+    lineHeight: 46,
+    fontWeight: "700",
+    color: PREMIUM.colors.offWhite,
+    fontFamily: PREMIUM.type.serifFamily,
+  },
+  heroSub: {
+    marginTop: 10,
+    fontSize: 15,
+    fontWeight: "700",
+    color: PREMIUM.colors.textSoft,
+    lineHeight: 22,
   },
   title: { fontSize: 38, lineHeight: 44, fontWeight: "700", color: PREMIUM.colors.text, fontFamily: PREMIUM.type.serifFamily },
   sub: {
@@ -1412,17 +1446,23 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontFamily: PREMIUM.type.serifFamily,
   },
+  sectionEyebrowOnDark: {
+    color: PREMIUM.colors.gold,
+  },
+  sectionTitleOnDark: {
+    color: PREMIUM.colors.offWhite,
+  },
   pressed: {
     opacity: 0.86,
   },
   accountCard: {
     marginTop: 20,
-    borderRadius: PREMIUM.radius.lg,
-    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.82),
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: PREMIUM.colors.forestDeep,
     borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
-    padding: 18,
-    gap: 14,
+    borderColor: alpha(PREMIUM.colors.gold, 0.34),
+    padding: 20,
+    gap: 16,
     ...PREMIUM.shadow.card,
   },
   profileTopRow: {
@@ -1435,14 +1475,21 @@ const styles = StyleSheet.create({
   accountHeader: {
     flexDirection: "row",
     gap: 14,
-    alignItems: "center",
+    alignItems: "flex-start",
     flex: 1,
     minWidth: 210,
   },
+  avatarStack: {
+    alignItems: "center",
+    gap: 7,
+  },
+  avatarButton: {
+    borderRadius: 40,
+  },
   avatar: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: PREMIUM.colors.forest,
     alignItems: "center",
     justifyContent: "center",
@@ -1456,29 +1503,34 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     color: PREMIUM.colors.offWhite,
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "900",
     fontFamily: PREMIUM.type.serifFamily,
+  },
+  avatarHint: {
+    color: alpha(PREMIUM.colors.offWhite, 0.74),
+    fontSize: 11,
+    fontWeight: "900",
   },
   accountCopy: {
     flex: 1,
     gap: 4,
   },
   accountTitle: {
-    color: PREMIUM.colors.text,
+    color: PREMIUM.colors.offWhite,
     fontSize: 28,
     lineHeight: 32,
     fontWeight: "700",
     fontFamily: PREMIUM.type.serifFamily,
   },
   accountHandle: {
-    color: PREMIUM.colors.forest,
+    color: PREMIUM.colors.gold,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: "900",
   },
   accountEmail: {
-    color: PREMIUM.colors.textMuted,
+    color: PREMIUM.colors.textSoft,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "700",
@@ -1488,9 +1540,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: PREMIUM.radius.pill,
-    backgroundColor: alpha(PREMIUM.colors.gold, 0.22),
+    backgroundColor: PREMIUM.colors.gold,
     borderWidth: 1,
-    borderColor: alpha(PREMIUM.colors.goldDeep, 0.34),
+    borderColor: alpha(PREMIUM.colors.offWhite, 0.38),
+    flexDirection: "row",
+    gap: 6,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1500,14 +1554,14 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   profileBio: {
-    color: PREMIUM.colors.text,
+    color: PREMIUM.colors.offWhite,
     fontSize: 16,
     lineHeight: 23,
     fontWeight: "700",
     fontFamily: PREMIUM.type.serifFamily,
   },
   profilePrompt: {
-    color: PREMIUM.colors.textMuted,
+    color: PREMIUM.colors.textSoft,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -1521,12 +1575,12 @@ const styles = StyleSheet.create({
     borderRadius: PREMIUM.radius.pill,
     paddingVertical: 7,
     paddingHorizontal: 10,
-    backgroundColor: alpha(PREMIUM.colors.forest, 0.08),
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.1),
     borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
+    borderColor: alpha(PREMIUM.colors.gold, 0.25),
   },
   profileDetailText: {
-    color: PREMIUM.colors.forestDeep,
+    color: PREMIUM.colors.offWhite,
     fontSize: 12,
     fontWeight: "800",
   },
@@ -1541,12 +1595,12 @@ const styles = StyleSheet.create({
     borderRadius: PREMIUM.radius.md,
     paddingVertical: 12,
     paddingHorizontal: 12,
-    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.10),
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.11),
     borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
+    borderColor: alpha(PREMIUM.colors.gold, 0.26),
   },
   profileStatLabel: {
-    color: "rgba(11,15,14,0.55)",
+    color: alpha(PREMIUM.colors.offWhite, 0.7),
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 0.3,
@@ -1554,7 +1608,7 @@ const styles = StyleSheet.create({
   },
   profileStatValue: {
     marginTop: 6,
-    color: PREMIUM.colors.text,
+    color: PREMIUM.colors.offWhite,
     fontSize: 18,
     fontWeight: "900",
   },
@@ -1564,7 +1618,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   authLoadingText: {
-    color: "rgba(11,15,14,0.62)",
+    color: PREMIUM.colors.textSoft,
     fontWeight: "800",
   },
   authActions: {
@@ -1639,7 +1693,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   authSetupNote: {
-    color: "rgba(11,15,14,0.55)",
+    color: PREMIUM.colors.textSoft,
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -1672,12 +1726,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.12)",
-    color: "#255E36",
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.24),
+    color: PREMIUM.colors.offWhite,
     fontWeight: "900",
   },
   signedInHelper: {
-    color: "rgba(11,15,14,0.52)",
+    color: PREMIUM.colors.textSoft,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -1692,7 +1746,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   authStatus: {
-    color: "rgba(11,15,14,0.62)",
+    color: PREMIUM.colors.textSoft,
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -1700,10 +1754,10 @@ const styles = StyleSheet.create({
   friendsCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.lg,
-    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.72),
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: PREMIUM.colors.forest,
     borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
+    borderColor: alpha(PREMIUM.colors.gold, 0.26),
     padding: 18,
     gap: 14,
     ...PREMIUM.shadow.soft,
@@ -1715,8 +1769,8 @@ const styles = StyleSheet.create({
     minHeight: 72,
     borderRadius: PREMIUM.radius.md,
     borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
-    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.08),
+    borderColor: alpha(PREMIUM.colors.gold, 0.22),
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.94),
     paddingVertical: 12,
     paddingHorizontal: 13,
     flexDirection: "row",
@@ -1739,8 +1793,8 @@ const styles = StyleSheet.create({
   streakCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.lg,
-    backgroundColor: alpha(PREMIUM.colors.gold, 0.14),
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: alpha(PREMIUM.colors.gold, 0.22),
     borderWidth: 1,
     borderColor: alpha(PREMIUM.colors.goldDeep, 0.24),
     padding: 18,
@@ -1797,10 +1851,10 @@ const styles = StyleSheet.create({
   planCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.lg,
-    backgroundColor: alpha(PREMIUM.colors.forestSoft, 0.12),
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: PREMIUM.colors.forestDeep,
     borderWidth: 1,
-    borderColor: PREMIUM.colors.line,
+    borderColor: alpha(PREMIUM.colors.gold, 0.34),
     padding: 18,
     gap: 14,
     ...PREMIUM.shadow.soft,
@@ -1825,14 +1879,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   planTitle: {
-    color: PREMIUM.colors.text,
+    color: PREMIUM.colors.offWhite,
     fontWeight: "700",
     fontSize: 24,
     fontFamily: PREMIUM.type.serifFamily,
   },
   planBody: {
     marginTop: 6,
-    color: "rgba(11,15,14,0.62)",
+    color: PREMIUM.colors.textSoft,
     fontWeight: "700",
     lineHeight: 19,
   },
@@ -1856,28 +1910,28 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   benefitItem: {
-    color: PREMIUM.colors.textMuted,
+    color: PREMIUM.colors.textSoft,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "800",
   },
   btn: {
-    backgroundColor: PREMIUM.colors.forest,
+    backgroundColor: PREMIUM.colors.gold,
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: PREMIUM.radius.pill,
     alignSelf: "flex-start",
     maxWidth: "100%",
   },
-  btnText: { color: PREMIUM.colors.offWhite, fontWeight: "900", letterSpacing: 0.4 },
+  btnText: { color: PREMIUM.colors.forestDeep, fontWeight: "900", letterSpacing: 0.4 },
   notificationsCard: {
     marginTop: 14,
     width: "100%",
-    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.72),
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.9),
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
     padding: 18,
-    borderRadius: PREMIUM.radius.lg,
+    borderRadius: PREMIUM.radius.xl,
     gap: 8,
     ...PREMIUM.shadow.soft,
   },
@@ -1904,8 +1958,8 @@ const styles = StyleSheet.create({
   settingsCard: {
     marginTop: 14,
     width: "100%",
-    borderRadius: PREMIUM.radius.lg,
-    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.68),
+    borderRadius: PREMIUM.radius.xl,
+    backgroundColor: alpha(PREMIUM.colors.offWhite, 0.9),
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
     padding: 18,
@@ -1953,7 +2007,7 @@ const styles = StyleSheet.create({
     borderRadius: PREMIUM.radius.md,
     borderWidth: 1,
     borderColor: PREMIUM.colors.line,
-    backgroundColor: alpha(PREMIUM.colors.cream, 0.74),
+    backgroundColor: alpha(PREMIUM.colors.cream, 0.86),
     paddingVertical: 10,
     paddingHorizontal: 12,
     flexDirection: "row",
