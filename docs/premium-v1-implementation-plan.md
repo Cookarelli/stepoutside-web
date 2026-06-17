@@ -27,7 +27,7 @@ Current subscription system is already wired and usable.
 - Auth changes sync RevenueCat identity in `src/lib/auth.ts`
 - Current entitlement identifier is `pro`
 - Current product IDs are:
-  - `stepoutside_pro_monthly`
+  - `step_outside_pro_monthly`
   - `stepoutside_pro_yearly`
   - `stepoutside_pro_lifetime_launch`
 

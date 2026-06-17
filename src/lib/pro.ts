@@ -43,7 +43,7 @@ export type PremiumStatus = {
 };
 
 export const PRO_PRODUCT_IDS = {
-  monthly: "stepoutside_pro_monthly",
+  monthly: "step_outside_pro_monthly",
   yearly: "stepoutside_pro_yearly",
   lifetime: "stepoutside_pro_lifetime_launch",
 } as const;

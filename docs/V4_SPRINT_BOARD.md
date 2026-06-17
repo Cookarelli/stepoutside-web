@@ -6,7 +6,7 @@
 **Outcome:** Real purchase + restore + entitlement control in production.
 
 - [ ] Confirm products in RevenueCat:
-  - [ ] `stepoutside_pro_monthly`
+  - [ ] `step_outside_pro_monthly`
   - [ ] `stepoutside_pro_yearly`
   - [ ] `stepoutside_pro_lifetime_launch`
 - [ ] Confirm entitlement ID is `pro`
