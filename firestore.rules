@@ -162,6 +162,7 @@ service cloud.firestore {
           'allTimeMinutes',
           'allTimeSessions',
           'allTimeDistanceM',
+          'currentStreak',
           'weekKey',
           'monthKey',
           'updatedAt'
@@ -179,6 +180,7 @@ service cloud.firestore {
         && isLeaderboardNumber(request.resource.data.allTimeMinutes)
         && isLeaderboardNumber(request.resource.data.allTimeSessions)
         && isLeaderboardNumber(request.resource.data.allTimeDistanceM)
+        && isLeaderboardNumber(request.resource.data.currentStreak)
         && request.resource.data.weekKey is string
         && request.resource.data.monthKey is string
         && request.resource.data.updatedAt is number;

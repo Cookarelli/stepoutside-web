@@ -537,7 +537,7 @@ export default function ProfileTab() {
     }
   };
 
-  const openSignedInRoute = (pathname: "/friends" | "/friends-search" | "/friend-requests") => {
+  const openSignedInRoute = (pathname: "/friends" | "/friends-search" | "/friend-requests" | "/leaderboard") => {
     if (!visibleUser) {
       Alert.alert("Sign in first", "Create an account or sign in to use Step Outside social features.");
       return;
@@ -729,6 +729,16 @@ export default function ProfileTab() {
             <View style={styles.actionCopy}>
               <Text style={styles.actionTitle}>Requests</Text>
               <Text style={styles.actionHint}>Incoming and outgoing invites</Text>
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={() => openSignedInRoute("/leaderboard")}
+            style={({ pressed }) => [styles.actionTileWide, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="podium-outline" size={22} color="#255E36" />
+            <View style={styles.actionCopy}>
+              <Text style={styles.actionTitle}>Leaderboard</Text>
+              <Text style={styles.actionHint}>Friends, global, weekly, monthly</Text>
             </View>
           </Pressable>
         </View>
