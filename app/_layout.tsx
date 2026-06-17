@@ -27,6 +27,7 @@ export default function RootLayout() {
         <Stack.Screen name="friends" />
         <Stack.Screen name="friends-search" />
         <Stack.Screen name="friend-requests" />
+        <Stack.Screen name="challenges" />
         <Stack.Screen name="leaderboard" />
         <Stack.Screen name="pro" />
       </Stack>

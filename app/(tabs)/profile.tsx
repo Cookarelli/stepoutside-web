@@ -537,7 +537,9 @@ export default function ProfileTab() {
     }
   };
 
-  const openSignedInRoute = (pathname: "/friends" | "/friends-search" | "/friend-requests" | "/leaderboard") => {
+  const openSignedInRoute = (
+    pathname: "/friends" | "/friends-search" | "/friend-requests" | "/challenges" | "/leaderboard"
+  ) => {
     if (!visibleUser) {
       Alert.alert("Sign in first", "Create an account or sign in to use Step Outside social features.");
       return;
@@ -742,6 +744,23 @@ export default function ProfileTab() {
             </View>
           </Pressable>
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Challenges</Text>
+        <Pressable
+          onPress={() => openSignedInRoute("/challenges")}
+          style={({ pressed }) => [styles.challengeTile, pressed ? styles.pressed : null]}
+        >
+          <View style={styles.challengeIcon}>
+            <Ionicons name="flag" size={22} color="#255E36" />
+          </View>
+          <View style={styles.actionCopy}>
+            <Text style={styles.actionTitle}>Friend Challenges</Text>
+            <Text style={styles.actionHint}>Incoming invites and weekly challenges you sent</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="rgba(11,15,14,0.42)" />
+        </Pressable>
       </View>
 
       <View style={styles.premiumCard}>
@@ -1252,6 +1271,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+  },
+  challengeTile: {
+    minHeight: 78,
+    borderRadius: 8,
+    padding: 14,
+    backgroundColor: "rgba(255,255,255,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.1)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  challengeIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(242,181,65,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   actionCopy: {
     flex: 1,

@@ -14,6 +14,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import {
+  DEFAULT_FRIEND_CHALLENGE_OPTIONS,
+  sendFriendChallengeInvitation,
+  type FriendChallengeOption,
+} from "../src/lib/friendChallenges";
 import { getFriendsList, removeFriend, type FriendListItem } from "../src/lib/friendSystem";
 
 const BRAND = {
@@ -43,6 +48,7 @@ export default function FriendsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [status, setStatus] = useState("");
   const [removingFriendshipId, setRemovingFriendshipId] = useState<string | null>(null);
+  const [challengingFriendUid, setChallengingFriendUid] = useState<string | null>(null);
 
   const loadFriends = useCallback(async (mode: "initial" | "refresh" = "initial") => {
     if (mode === "refresh") {
@@ -99,6 +105,34 @@ export default function FriendsScreen() {
     );
   };
 
+  const onSendChallenge = async (friend: FriendListItem, option: FriendChallengeOption) => {
+    setChallengingFriendUid(friend.profile.uid);
+    setStatus("");
+
+    try {
+      await sendFriendChallengeInvitation(friend.profile.uid, option);
+      setStatus(`${option.title} challenge sent to ${friend.profile.displayName || friend.profile.username}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Challenge invitation could not be sent.");
+    } finally {
+      setChallengingFriendUid(null);
+    }
+  };
+
+  const chooseChallenge = (friend: FriendListItem) => {
+    Alert.alert(
+      "Challenge Friend",
+      `Send ${friend.profile.displayName || friend.profile.username} a weekly challenge.`,
+      [
+        ...DEFAULT_FRIEND_CHALLENGE_OPTIONS.map((option) => ({
+          text: option.title,
+          onPress: () => void onSendChallenge(friend, option),
+        })),
+        { text: "Cancel", style: "cancel" as const },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
@@ -151,6 +185,7 @@ export default function FriendsScreen() {
         {friends.map((friend) => {
           const activity = friend.activity;
           const isRemoving = removingFriendshipId === friend.friendship.id;
+          const isChallenging = challengingFriendUid === friend.profile.uid;
           return (
             <View key={friend.friendship.id} style={styles.friendCard}>
               <View style={styles.friendTopRow}>
@@ -206,6 +241,25 @@ export default function FriendsScreen() {
               {!activity ? (
                 <Text style={styles.activityHint}>Friend stats appear after their next completed walk.</Text>
               ) : null}
+
+              <Pressable
+                onPress={() => chooseChallenge(friend)}
+                disabled={isChallenging}
+                style={({ pressed }) => [
+                  styles.challengeButton,
+                  isChallenging ? styles.disabled : null,
+                  pressed ? styles.pressed : null,
+                ]}
+              >
+                {isChallenging ? (
+                  <ActivityIndicator color={BRAND.forest} />
+                ) : (
+                  <Ionicons name="flag" size={17} color={BRAND.forest} />
+                )}
+                <Text style={styles.challengeButtonText}>
+                  {isChallenging ? "Sending Challenge..." : "Challenge Friend"}
+                </Text>
+              </Pressable>
             </View>
           );
         })}
@@ -391,6 +445,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "800",
+  },
+  challengeButton: {
+    minHeight: 48,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.94)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  challengeButtonText: {
+    color: BRAND.forest,
+    fontSize: 14,
+    fontWeight: "900",
   },
   disabled: {
     opacity: 0.62,

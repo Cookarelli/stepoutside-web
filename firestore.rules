@@ -161,6 +161,53 @@ service cloud.firestore {
       return value is number && value >= 0;
     }
 
+    function isValidFriendChallengeType(challengeType) {
+      return challengeType in ['walk_distance', 'walk_count', 'outside_minutes'];
+    }
+
+    function isValidFriendChallengeStatus(status) {
+      return status in ['pending', 'accepted', 'declined', 'completed', 'expired'];
+    }
+
+    function isFriendChallengeParticipant(data) {
+      return request.auth != null
+        && (data.senderUid == request.auth.uid || data.receiverUid == request.auth.uid);
+    }
+
+    function isValidFriendChallengeCreate() {
+      return request.resource.data.keys().hasOnly([
+          'senderUid',
+          'receiverUid',
+          'type',
+          'target',
+          'startDate',
+          'endDate',
+          'status',
+          'createdAt'
+        ])
+        && request.resource.data.senderUid == request.auth.uid
+        && request.resource.data.receiverUid is string
+        && request.resource.data.receiverUid != request.auth.uid
+        && isValidFriendChallengeType(request.resource.data.type)
+        && request.resource.data.target is number
+        && request.resource.data.target > 0
+        && request.resource.data.startDate is number
+        && request.resource.data.endDate is number
+        && request.resource.data.endDate >= request.resource.data.startDate
+        && isValidFriendChallengeStatus(request.resource.data.status)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt is number
+        && hasExistingFriendship(request.resource.data.senderUid, request.resource.data.receiverUid);
+    }
+
+    function isValidFriendChallengeResponse() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+        && resource.data.status == 'pending'
+        && resource.data.receiverUid == request.auth.uid
+        && isValidFriendChallengeStatus(request.resource.data.status)
+        && request.resource.data.status in ['accepted', 'declined'];
+    }
+
     function canReadFriendActivity(uid) {
       return isOwner(uid)
         || (request.auth != null && hasExistingFriendship(request.auth.uid, uid));
@@ -300,6 +347,15 @@ service cloud.firestore {
       allow read: if canReadFriendActivity(uid);
       allow create, update: if isOwner(uid) && isValidFriendActivity(uid);
       allow delete: if isOwner(uid);
+    }
+
+    match /friendChallenges/{challengeId} {
+      allow read: if isFriendChallengeParticipant(resource.data);
+      allow create: if request.auth != null && isValidFriendChallengeCreate();
+      allow update: if request.auth != null
+        && isFriendChallengeParticipant(resource.data)
+        && isValidFriendChallengeResponse();
+      allow delete: if false;
     }
 
     match /leaderboardEntries/{uid} {
