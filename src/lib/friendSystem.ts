@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -20,6 +21,7 @@ export const FRIEND_SYSTEM_COLLECTIONS = {
   usernames: "usernames",
   friendRequests: "friendRequests",
   friendships: "friendships",
+  friendActivity: "friendActivity",
 } as const;
 
 export const FRIEND_REQUEST_STATUSES = ["pending", "accepted", "declined"] as const;
@@ -60,10 +62,22 @@ export interface Friendship {
   createdAt: number;
 }
 
+export interface FriendActivitySummary {
+  uid: string;
+  username: string;
+  displayName: string;
+  photoURL: string;
+  walkCount: number;
+  totalDistanceM: number;
+  currentStreak: number;
+  updatedAt: number;
+}
+
 export type UserDocument = FriendSystemUser;
 export type FriendDiscoveryDocument = FriendDiscoveryProfile;
 export type FriendRequestDocument = FriendRequest;
 export type FriendshipDocument = Friendship;
+export type FriendActivityDocument = FriendActivitySummary;
 
 export type FriendRelationshipStatus = "none" | "friends" | "pending_sent" | "pending_received";
 
@@ -84,6 +98,11 @@ export type FriendRequestListItem = {
 export type FriendListItem = {
   friendship: Friendship;
   profile: FriendDiscoveryResult;
+  activity: FriendActivitySummary | null;
+};
+
+export type GetFriendsListOptions = {
+  includeActivity?: boolean;
 };
 
 export type FriendSystemUserInput = Partial<FriendSystemUser> & {
@@ -97,6 +116,10 @@ export type FriendRequestInput = Partial<FriendRequest> & {
 export type FriendshipInput = Partial<Omit<Friendship, "users">> & {
   id?: string | null;
   users?: unknown;
+};
+
+export type FriendActivityInput = Partial<FriendActivitySummary> & {
+  uid?: string | null;
 };
 
 type UserDiscoveryInput = Partial<FriendDiscoveryProfile> & {
@@ -114,6 +137,10 @@ function cleanNullableText(value: unknown): string | null {
 
 function cleanTimestamp(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function cleanCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
 
 function normalizeEmail(value: unknown): string {
@@ -218,6 +245,27 @@ export function normalizeFriendship(input: FriendshipInput | undefined): Friends
   };
 }
 
+export function normalizeFriendActivitySummary(
+  input: FriendActivityInput | undefined,
+  fallbackUid = ""
+): FriendActivitySummary | null {
+  if (!input) return null;
+
+  const uid = cleanText(input.uid) || fallbackUid;
+  if (!uid) return null;
+
+  return {
+    uid,
+    username: normalizeSearchUsername(input.username),
+    displayName: cleanText(input.displayName) || normalizeSearchUsername(input.username) || "Step Outside User",
+    photoURL: cleanText(input.photoURL),
+    walkCount: cleanCount(input.walkCount),
+    totalDistanceM: cleanCount(input.totalDistanceM),
+    currentStreak: cleanCount(input.currentStreak),
+    updatedAt: cleanTimestamp(input.updatedAt),
+  };
+}
+
 function toDiscoveryResult(
   profile: FriendDiscoveryProfile,
   relationshipStatus: FriendRelationshipStatus,
@@ -269,9 +317,6 @@ async function getRelationshipStatus(targetUid: string): Promise<{
   if (sentRequest?.status === "pending") {
     return { relationshipStatus: "pending_sent", pendingRequestId: sentRequest.id };
   }
-  if (sentRequest?.status === "accepted") {
-    return { relationshipStatus: "friends", pendingRequestId: null };
-  }
 
   const receivedRequestId = friendRequestId(targetUid, currentUid);
   const receivedSnapshot = await getDoc(doc(db, FRIEND_SYSTEM_COLLECTIONS.friendRequests, receivedRequestId));
@@ -281,9 +326,6 @@ async function getRelationshipStatus(targetUid: string): Promise<{
   });
   if (receivedRequest?.status === "pending") {
     return { relationshipStatus: "pending_received", pendingRequestId: receivedRequest.id };
-  }
-  if (receivedRequest?.status === "accepted") {
-    return { relationshipStatus: "friends", pendingRequestId: null };
   }
 
   return { relationshipStatus: "none", pendingRequestId: null };
@@ -339,6 +381,11 @@ async function readDiscoveryProfile(
   );
 }
 
+async function readFriendActivitySummary(uid: string): Promise<FriendActivitySummary | null> {
+  const snapshot = await getDoc(doc(db, FRIEND_SYSTEM_COLLECTIONS.friendActivity, uid));
+  return normalizeFriendActivitySummary(snapshot.data() as FriendActivityInput | undefined, snapshot.id);
+}
+
 async function requestListItemFromRequest(
   request: FriendRequest,
   profileUid: string,
@@ -357,7 +404,11 @@ async function requestListItemFromRequest(
   };
 }
 
-async function friendListItemFromFriendship(friendship: Friendship, currentUid: string): Promise<FriendListItem | null> {
+async function friendListItemFromFriendship(
+  friendship: Friendship,
+  currentUid: string,
+  includeActivity: boolean
+): Promise<FriendListItem | null> {
   const friendUid = friendship.users.find((uid) => uid !== currentUid);
   if (!friendUid) return null;
 
@@ -371,7 +422,37 @@ async function friendListItemFromFriendship(friendship: Friendship, currentUid: 
           relationshipStatus: "friends",
           pendingRequestId: null,
         },
+    activity: includeActivity ? await readFriendActivitySummary(friendUid) : null,
   };
+}
+
+export async function upsertCurrentUserFriendActivitySummary(input: {
+  walkCount: number;
+  totalDistanceM: number;
+  currentStreak: number;
+}): Promise<FriendActivitySummary | null> {
+  const currentUser = auth.currentUser;
+  if (!currentUser?.uid) return null;
+
+  const profile = await upsertCurrentUserDiscoveryProfile();
+  const snapshot = await getDoc(doc(db, FRIEND_SYSTEM_COLLECTIONS.users, currentUser.uid));
+  const userData = snapshot.data() as UserDiscoveryInput | undefined;
+  const username = normalizeSearchUsername(profile?.username ?? userData?.username ?? userData?.usernameLower);
+  if (!username) return null;
+
+  const activity: FriendActivitySummary = {
+    uid: currentUser.uid,
+    username,
+    displayName: cleanText(profile?.displayName ?? userData?.displayName ?? currentUser.displayName) || username,
+    photoURL: cleanText(profile?.photoURL ?? userData?.photoURL ?? currentUser.photoURL),
+    walkCount: cleanCount(input.walkCount),
+    totalDistanceM: cleanCount(input.totalDistanceM),
+    currentStreak: cleanCount(input.currentStreak),
+    updatedAt: Date.now(),
+  };
+
+  await setDoc(doc(db, FRIEND_SYSTEM_COLLECTIONS.friendActivity, currentUser.uid), activity, { merge: false });
+  return activity;
 }
 
 export async function searchUserByUsername(usernameInput: string): Promise<FriendDiscoveryResult | null> {
@@ -477,12 +558,6 @@ export async function sendFriendRequest(recipientUid: string): Promise<FriendReq
     if (existingRequest?.status === "pending") {
       throw new Error("Friend request already sent.");
     }
-    if (existingRequest?.status === "accepted") {
-      throw new Error("You are already friends.");
-    }
-    if (requestSnapshot.exists()) {
-      throw new Error("Friend request already exists.");
-    }
 
     const reverseRequest = normalizeFriendRequest({
       id: reverseRequestSnapshot.id,
@@ -490,9 +565,6 @@ export async function sendFriendRequest(recipientUid: string): Promise<FriendReq
     });
     if (reverseRequest?.status === "pending") {
       throw new Error("This user already sent you a friend request.");
-    }
-    if (reverseRequest?.status === "accepted") {
-      throw new Error("You are already friends.");
     }
 
     const request: FriendRequest = {
@@ -564,9 +636,10 @@ export async function getOutgoingFriendRequests(): Promise<FriendRequestListItem
   return Promise.all(requests.map((request) => requestListItemFromRequest(request, request.recipientUid, "pending_sent")));
 }
 
-export async function getFriendsList(): Promise<FriendListItem[]> {
+export async function getFriendsList(options: GetFriendsListOptions = {}): Promise<FriendListItem[]> {
   const currentUid = auth.currentUser?.uid;
   if (!currentUid) throw new Error("Sign in before viewing friends.");
+  const includeActivity = options.includeActivity ?? true;
 
   await upsertCurrentUserDiscoveryProfile();
 
@@ -587,7 +660,9 @@ export async function getFriendsList(): Promise<FriendListItem[]> {
     )
     .filter((friendship): friendship is Friendship => friendship !== null);
 
-  const items = await Promise.all(friendships.map((friendship) => friendListItemFromFriendship(friendship, currentUid)));
+  const items = await Promise.all(
+    friendships.map((friendship) => friendListItemFromFriendship(friendship, currentUid, includeActivity))
+  );
   return items.filter((item): item is FriendListItem => item !== null);
 }
 
@@ -662,4 +737,25 @@ export async function declineFriendRequest(requestId: string): Promise<void> {
   }
 
   await updateDoc(requestRef, { status: "declined" });
+}
+
+export async function removeFriend(friendshipIdToRemove: string): Promise<void> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) throw new Error("Sign in before removing friends.");
+
+  const friendshipRef = doc(db, FRIEND_SYSTEM_COLLECTIONS.friendships, friendshipIdToRemove);
+  const snapshot = await getDoc(friendshipRef);
+  const friendship = normalizeFriendship({
+    id: snapshot.id,
+    ...(snapshot.data() as Partial<Friendship> | undefined),
+  });
+
+  if (!snapshot.exists() || !friendship) {
+    throw new Error("Friendship was not found.");
+  }
+  if (!friendship.users.includes(currentUid)) {
+    throw new Error("Only friends can remove this connection.");
+  }
+
+  await deleteDoc(friendshipRef);
 }

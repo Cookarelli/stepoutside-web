@@ -51,7 +51,7 @@ export default function FriendsSearchScreen() {
   const onSearch = async () => {
     const query = searchText.trim();
     if (!query) {
-      setStatus("Enter a username or email.");
+      setStatus("Enter a username.");
       setResult(null);
       return;
     }
@@ -113,8 +113,8 @@ export default function FriendsSearchScreen() {
               onSubmitEditing={() => void onSearch()}
               autoCapitalize="none"
               autoCorrect={false}
-              keyboardType="email-address"
-              placeholder="Username or email"
+              keyboardType="default"
+              placeholder="Username"
               placeholderTextColor="rgba(11,15,14,0.42)"
               returnKeyType="search"
               style={styles.searchInput}

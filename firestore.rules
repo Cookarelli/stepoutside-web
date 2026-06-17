@@ -121,6 +121,20 @@ service cloud.firestore {
         );
     }
 
+    function isValidFriendRequestResend(requestId) {
+      return request.resource.data.keys().hasOnly(['id', 'senderUid', 'recipientUid', 'status', 'createdAt'])
+        && request.resource.data.id == requestId
+        && resource.data.id == requestId
+        && resource.data.senderUid == request.auth.uid
+        && request.resource.data.senderUid == resource.data.senderUid
+        && request.resource.data.recipientUid == resource.data.recipientUid
+        && resource.data.status in ['accepted', 'declined']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt is number
+        && !hasExistingFriendship(request.resource.data.senderUid, request.resource.data.recipientUid)
+        && !hasReversePendingFriendRequest(request.resource.data.senderUid, request.resource.data.recipientUid);
+    }
+
     function isValidFriendship(data, friendshipId) {
       return data.keys().hasOnly(['id', 'users', 'createdAt'])
         && data.id == friendshipId
@@ -145,6 +159,35 @@ service cloud.firestore {
 
     function isLeaderboardNumber(value) {
       return value is number && value >= 0;
+    }
+
+    function canReadFriendActivity(uid) {
+      return isOwner(uid)
+        || (request.auth != null && hasExistingFriendship(request.auth.uid, uid));
+    }
+
+    function isValidFriendActivity(uid) {
+      return request.resource.data.keys().hasOnly([
+          'uid',
+          'username',
+          'displayName',
+          'photoURL',
+          'walkCount',
+          'totalDistanceM',
+          'currentStreak',
+          'updatedAt'
+        ])
+        && request.resource.data.uid == uid
+        && request.resource.data.username is string
+        && request.resource.data.displayName is string
+        && request.resource.data.photoURL is string
+        && request.resource.data.walkCount is number
+        && request.resource.data.walkCount >= 0
+        && request.resource.data.totalDistanceM is number
+        && request.resource.data.totalDistanceM >= 0
+        && request.resource.data.currentStreak is number
+        && request.resource.data.currentStreak >= 0
+        && request.resource.data.updatedAt is number;
     }
 
     function isValidLeaderboardEntry(uid) {
@@ -235,7 +278,11 @@ service cloud.firestore {
     match /friendRequests/{requestId} {
       allow read: if isFriendRequestParticipant(resource.data);
       allow create: if request.auth != null && isValidFriendRequestCreate(requestId);
-      allow update: if request.auth != null && isFriendRequestParticipant(resource.data) && isValidFriendRequestResponse();
+      allow update: if request.auth != null
+        && (
+          (isFriendRequestParticipant(resource.data) && isValidFriendRequestResponse())
+          || isValidFriendRequestResend(requestId)
+        );
       allow delete: if false;
     }
 
@@ -245,7 +292,14 @@ service cloud.firestore {
         && isValidFriendship(request.resource.data, friendshipId)
         && request.auth.uid in request.resource.data.users
         && hasAcceptedFriendRequestAfter(request.resource.data.users[0], request.resource.data.users[1]);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isFriendshipParticipant(resource.data);
+    }
+
+    match /friendActivity/{uid} {
+      allow read: if canReadFriendActivity(uid);
+      allow create, update: if isOwner(uid) && isValidFriendActivity(uid);
+      allow delete: if isOwner(uid);
     }
 
     match /leaderboardEntries/{uid} {

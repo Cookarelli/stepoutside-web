@@ -296,7 +296,7 @@ async function getFriendLeaderboardEntriesWithCount(): Promise<{ entries: Leader
   const currentUid = auth.currentUser?.uid;
   if (!currentUid) return { entries: [], friendCount: 0 };
 
-  const friends = await getFriendsList();
+  const friends = await getFriendsList({ includeActivity: false });
   const uids = Array.from(new Set([currentUid, ...friends.map((friend) => friend.profile.uid).filter(Boolean)]));
   const entries = await Promise.all(uids.map((uid) => readLeaderboardEntry(uid)));
   return {

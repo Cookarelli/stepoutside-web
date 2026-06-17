@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,7 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { getFriendsList, type FriendListItem } from "../src/lib/friendSystem";
+import { getFriendsList, removeFriend, type FriendListItem } from "../src/lib/friendSystem";
 
 const BRAND = {
   forest: "#255E36",
@@ -29,12 +30,19 @@ function initialsFor(item: FriendListItem): string {
   return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
 }
 
+function formatMiles(totalDistanceM: number): string {
+  const miles = totalDistanceM / 1609.344;
+  if (miles >= 10) return `${Math.round(miles)}`;
+  return miles > 0 ? miles.toFixed(1) : "0";
+}
+
 export default function FriendsScreen() {
   const router = useRouter();
   const [friends, setFriends] = useState<FriendListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [status, setStatus] = useState("");
+  const [removingFriendshipId, setRemovingFriendshipId] = useState<string | null>(null);
 
   const loadFriends = useCallback(async (mode: "initial" | "refresh" = "initial") => {
     if (mode === "refresh") {
@@ -60,6 +68,36 @@ export default function FriendsScreen() {
       void loadFriends("initial");
     }, [loadFriends])
   );
+
+  const onRemoveFriend = async (friend: FriendListItem) => {
+    setRemovingFriendshipId(friend.friendship.id);
+    setStatus("");
+
+    try {
+      await removeFriend(friend.friendship.id);
+      setFriends((items) => items.filter((item) => item.friendship.id !== friend.friendship.id));
+      setStatus(`${friend.profile.displayName || friend.profile.username} was removed from your friends.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Friend could not be removed.");
+    } finally {
+      setRemovingFriendshipId(null);
+    }
+  };
+
+  const confirmRemoveFriend = (friend: FriendListItem) => {
+    Alert.alert(
+      "Remove friend?",
+      `${friend.profile.displayName || friend.profile.username} will no longer be able to view your friend activity.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => void onRemoveFriend(friend),
+        },
+      ]
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -99,40 +137,78 @@ export default function FriendsScreen() {
           <View style={styles.emptyCard}>
             <Ionicons name="people" size={24} color={BRAND.forest} />
             <Text style={styles.emptyTitle}>No friends yet</Text>
-            <Text style={styles.emptyBody}>Find friends from your Profile tab to start building your Step Outside circle.</Text>
+            <Text style={styles.emptyBody}>Search by username to start building your Step Outside circle.</Text>
+            <Pressable
+              onPress={() => router.push("/friends-search" as never)}
+              style={({ pressed }) => [styles.emptyButton, pressed ? styles.pressed : null]}
+            >
+              <Ionicons name="search" size={17} color="#FFFFFF" />
+              <Text style={styles.emptyButtonText}>Find Friends</Text>
+            </Pressable>
           </View>
         ) : null}
 
-        {friends.map((friend) => (
-          <View key={friend.friendship.id} style={styles.friendCard}>
-            <View style={styles.friendTopRow}>
-              <View style={styles.avatar}>
-                {friend.profile.photoURL ? (
-                  <Image source={{ uri: friend.profile.photoURL }} style={styles.avatarImage} contentFit="cover" />
-                ) : (
-                  <Text style={styles.avatarText}>{initialsFor(friend)}</Text>
-                )}
+        {friends.map((friend) => {
+          const activity = friend.activity;
+          const isRemoving = removingFriendshipId === friend.friendship.id;
+          return (
+            <View key={friend.friendship.id} style={styles.friendCard}>
+              <View style={styles.friendTopRow}>
+                <View style={styles.avatar}>
+                  {friend.profile.photoURL ? (
+                    <Image source={{ uri: friend.profile.photoURL }} style={styles.avatarImage} contentFit="cover" />
+                  ) : (
+                    <Text style={styles.avatarText}>{initialsFor(friend)}</Text>
+                  )}
+                </View>
+                <View style={styles.friendCopy}>
+                  <Text style={styles.friendName} numberOfLines={1}>
+                    {friend.profile.displayName}
+                  </Text>
+                  <Text style={styles.friendUsername} numberOfLines={1}>
+                    @{friend.profile.username}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => confirmRemoveFriend(friend)}
+                  disabled={isRemoving}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${friend.profile.displayName || friend.profile.username}`}
+                  style={({ pressed }) => [
+                    styles.removeButton,
+                    isRemoving ? styles.disabled : null,
+                    pressed ? styles.pressed : null,
+                  ]}
+                >
+                  {isRemoving ? (
+                    <ActivityIndicator color={BRAND.forest} />
+                  ) : (
+                    <Ionicons name="close" size={18} color={BRAND.forest} />
+                  )}
+                </Pressable>
               </View>
-              <View style={styles.friendCopy}>
-                <Text style={styles.friendName}>{friend.profile.displayName}</Text>
-                <Text style={styles.friendUsername}>@{friend.profile.username}</Text>
-              </View>
-            </View>
 
-            <View style={styles.placeholderRow}>
-              <View style={styles.placeholderButton}>
-                <Ionicons name="trophy" size={16} color={BRAND.gold} />
-                <Text style={styles.placeholderText}>Challenge Friend</Text>
-                <Text style={styles.placeholderBadge}>Premium</Text>
+              <View style={styles.statsRow}>
+                <View style={styles.statPill}>
+                  <Text style={styles.statValue}>{activity?.walkCount ?? 0}</Text>
+                  <Text style={styles.statLabel}>Walks</Text>
+                </View>
+                <View style={styles.statPill}>
+                  <Text style={styles.statValue}>{formatMiles(activity?.totalDistanceM ?? 0)}</Text>
+                  <Text style={styles.statLabel}>Miles</Text>
+                </View>
+                <View style={styles.statPill}>
+                  <Text style={styles.statValue}>{activity?.currentStreak ?? 0}d</Text>
+                  <Text style={styles.statLabel}>Streak</Text>
+                </View>
               </View>
-              <View style={styles.placeholderButton}>
-                <Ionicons name="map" size={16} color={BRAND.forest} />
-                <Text style={styles.placeholderText}>View Shared Walks</Text>
-                <Text style={styles.placeholderBadge}>Future</Text>
-              </View>
+
+              {!activity ? (
+                <Text style={styles.activityHint}>Friend stats appear after their next completed walk.</Text>
+              ) : null}
             </View>
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
     </SafeAreaView>
   );
@@ -178,7 +254,7 @@ const styles = StyleSheet.create({
   },
   loadingCard: {
     minHeight: 86,
-    borderRadius: 20,
+    borderRadius: 18,
     backgroundColor: "rgba(255,255,255,0.72)",
     borderWidth: 1,
     borderColor: "rgba(37,94,54,0.10)",
@@ -191,12 +267,12 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   emptyCard: {
-    borderRadius: 22,
+    borderRadius: 18,
     backgroundColor: "rgba(255,255,255,0.78)",
     borderWidth: 1,
     borderColor: "rgba(37,94,54,0.10)",
     padding: 18,
-    gap: 8,
+    gap: 10,
   },
   emptyTitle: {
     color: BRAND.charcoal,
@@ -209,12 +285,28 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: "800",
   },
+  emptyButton: {
+    minHeight: 46,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: BRAND.forest,
+  },
+  emptyButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
   friendCard: {
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.82)",
+    borderRadius: 18,
+    backgroundColor: BRAND.forest,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
-    padding: 14,
+    borderColor: "rgba(185,130,22,0.34)",
+    padding: 16,
     gap: 14,
   },
   friendTopRow: {
@@ -226,10 +318,12 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: BRAND.forest,
+    backgroundColor: "rgba(255,255,255,0.14)",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.24)",
   },
   avatarImage: {
     width: "100%",
@@ -246,40 +340,60 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   friendName: {
-    color: BRAND.charcoal,
+    color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "900",
   },
   friendUsername: {
-    color: BRAND.forest,
+    color: "rgba(255,255,255,0.74)",
     fontSize: 13,
     fontWeight: "900",
   },
-  placeholderRow: {
-    gap: 8,
-  },
-  placeholderButton: {
-    minHeight: 44,
-    borderRadius: 15,
-    backgroundColor: "rgba(11,15,14,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
-    paddingHorizontal: 12,
-    flexDirection: "row",
+  removeButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: "center",
-    gap: 8,
-    opacity: 0.82,
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
   },
-  placeholderText: {
+  statsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  statPill: {
     flex: 1,
-    color: "rgba(11,15,14,0.70)",
+    minHeight: 68,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    gap: 4,
+  },
+  statValue: {
+    color: BRAND.gold,
+    fontSize: 20,
     fontWeight: "900",
   },
-  placeholderBadge: {
-    color: "rgba(11,15,14,0.48)",
-    fontSize: 11,
+  statLabel: {
+    color: "rgba(255,255,255,0.72)",
+    fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  activityHint: {
+    color: "rgba(255,255,255,0.66)",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+  },
+  disabled: {
+    opacity: 0.62,
   },
   pressed: {
     opacity: 0.9,

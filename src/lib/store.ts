@@ -4,6 +4,7 @@ import { calculateElevationGain } from "../utils/elevation";
 import { calculateMovingTimeSeconds, calculatePaceMinutesPerMile } from "../utils/pace";
 
 import { auth, db } from "./firebase";
+import { upsertCurrentUserFriendActivitySummary } from "./friendSystem";
 import { refreshCurrentUserLeaderboardEntry } from "./leaderboard";
 import { getPremiumStatus } from "./pro";
 import type { SolarBonusType } from "./solarBonus";
@@ -293,6 +294,10 @@ function computePaceSecPerMile(durationSec: number, distanceM?: number): number 
   const minutesPerMile = calculatePaceMinutesPerMile(miles, durationSec);
   if (minutesPerMile === null) return undefined;
   return Math.max(1, Math.round(minutesPerMile * 60));
+}
+
+function sumDistanceMeters(sessions: OutsideSession[]): number {
+  return sessions.reduce((total, session) => total + finiteNumberOr(session.distanceM), 0);
 }
 
 function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boolean): OutsideSession {
@@ -1102,6 +1107,15 @@ export async function addCompletedSession(
     await refreshCurrentUserLeaderboardEntry(sessions);
   } catch {
     // Leaderboard sync should never block saving a completed walk.
+  }
+  try {
+    await upsertCurrentUserFriendActivitySummary({
+      walkCount: nextSummary.totalSessions,
+      totalDistanceM: sumDistanceMeters(sessions),
+      currentStreak: nextSummary.currentStreak,
+    });
+  } catch {
+    // Friend activity summaries should never block saving a completed walk.
   }
   try {
     await syncSessionToFirestore(normalized, includeRoutePoints);
