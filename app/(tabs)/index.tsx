@@ -5,6 +5,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,6 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { usePremiumAccess } from "../../hooks/use-premium-access";
+import { BrandBadge } from "../../src/components/BrandBadge";
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
 import {
   cacheRouteSuggestions,
@@ -328,26 +330,31 @@ export default function HomeTab() {
     >
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.heroCard}>
-          <View style={styles.heroGlowOne} />
-          <View style={styles.heroGlowTwo} />
-
-          <View style={styles.heroTopRow}>
-            <View style={styles.heroEyebrowPill}>
-              <Text style={styles.heroEyebrowText}>{dayLabel}</Text>
-            </View>
-            <View style={styles.statusPill}>
-              <Text style={styles.statusPillText}>{statusLine}</Text>
+          <View style={styles.heroMasthead}>
+            <BrandBadge size={58} />
+            <View style={styles.heroPillColumn}>
+              <View style={styles.datePill}>
+                <Text style={styles.datePillText} numberOfLines={1}>
+                  {dayLabel}
+                </Text>
+              </View>
+              <View style={styles.statusPill}>
+                <Text style={styles.statusPillText} numberOfLines={2}>
+                  {statusLine}
+                </Text>
+              </View>
             </View>
           </View>
 
-          <View style={styles.heroBrandBlock}>
+          <View style={styles.heroCopy}>
+            <Text style={styles.brandKicker}>Step Outside</Text>
             <Text style={styles.greeting}>{greeting}</Text>
+            <Text style={styles.microcopy}>{microcopy}</Text>
+            <Text style={styles.heroSupportLine}>A calm ritual for clearing your head and keeping momentum close.</Text>
+            <Text style={styles.heroSupportLineSecondary}>
+              {todayMinutes > 0 ? "You already have credit for today. Another short reset still counts." : "Your next best step is a short walk."}
+            </Text>
           </View>
-          <Text style={styles.microcopy}>{microcopy}</Text>
-          <Text style={styles.heroSupportLine}>A calm ritual for clearing your head and keeping momentum close.</Text>
-          <Text style={styles.heroSupportLineSecondary}>
-            {todayMinutes > 0 ? "You already have credit for today. Another short reset still counts." : "Your next best step is a short walk."}
-          </Text>
 
           <Pressable
             onPress={() => router.push("/walk")}
@@ -539,137 +546,123 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.bone,
   },
   container: {
-    paddingHorizontal: 20,
-    paddingTop: 4,
+    paddingHorizontal: 18,
+    paddingTop: 8,
     paddingBottom: 28,
-    gap: 14,
+    gap: 16,
   },
   heroCard: {
-    position: "relative",
-    borderRadius: 28,
-    padding: 22,
-    backgroundColor: BRAND.forest,
+    borderRadius: 8,
+    padding: 18,
+    backgroundColor: "rgba(255,255,255,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(37,94,54,0.12)",
     shadowColor: "#000",
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
-    overflow: "hidden",
+    elevation: 2,
   },
-  heroGlowOne: {
-    position: "absolute",
-    top: -42,
-    right: -24,
-    width: 156,
-    height: 156,
-    borderRadius: 999,
-    backgroundColor: "rgba(242,181,65,0.16)",
-  },
-  heroGlowTwo: {
-    position: "absolute",
-    bottom: -54,
-    left: -34,
-    width: 138,
-    height: 138,
-    borderRadius: 999,
-    backgroundColor: "rgba(248,244,238,0.08)",
-  },
-  heroTopRow: {
+  heroMasthead: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    flexWrap: "wrap",
-    gap: 12,
+    gap: 14,
   },
-  heroBrandBlock: {
-    marginTop: 32,
-    alignSelf: "flex-start",
+  heroPillColumn: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "flex-end",
+    gap: 8,
   },
-  heroEyebrowPill: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+  datePill: {
+    maxWidth: "100%",
+    paddingVertical: 7,
+    paddingHorizontal: 11,
     borderRadius: 999,
-    backgroundColor: "rgba(248,244,238,0.12)",
+    backgroundColor: "rgba(242,181,65,0.22)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.12)",
+    borderColor: "rgba(242,181,65,0.34)",
   },
-  heroEyebrowText: {
-    color: "rgba(248,244,238,0.78)",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.3,
+  datePillText: {
+    color: "#8A5D09",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
   },
   statusPill: {
+    maxWidth: "100%",
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(248,244,238,0.14)",
+    backgroundColor: "rgba(37,94,54,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.14)",
-    maxWidth: "100%",
+    borderColor: "rgba(37,94,54,0.14)",
   },
   statusPillText: {
-    color: "#F8F4EE",
+    color: BRAND.forest,
     fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.2,
-    flexShrink: 1,
+    lineHeight: 16,
+    fontWeight: "900",
+    textAlign: "right",
+  },
+  heroCopy: {
+    marginTop: 24,
+    gap: 8,
+  },
+  brandKicker: {
+    color: "#8A5D09",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
   },
   greeting: {
-    color: "rgba(248,244,238,0.82)",
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: "900",
-    letterSpacing: -0.2,
+    color: "rgba(11,15,14,0.62)",
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: "800",
   },
   microcopy: {
-    marginTop: 8,
-    color: "#FFFFFF",
-    fontSize: 32,
-    lineHeight: 38,
-    fontWeight: "900",
-    maxWidth: 320,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
+    color: BRAND.charcoal,
+    fontSize: 38,
+    lineHeight: 43,
+    fontWeight: "700",
+    maxWidth: 340,
   },
   heroSupportLine: {
-    marginTop: 10,
-    color: "rgba(248,244,238,0.68)",
-    fontSize: 14,
-    lineHeight: 20,
+    color: "rgba(11,15,14,0.68)",
+    fontSize: 15,
+    lineHeight: 22,
     fontWeight: "700",
-    maxWidth: 320,
+    maxWidth: 350,
   },
   heroSupportLineSecondary: {
-    marginTop: 8,
-    color: "rgba(248,244,238,0.86)",
+    color: "rgba(11,15,14,0.72)",
     fontSize: 13,
-    lineHeight: 18,
+    lineHeight: 19,
     fontWeight: "800",
-    maxWidth: 320,
+    maxWidth: 350,
   },
   primaryCta: {
-    marginTop: 24,
-    minHeight: 66,
-    borderRadius: 20,
-    backgroundColor: BRAND.sunrise,
+    marginTop: 22,
+    minHeight: 58,
+    borderRadius: 8,
+    backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: "#1F4A2C",
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
   primaryCtaText: {
-    color: BRAND.charcoal,
-    fontSize: 17,
+    color: "#FFFFFF",
+    fontSize: 15,
     fontWeight: "900",
     letterSpacing: 1.2,
-  },
-  heroSupport: {
-    marginTop: 14,
-    color: "rgba(248,244,238,0.84)",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  weatherSupport: {
-    marginTop: 6,
-    color: "rgba(248,244,238,0.64)",
-    fontSize: 12,
-    fontWeight: "700",
   },
   heroMetricsRow: {
     marginTop: 16,
@@ -680,26 +673,26 @@ const styles = StyleSheet.create({
   heroMetricChip: {
     flex: 1,
     minWidth: 132,
-    borderRadius: 18,
+    borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: "rgba(248,244,238,0.1)",
+    backgroundColor: "rgba(37,94,54,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.12)",
+    borderColor: "rgba(37,94,54,0.12)",
   },
   heroMetricLabel: {
-    color: "rgba(248,244,238,0.62)",
+    color: "rgba(11,15,14,0.52)",
     fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.4,
+    fontWeight: "900",
+    letterSpacing: 0.7,
     textTransform: "uppercase",
   },
   heroMetricValue: {
     marginTop: 6,
-    color: "#FFFFFF",
+    color: BRAND.charcoal,
     fontSize: 14,
     lineHeight: 19,
-    fontWeight: "800",
+    fontWeight: "900",
   },
   sectionHeader: {
     flexDirection: "row",
@@ -707,7 +700,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   momentumPanel: {
-    borderRadius: 28,
+    borderRadius: 8,
     padding: 18,
     backgroundColor: "rgba(37,94,54,0.94)",
     borderWidth: 1,
@@ -753,7 +746,7 @@ const styles = StyleSheet.create({
   },
   statCardOnGreen: {
     width: "47%",
-    borderRadius: 22,
+    borderRadius: 8,
     paddingVertical: 18,
     paddingHorizontal: 16,
     backgroundColor: "rgba(248,244,238,0.12)",
@@ -800,7 +793,7 @@ const styles = StyleSheet.create({
   },
   premiumStreakCard: {
     marginTop: 14,
-    borderRadius: 20,
+    borderRadius: 8,
     padding: 16,
     backgroundColor: "rgba(248,244,238,0.14)",
     borderWidth: 1,
@@ -838,7 +831,7 @@ const styles = StyleSheet.create({
   },
   premiumPreviewCard: {
     marginTop: 14,
-    borderRadius: 20,
+    borderRadius: 8,
     padding: 16,
     backgroundColor: "rgba(248,244,238,0.12)",
     borderWidth: 1,
@@ -882,7 +875,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   sparkCard: {
-    borderRadius: 24,
+    borderRadius: 8,
     padding: 20,
     backgroundColor: "rgba(255,255,255,0.48)",
     borderWidth: 1,
@@ -916,7 +909,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   resetCard: {
-    borderRadius: 24,
+    borderRadius: 8,
     padding: 20,
     backgroundColor: "rgba(37,94,54,0.08)",
     borderWidth: 1,
@@ -961,7 +954,7 @@ const styles = StyleSheet.create({
   resetPrimaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 16,
+    borderRadius: 8,
     backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
@@ -975,7 +968,7 @@ const styles = StyleSheet.create({
   resetSecondaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 16,
+    borderRadius: 8,
     backgroundColor: "rgba(255,255,255,0.58)",
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.1)",
@@ -985,7 +978,7 @@ const styles = StyleSheet.create({
   resetSecondaryBtnSolo: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: 16,
+    borderRadius: 8,
     backgroundColor: "rgba(255,255,255,0.58)",
     borderWidth: 1,
     borderColor: "rgba(11,15,14,0.1)",
@@ -999,7 +992,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   proCard: {
-    borderRadius: 24,
+    borderRadius: 8,
     padding: 20,
     backgroundColor: "rgba(242,181,65,0.18)",
     borderWidth: 1,
@@ -1022,7 +1015,7 @@ const styles = StyleSheet.create({
   proButton: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: 16,
+    borderRadius: 8,
     backgroundColor: BRAND.charcoal,
     alignItems: "center",
     justifyContent: "center",
