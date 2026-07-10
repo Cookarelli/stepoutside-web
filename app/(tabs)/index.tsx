@@ -6,16 +6,26 @@ import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
+import { OutdoorTheme } from "../../constants/theme";
 import { usePremiumAccess } from "../../hooks/use-premium-access";
-import { BrandBadge } from "../../src/components/BrandBadge";
+import { BrandHeaderMark } from "../../src/components/BrandBadge";
+import { TrailIllustration } from "../../src/components/OutdoorIllustrations";
+import {
+  BrandCard,
+  LayeredEnvironment,
+  PrimaryButton,
+  SecondaryButton,
+  SectionHeader,
+  StatCard,
+} from "../../src/components/OutdoorUI";
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
 import {
   cacheRouteSuggestions,
@@ -27,11 +37,11 @@ import {
 import { dayKeyLocal, EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
 
 const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  mist: "#E8E0D4",
+  forest: OutdoorTheme.colors.forest,
+  sunrise: OutdoorTheme.colors.gold,
+  bone: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
+  mist: OutdoorTheme.colors.sand,
 } as const;
 
 const MICROCOPY = [
@@ -57,6 +67,165 @@ type FeaturedReset = {
   route: RouteSuggestion | null;
   sourceLine: string;
 };
+
+function HomeLandscapeBackground() {
+  return (
+    <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%" viewBox="0 0 390 390" preserveAspectRatio="xMidYMid slice">
+      <Defs>
+        <LinearGradient id="homeSky" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#FFF9EF" />
+          <Stop offset="0.46" stopColor="#F7F4EC" />
+          <Stop offset="1" stopColor="#F0DDC2" />
+        </LinearGradient>
+        <LinearGradient id="homeSunrise" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor="#D9842F" stopOpacity="0.34" />
+          <Stop offset="0.55" stopColor="#C69B42" stopOpacity="0.18" />
+          <Stop offset="1" stopColor="#FFF9EF" stopOpacity="0" />
+        </LinearGradient>
+        <LinearGradient id="homeForestFade" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#4B6B52" stopOpacity="0.28" />
+          <Stop offset="1" stopColor="#0D2D20" stopOpacity="0.92" />
+        </LinearGradient>
+      </Defs>
+
+      <Rect width="390" height="390" fill="url(#homeSky)" />
+      <Circle cx="304" cy="82" r="112" fill="url(#homeSunrise)" />
+      <Circle cx="304" cy="82" r="32" fill="#D9842F" opacity="0.22" />
+
+      <Path d="M-10 242 L64 152 L113 206 L172 124 L252 232 L314 158 L410 244 V390 H-10Z" fill="#A9A69A" opacity="0.24" />
+      <Path d="M-20 264 L62 182 L122 238 L184 160 L260 252 L324 196 L410 264 V390 H-20Z" fill="#4B6B52" opacity="0.24" />
+      <Path d="M-10 288 L54 226 L118 268 L178 216 L242 278 L312 226 L402 286 V390 H-10Z" fill="#18442F" opacity="0.2" />
+
+      <Path d="M28 172 C82 154 126 187 178 168 C235 147 282 176 352 154" stroke="#FFF9EF" strokeWidth="16" strokeLinecap="round" opacity="0.4" fill="none" />
+      <Path d="M-4 210 C70 194 118 224 188 203 C254 184 308 214 398 196" stroke="#DAD8CF" strokeWidth="14" strokeLinecap="round" opacity="0.46" fill="none" />
+      <Path d="M22 252 C92 238 140 263 208 246 C274 230 314 248 380 240" stroke="#FFF9EF" strokeWidth="10" strokeLinecap="round" opacity="0.36" fill="none" />
+
+      <G opacity="0.94">
+        <Path d="M0 320 L18 284 L10 286 L30 248 L50 286 L42 284 L62 320Z" fill="#0D2D20" />
+        <Path d="M48 322 L70 278 L60 280 L86 230 L112 280 L102 278 L124 322Z" fill="#18442F" />
+        <Path d="M108 323 L128 286 L118 288 L144 240 L170 288 L160 286 L180 323Z" fill="#0D2D20" />
+        <Path d="M164 323 L190 270 L178 273 L210 214 L242 273 L230 270 L256 323Z" fill="#18442F" />
+        <Path d="M238 323 L260 282 L250 284 L276 236 L302 284 L292 282 L314 323Z" fill="#0D2D20" />
+        <Path d="M300 324 L326 270 L314 273 L346 218 L378 273 L366 270 L392 324Z" fill="#18442F" />
+      </G>
+
+      <Path d="M-8 322 C70 306 126 330 194 316 C256 304 314 318 398 304 V390 H-8Z" fill="url(#homeForestFade)" />
+      <Path d="M40 346 C96 336 150 352 206 342 C260 332 306 345 352 336" stroke="#C69B42" strokeWidth="4" strokeLinecap="round" opacity="0.28" fill="none" />
+      <Rect width="390" height="390" fill="#FFF9EF" opacity="0.05" />
+    </Svg>
+  );
+}
+
+type CampsiteStage = {
+  label: string;
+  note: string;
+  level: number;
+};
+
+function getCampsiteStage(streak: number): CampsiteStage {
+  if (streak >= 365) return { label: "Glowing campsite", note: "A full year beneath the stars.", level: 8 };
+  if (streak >= 180) return { label: "Forest clearing", note: "Your campsite has room to breathe.", level: 7 };
+  if (streak >= 100) return { label: "Picnic table", note: "A place to rest and return.", level: 6 };
+  if (streak >= 60) return { label: "Lantern light", note: "The path back is easy to find.", level: 5 };
+  if (streak >= 30) return { label: "Tent pitched", note: "This habit is becoming a place.", level: 4 };
+  if (streak >= 14) return { label: "Larger fire", note: "The warmth is starting to hold.", level: 3 };
+  if (streak >= 7) return { label: "Small campfire", note: "A steady flame is taking shape.", level: 2 };
+  if (streak >= 3) return { label: "Tiny spark", note: "A little glow is alive.", level: 1 };
+  return { label: "One log", note: streak > 0 ? "Your campsite has begun." : "One walk lays the first log.", level: 0 };
+}
+
+function CampfireProgressArt({ streak }: { streak: number }) {
+  const stage = getCampsiteStage(streak);
+  const showSpark = stage.level >= 1;
+  const showFire = stage.level >= 2;
+  const showLargeFire = stage.level >= 3;
+  const showTent = stage.level >= 4;
+  const showLantern = stage.level >= 5;
+  const showTable = stage.level >= 6;
+  const showClearing = stage.level >= 7;
+  const showStars = stage.level >= 8;
+
+  return (
+    <View style={styles.campsiteArtWrap}>
+      <Svg width="100%" height="100%" viewBox="0 0 360 210" preserveAspectRatio="xMidYMid meet">
+        <Defs>
+          <LinearGradient id="campSky" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={showStars ? "#0D2D20" : "#FFF9EF"} />
+            <Stop offset="0.5" stopColor={showStars ? "#18442F" : "#F7F4EC"} />
+            <Stop offset="1" stopColor={showStars ? "#123A29" : "#EAD8BA"} />
+          </LinearGradient>
+          <LinearGradient id="campGlow" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor="#D9842F" stopOpacity={showFire ? "0.42" : "0.18"} />
+            <Stop offset="1" stopColor="#C69B42" stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="360" height="210" rx="26" fill="url(#campSky)" />
+        <Circle cx="178" cy="118" r={showLargeFire ? 70 : 46} fill="url(#campGlow)" />
+
+        {showStars ? (
+          <G opacity="0.86">
+            <Circle cx="48" cy="32" r="2" fill="#FFF9EF" />
+            <Circle cx="90" cy="48" r="1.5" fill="#FFF9EF" />
+            <Circle cx="284" cy="34" r="2.2" fill="#FFF9EF" />
+            <Circle cx="320" cy="66" r="1.5" fill="#FFF9EF" />
+            <Path d="M236 42 L239 48 L246 49 L241 54 L242 61 L236 57 L230 61 L231 54 L226 49 L233 48Z" fill="#C69B42" />
+          </G>
+        ) : null}
+
+        <Path d="M0 152 C70 134 118 160 178 146 C238 132 288 154 360 138 V210 H0Z" fill={showClearing ? "#4B6B52" : "#DAD8CF"} opacity={showStars ? 0.48 : 0.6} />
+        <Path d="M0 166 C68 150 112 176 178 160 C240 145 296 164 360 152 V210 H0Z" fill="#18442F" opacity={showStars ? 0.72 : 0.22} />
+
+        <G opacity={showClearing ? 0.98 : 0.4}>
+          <Path d="M10 154 L28 118 L20 120 L40 82 L60 120 L52 118 L70 154Z" fill="#0D2D20" />
+          <Path d="M292 154 L314 110 L304 112 L330 66 L356 112 L346 110 L368 154Z" fill="#0D2D20" />
+          <Path d="M58 162 L76 126 L68 128 L88 92 L108 128 L100 126 L118 162Z" fill="#18442F" />
+        </G>
+
+        {showTent ? (
+          <G>
+            <Path d="M218 148 L266 92 L314 148Z" fill="#FFF9EF" opacity="0.94" />
+            <Path d="M266 92 L314 148 H268Z" fill="#C69B42" opacity="0.62" />
+            <Path d="M238 148 L266 112 L292 148Z" fill="#18442F" opacity="0.88" />
+            <Path d="M218 148 L266 92 L314 148" stroke="#0D2D20" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.5" />
+          </G>
+        ) : null}
+
+        {showTable ? (
+          <G opacity="0.92">
+            <Rect x="38" y="138" width="70" height="9" rx="4" fill="#0D2D20" />
+            <Rect x="48" y="122" width="50" height="8" rx="4" fill="#C69B42" />
+            <Path d="M58 146 L48 168 M90 146 L104 168" stroke="#0D2D20" strokeWidth="5" strokeLinecap="round" />
+          </G>
+        ) : null}
+
+        {showLantern ? (
+          <G>
+            <Path d="M112 72 C112 60 128 60 128 72" stroke="#0D2D20" strokeWidth="4" strokeLinecap="round" fill="none" />
+            <Rect x="112" y="72" width="16" height="30" rx="7" fill="#18442F" />
+            <Circle cx="120" cy="88" r="8" fill="#D9842F" opacity="0.76" />
+            <Circle cx="120" cy="88" r="18" fill="#D9842F" opacity="0.14" />
+          </G>
+        ) : null}
+
+        <G>
+          <Path d="M146 154 L190 166" stroke="#0D2D20" strokeWidth="9" strokeLinecap="round" />
+          <Path d="M194 154 L150 166" stroke="#0D2D20" strokeWidth="9" strokeLinecap="round" />
+          {showSpark ? <Circle cx="170" cy="132" r={showFire ? 9 : 5} fill="#D9842F" opacity="0.9" /> : null}
+          {showFire ? (
+            <>
+              <Path d="M171 82 C190 106 194 128 178 146 C160 140 154 118 171 82Z" fill="#D9842F" />
+              <Path d="M174 106 C184 121 183 136 172 145 C160 135 162 120 174 106Z" fill="#C69B42" />
+              {showLargeFire ? <Path d="M160 106 C152 124 156 142 170 151" stroke="#FFF9EF" strokeWidth="5" strokeLinecap="round" opacity="0.42" fill="none" /> : null}
+            </>
+          ) : null}
+        </G>
+      </Svg>
+      <View style={styles.campsiteStagePill}>
+        <Text style={styles.campsiteStageText}>{stage.label}</Text>
+      </View>
+    </View>
+  );
+}
 
 function hashDate(date: Date): number {
   return date.getFullYear() * 372 + (date.getMonth() + 1) * 31 + date.getDate();
@@ -328,10 +497,13 @@ export default function HomeTab() {
       style={[styles.safe, { paddingTop: Math.max(insets.top, 10) }]}
       edges={["top", "left", "right"]}
     >
+      <LayeredEnvironment />
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.heroCard}>
+          <HomeLandscapeBackground />
+          <View style={styles.heroAtmosphere} />
           <View style={styles.heroMasthead}>
-            <BrandBadge size={58} />
+            <BrandHeaderMark size={58} showTagline />
             <View style={styles.heroPillColumn}>
               <View style={styles.datePill}>
                 <Text style={styles.datePillText} numberOfLines={1}>
@@ -347,73 +519,73 @@ export default function HomeTab() {
           </View>
 
           <View style={styles.heroCopy}>
-            <Text style={styles.brandKicker}>Step Outside</Text>
             <Text style={styles.greeting}>{greeting}</Text>
-            <Text style={styles.microcopy}>{microcopy}</Text>
-            <Text style={styles.heroSupportLine}>A calm ritual for clearing your head and keeping momentum close.</Text>
+            <Text style={styles.microcopy}>Your next Step Outside is waiting.</Text>
+            <Text style={styles.heroSupportLine}>{microcopy}</Text>
             <Text style={styles.heroSupportLineSecondary}>
               {todayMinutes > 0 ? "You already have credit for today. Another short reset still counts." : "Your next best step is a short walk."}
             </Text>
           </View>
 
-          <Pressable
+          <PrimaryButton
             onPress={() => router.push("/walk")}
-            style={({ pressed }) => [
-              styles.primaryCta,
-              pressed ? { opacity: 0.96, transform: [{ scale: 0.99 }] } : null,
-            ]}
-          >
-            <Text style={styles.primaryCtaText}>START WALK</Text>
-          </Pressable>
-
-          <View style={styles.heroMetricsRow}>
-            <View style={styles.heroMetricChip}>
-              <Text style={styles.heroMetricLabel}>Today</Text>
-              <Text style={styles.heroMetricValue}>
-                {todayMinutes > 0 ? formatMinutes(todayMinutes) : "Ready to begin"}
-              </Text>
-            </View>
-
-            <View style={styles.heroMetricChip}>
-              <Text style={styles.heroMetricLabel}>Weather</Text>
-              <Text style={styles.heroMetricValue}>
-                {weather?.nowTempF ? `${weather.nowTempF}°F • ${weather.nowLabel ?? "Now"}` : "Set by the day"}
-              </Text>
-            </View>
-          </View>
+            label="Start Walk"
+            style={styles.primaryCta}
+            textStyle={styles.primaryCtaText}
+          />
         </View>
 
-        <View style={styles.momentumPanel}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitleOnGreen}>Consistency</Text>
-            <Pressable onPress={() => router.push("/(tabs)/stats")}>
-              <Text style={styles.sectionLinkOnGreen}>View stats</Text>
-            </Pressable>
+        <BrandCard withCampfire style={styles.focusCard}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardHeaderCopy}>
+              <SectionHeader
+                eyebrow="Today’s Focus"
+                title={dailySpark ? `“${dailySpark.quote}”` : "Start with one calm reset."}
+                style={styles.focusHeader}
+              />
+            </View>
+            <View style={styles.tinyGoldMark} />
+          </View>
+          <Text style={styles.focusBody}>
+            {dailySpark ? dailySpark.mission : "A simple prompt will show up here each day."}
+          </Text>
+          <Text style={styles.focusReward}>
+            {dailySpark ? dailySpark.reward : "Start a walk whenever you want a calmer reset."}
+          </Text>
+        </BrandCard>
+
+        <BrandCard style={styles.statsSummaryCard}>
+          <SectionHeader title="Stats Summary" actionLabel="View stats" onActionPress={() => router.push("/(tabs)/stats")} />
+          <View style={styles.statsGrid}>
+            <StatCard label="Today" value={todayMinutes > 0 ? formatMinutes(todayMinutes) : "Ready"} />
+            <StatCard label="Outside" value={formatMinutes(summary.totalMinutes)} />
+            <StatCard label="Golden" value={summary.sunriseBonusCount + summary.sunsetBonusCount} />
+            <StatCard label="Weather" value={weather?.nowTempF ? `${weather.nowTempF}°F` : "Calm"} />
+          </View>
+        </BrandCard>
+
+        <BrandCard style={styles.streakCard}>
+          <View style={styles.streakHeader}>
+            <SectionHeader
+              eyebrow="Campfire Progress"
+              title="Your campsite is growing."
+              subtitle={getCampsiteStage(currentStreak).note}
+              style={styles.streakSectionHeader}
+            />
           </View>
 
-          <View style={styles.progressGrid}>
-            <View style={styles.statCardOnGreen}>
-              <Text style={styles.statLabelOnGreen}>Streak</Text>
-              <Text style={styles.statValueOnGreen}>{currentStreak}</Text>
-              <Text style={styles.statMetaOnGreen}>day{currentStreak === 1 ? "" : "s"}</Text>
-            </View>
+          <CampfireProgressArt streak={currentStreak} />
 
-            <View style={styles.statCardOnGreen}>
-              <Text style={styles.statLabelOnGreen}>Outside</Text>
-              <Text style={styles.statValueOnGreen}>{formatMinutes(summary.totalMinutes)}</Text>
-              <Text style={styles.statMetaOnGreen}>total</Text>
+          <View style={styles.campsiteStatsRow}>
+            <View style={styles.campsiteStreakBadge}>
+              <Text style={styles.streakNumber}>{currentStreak}</Text>
+              <Text style={styles.streakUnit}>day{currentStreak === 1 ? "" : "s"}</Text>
             </View>
-
-            <View style={styles.statCardOnGreen}>
-              <Text style={styles.statLabelOnGreen}>Sunrise</Text>
-              <Text style={styles.statValueOnGreen}>{summary.sunriseBonusCount}</Text>
-              <Text style={styles.statMetaOnGreen}>golden starts</Text>
-            </View>
-
-            <View style={styles.statCardOnGreen}>
-              <Text style={styles.statLabelOnGreen}>Sunset</Text>
-              <Text style={styles.statValueOnGreen}>{summary.sunsetBonusCount}</Text>
-              <Text style={styles.statMetaOnGreen}>golden resets</Text>
+            <View style={styles.streakCopy}>
+              <Text style={styles.streakNote}>
+                {currentStreak > 0 ? "Keep tending the campsite with one simple reset." : "One walk lays the first log."}
+              </Text>
+              <Text style={styles.streakStatusLine}>{statusLine}</Text>
             </View>
           </View>
 
@@ -453,29 +625,14 @@ export default function HomeTab() {
               </View>
               <View style={styles.premiumPreviewRow}>
                 <Text style={styles.premiumPreviewLabel}>Longest streak</Text>
-                <Text style={styles.premiumPreviewPlaceholder}>Locked</Text>
+              <Text style={styles.premiumPreviewPlaceholder}>Locked</Text>
               </View>
             </View>
           ) : null}
-        </View>
+        </BrandCard>
 
-        {dailySpark ? (
-          <View style={styles.sparkCard}>
-            <Text style={styles.cardEyebrow}>Daily Spark</Text>
-            <Text style={styles.sparkQuote}>“{dailySpark.quote}”</Text>
-            <Text style={styles.sparkMission}>{dailySpark.mission}</Text>
-            <Text style={styles.sparkReward}>{dailySpark.reward}</Text>
-          </View>
-        ) : (
-          <View style={styles.sparkCard}>
-            <Text style={styles.cardEyebrow}>Daily Spark</Text>
-            <Text style={styles.sparkQuote}>A simple prompt will show up here each day.</Text>
-            <Text style={styles.sparkMission}>Start a walk whenever you want a calmer reset.</Text>
-          </View>
-        )}
-
-        <View style={styles.resetCard}>
-          <Text style={styles.cardEyebrow}>Nearby Reset</Text>
+        <BrandCard withPines style={styles.actionCard}>
+          <SectionHeader eyebrow="Suggested Action" title="Next reason to step outside" style={styles.suggestedHeader} />
 
           {loadingContext && !featuredReset.route ? (
             <View style={styles.loadingRow}>
@@ -489,51 +646,55 @@ export default function HomeTab() {
               <Text style={styles.resetNote}>{featuredReset.sourceLine}</Text>
 
               <View style={styles.resetActions}>
-                <Pressable
+                <PrimaryButton
                   style={styles.resetPrimaryBtn}
                   onPress={() => void openInMaps(featuredReset.route as RouteSuggestion)}
-                >
-                  <Text style={styles.resetPrimaryBtnText}>OPEN IN MAPS</Text>
-                </Pressable>
+                  label="Open in Maps"
+                  textStyle={styles.resetPrimaryBtnText}
+                />
 
-                <Pressable
+                <SecondaryButton
                   style={styles.resetSecondaryBtn}
                   onPress={() => router.push("/(tabs)/steps")}
-                >
-                  <Text style={styles.resetSecondaryBtnText}>SEE ALL RESETS</Text>
-                </Pressable>
+                  label="See All Resets"
+                  textStyle={styles.resetSecondaryBtnText}
+                />
               </View>
             </>
           ) : (
             <>
+              <View pointerEvents="none" style={styles.resetEmptyArt}>
+                <TrailIllustration width={174} height={108} opacity={0.2} />
+              </View>
               <Text style={styles.resetTitle}>No nearby reset loaded yet</Text>
-              <Text style={styles.resetNote}>{featuredReset.sourceLine}</Text>
-              <Pressable
+              <Text style={styles.resetNote}>
+                {featuredReset.sourceLine} A quiet route is still coming into view.
+              </Text>
+              <SecondaryButton
                 style={styles.resetSecondaryBtnSolo}
                 onPress={() => router.push("/(tabs)/steps")}
-              >
-                <Text style={styles.resetSecondaryBtnText}>BROWSE RESETS</Text>
-              </Pressable>
+                label="Browse Resets"
+                textStyle={styles.resetSecondaryBtnText}
+              />
             </>
           )}
-        </View>
+        </BrandCard>
 
         {!isPremium && !premiumLoading ? (
-          <View style={styles.proCard}>
-            <Text style={styles.cardEyebrow}>Step Outside Premium</Text>
-            <Text style={styles.proTitle}>Keep your reset close.</Text>
+          <BrandCard withCampfire style={styles.proCard}>
+            <SectionHeader eyebrow="Step Outside Premium" title="Keep your reset close." style={styles.proHeader} />
             <Text style={styles.proBody}>
               Unlock the full version for a steadier rhythm, smarter route support, and a more
               intentional daily practice.
             </Text>
 
-            <Pressable
+            <PrimaryButton
               style={styles.proButton}
               onPress={() => router.push("/pro")}
-            >
-              <Text style={styles.proButtonText}>EXPLORE PREMIUM</Text>
-            </Pressable>
-          </View>
+              label="Explore Premium"
+              textStyle={styles.proButtonText}
+            />
+          </BrandCard>
         ) : null}
       </ScrollView>
     </SafeAreaView>
@@ -543,7 +704,7 @@ export default function HomeTab() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BRAND.bone,
+    backgroundColor: "transparent",
   },
   container: {
     paddingHorizontal: 18,
@@ -552,16 +713,18 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   heroCard: {
-    borderRadius: 8,
-    padding: 18,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    minHeight: 430,
+    borderRadius: OutdoorTheme.radii.xxl,
+    padding: 22,
+    backgroundColor: OutdoorTheme.colors.paper,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    borderColor: "rgba(24,68,47,0.12)",
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.card,
+  },
+  heroAtmosphere: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255,249,239,0.1)",
   },
   heroMasthead: {
     flexDirection: "row",
@@ -580,12 +743,12 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 11,
     borderRadius: 999,
-    backgroundColor: "rgba(242,181,65,0.22)",
+    backgroundColor: "rgba(198,155,66,0.22)",
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.34)",
+    borderColor: "rgba(198,155,66,0.34)",
   },
   datePillText: {
-    color: "#8A5D09",
+    color: OutdoorTheme.colors.goldText,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.7,
@@ -596,9 +759,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.12)",
   },
   statusPillText: {
     color: BRAND.forest,
@@ -608,61 +771,244 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   heroCopy: {
-    marginTop: 24,
+    marginTop: 46,
     gap: 8,
-  },
-  brandKicker: {
-    color: "#8A5D09",
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 1.1,
-    textTransform: "uppercase",
+    maxWidth: 350,
   },
   greeting: {
-    color: "rgba(11,15,14,0.62)",
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: "800",
+    color: OutdoorTheme.colors.goldText,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   microcopy: {
-    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
     color: BRAND.charcoal,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
     fontSize: 38,
     lineHeight: 43,
     fontWeight: "700",
-    maxWidth: 340,
+    letterSpacing: 0,
   },
   heroSupportLine: {
-    color: "rgba(11,15,14,0.68)",
+    color: "rgba(30,42,36,0.68)",
     fontSize: 15,
     lineHeight: 22,
     fontWeight: "700",
     maxWidth: 350,
   },
   heroSupportLineSecondary: {
-    color: "rgba(11,15,14,0.72)",
+    color: "rgba(30,42,36,0.72)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "800",
     maxWidth: 350,
   },
   primaryCta: {
-    marginTop: 22,
-    minHeight: 58,
-    borderRadius: 8,
-    backgroundColor: BRAND.forest,
+    marginTop: 26,
+    minHeight: 56,
+    alignSelf: "flex-start",
+    minWidth: 172,
+    borderRadius: OutdoorTheme.radii.pill,
+    backgroundColor: "#101814",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#1F4A2C",
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    paddingHorizontal: 28,
+    shadowColor: "#0D2D20",
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
   },
   primaryCtaText: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 1.2,
+  },
+  focusCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 20,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
+    borderWidth: 1,
+    borderColor: OutdoorTheme.colors.lineSoft,
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  focusFire: {
+    position: "absolute",
+    right: 18,
+    top: 18,
+  },
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 14,
+  },
+  cardHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  focusHeader: {
+    flex: 1,
+  },
+  tinyGoldMark: {
+    marginTop: 5,
+    width: 34,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: OutdoorTheme.colors.gold,
+  },
+  focusTitle: {
+    marginTop: 10,
+    color: BRAND.charcoal,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
+    fontSize: 24,
+    lineHeight: 31,
+    fontWeight: "700",
+    maxWidth: 360,
+  },
+  focusBody: {
+    marginTop: 12,
+    color: "rgba(30,42,36,0.78)",
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "700",
+  },
+  focusReward: {
+    marginTop: 10,
+    color: OutdoorTheme.colors.sage,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "800",
+  },
+  statsSummaryCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 18,
+    backgroundColor: "rgba(255,249,239,0.9)",
+    borderWidth: 1,
+    borderColor: OutdoorTheme.colors.lineSoft,
+    ...OutdoorTheme.shadows.soft,
+  },
+  statsGrid: {
+    marginTop: 14,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  statTile: {
+    flexGrow: 1,
+    flexBasis: "47%",
+    minHeight: 88,
+    borderRadius: OutdoorTheme.radii.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: OutdoorTheme.colors.paper,
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.10)",
+    justifyContent: "space-between",
+  },
+  streakCard: {
+    borderRadius: OutdoorTheme.radii.xxl,
+    padding: 18,
+    backgroundColor: "rgba(255,249,239,0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.12)",
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.card,
+  },
+  streakFire: {
+    position: "absolute",
+    right: 22,
+    top: 50,
+  },
+  streakHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 14,
+  },
+  streakSectionHeader: {
+    flex: 1,
+  },
+  campsiteArtWrap: {
+    marginTop: 16,
+    height: 210,
+    borderRadius: OutdoorTheme.radii.xl,
+    overflow: "hidden",
+    backgroundColor: OutdoorTheme.colors.paper,
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.10)",
+  },
+  campsiteStagePill: {
+    position: "absolute",
+    left: 14,
+    bottom: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+    borderRadius: OutdoorTheme.radii.pill,
+    backgroundColor: "rgba(255,249,239,0.82)",
+    borderWidth: 1,
+    borderColor: "rgba(198,155,66,0.22)",
+  },
+  campsiteStageText: {
+    color: OutdoorTheme.colors.goldText,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  campsiteStatsRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  campsiteStreakBadge: {
+    width: 92,
+    minHeight: 78,
+    borderRadius: OutdoorTheme.radii.xl,
+    backgroundColor: OutdoorTheme.colors.forest,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(198,155,66,0.28)",
+  },
+  streakNumber: {
+    color: OutdoorTheme.colors.gold,
+    fontSize: 38,
+    lineHeight: 42,
+    fontWeight: "900",
+  },
+  streakCopy: {
+    flex: 1,
+    minWidth: 0,
+    paddingBottom: 8,
+  },
+  streakUnit: {
+    color: OutdoorTheme.colors.onForestMuted,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  streakNote: {
+    color: OutdoorTheme.colors.charcoal,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "900",
+    maxWidth: 240,
+  },
+  streakStatusLine: {
+    marginTop: 5,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
   },
   heroMetricsRow: {
     marginTop: 16,
@@ -673,15 +1019,15 @@ const styles = StyleSheet.create({
   heroMetricChip: {
     flex: 1,
     minWidth: 132,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: "rgba(24,68,47,0.12)",
   },
   heroMetricLabel: {
-    color: "rgba(11,15,14,0.52)",
+    color: "rgba(30,42,36,0.52)",
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.7,
@@ -689,9 +1035,9 @@ const styles = StyleSheet.create({
   },
   heroMetricValue: {
     marginTop: 6,
-    color: BRAND.charcoal,
-    fontSize: 14,
-    lineHeight: 19,
+    color: BRAND.forest,
+    fontSize: 18,
+    lineHeight: 23,
     fontWeight: "900",
   },
   sectionHeader: {
@@ -700,11 +1046,18 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   momentumPanel: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 18,
-    backgroundColor: "rgba(37,94,54,0.94)",
+    backgroundColor: BRAND.forest,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.98)",
+    borderColor: "rgba(255,249,239,0.12)",
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  momentumPines: {
+    position: "absolute",
+    right: -24,
+    top: 16,
   },
   sectionTitle: {
     color: BRAND.charcoal,
@@ -712,7 +1065,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   sectionTitleOnGreen: {
-    color: "#F8F4EE",
+    color: "#F7F4EC",
     fontSize: 18,
     fontWeight: "900",
   },
@@ -740,27 +1093,27 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     paddingVertical: 18,
     paddingHorizontal: 16,
-    backgroundColor: "rgba(255,255,255,0.56)",
+    backgroundColor: "rgba(255,249,239,0.56)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   statCardOnGreen: {
     width: "47%",
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     paddingVertical: 18,
     paddingHorizontal: 16,
-    backgroundColor: "rgba(248,244,238,0.12)",
+    backgroundColor: "rgba(247,244,236,0.12)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.16)",
+    borderColor: "rgba(247,244,236,0.16)",
   },
   statLabel: {
-    color: "rgba(11,15,14,0.56)",
+    color: "rgba(30,42,36,0.56)",
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.3,
   },
   statLabelOnGreen: {
-    color: "rgba(248,244,238,0.72)",
+    color: "rgba(247,244,236,0.72)",
     fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.3,
@@ -781,26 +1134,26 @@ const styles = StyleSheet.create({
   },
   statMeta: {
     marginTop: 4,
-    color: "rgba(11,15,14,0.58)",
+    color: "rgba(30,42,36,0.58)",
     fontSize: 12,
     fontWeight: "700",
   },
   statMetaOnGreen: {
     marginTop: 4,
-    color: "rgba(248,244,238,0.72)",
+    color: "rgba(247,244,236,0.72)",
     fontSize: 12,
     fontWeight: "700",
   },
   premiumStreakCard: {
     marginTop: 14,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 16,
-    backgroundColor: "rgba(248,244,238,0.14)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.16)",
+    borderColor: "rgba(24,68,47,0.12)",
   },
   premiumStreakEyebrow: {
-    color: BRAND.sunrise,
+    color: OutdoorTheme.colors.goldText,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.6,
@@ -813,32 +1166,32 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   premiumStreakLabel: {
-    color: "rgba(248,244,238,0.72)",
+    color: OutdoorTheme.colors.mutedText,
     fontSize: 13,
     fontWeight: "700",
   },
   premiumStreakValue: {
-    color: "#FFFFFF",
+    color: OutdoorTheme.colors.forest,
     fontSize: 13,
     fontWeight: "900",
   },
   premiumStreakBody: {
     marginTop: 12,
-    color: "rgba(248,244,238,0.82)",
+    color: "rgba(30,42,36,0.76)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
   },
   premiumPreviewCard: {
     marginTop: 14,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 16,
-    backgroundColor: "rgba(248,244,238,0.12)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.14)",
+    borderColor: "rgba(24,68,47,0.12)",
   },
   premiumPreviewEyebrow: {
-    color: BRAND.sunrise,
+    color: OutdoorTheme.colors.goldText,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.6,
@@ -846,14 +1199,14 @@ const styles = StyleSheet.create({
   },
   premiumPreviewTitle: {
     marginTop: 8,
-    color: "#FFFFFF",
+    color: OutdoorTheme.colors.charcoal,
     fontSize: 18,
     lineHeight: 23,
     fontWeight: "900",
   },
   premiumPreviewBody: {
     marginTop: 8,
-    color: "rgba(248,244,238,0.76)",
+    color: "rgba(30,42,36,0.72)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -865,21 +1218,28 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   premiumPreviewLabel: {
-    color: "rgba(248,244,238,0.72)",
+    color: OutdoorTheme.colors.mutedText,
     fontSize: 13,
     fontWeight: "700",
   },
   premiumPreviewPlaceholder: {
-    color: BRAND.sunrise,
+    color: OutdoorTheme.colors.forest,
     fontSize: 13,
     fontWeight: "900",
   },
   sparkCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 20,
-    backgroundColor: "rgba(255,255,255,0.48)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: OutdoorTheme.colors.lineSoft,
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  sparkFire: {
+    position: "absolute",
+    right: 18,
+    top: 18,
   },
   cardEyebrow: {
     color: BRAND.forest,
@@ -896,24 +1256,42 @@ const styles = StyleSheet.create({
   },
   sparkMission: {
     marginTop: 12,
-    color: "rgba(11,15,14,0.8)",
+    color: "rgba(30,42,36,0.8)",
     fontSize: 15,
     lineHeight: 22,
     fontWeight: "700",
   },
   sparkReward: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.6)",
+    color: "rgba(30,42,36,0.6)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
   },
   resetCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 20,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: OutdoorTheme.colors.forestTint,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: OutdoorTheme.colors.line,
+    overflow: "hidden",
+  },
+  actionCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 20,
+    backgroundColor: "rgba(255,249,239,0.78)",
+    borderWidth: 1,
+    borderColor: OutdoorTheme.colors.line,
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  resetPines: {
+    position: "absolute",
+    right: -28,
+    bottom: -20,
+  },
+  suggestedHeader: {
+    marginBottom: 4,
   },
   loadingRow: {
     marginTop: 14,
@@ -922,9 +1300,18 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   loadingText: {
-    color: "rgba(11,15,14,0.7)",
+    color: "rgba(30,42,36,0.7)",
     fontSize: 14,
     fontWeight: "700",
+  },
+  resetEmptyArt: {
+    position: "absolute",
+    right: -10,
+    top: 64,
+    width: 188,
+    height: 116,
+    alignItems: "center",
+    justifyContent: "center",
   },
   resetTitle: {
     marginTop: 10,
@@ -935,13 +1322,13 @@ const styles = StyleSheet.create({
   },
   resetMeta: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.68)",
+    color: "rgba(30,42,36,0.68)",
     fontSize: 14,
     fontWeight: "800",
   },
   resetNote: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.72)",
+    color: "rgba(30,42,36,0.72)",
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "700",
@@ -954,7 +1341,7 @@ const styles = StyleSheet.create({
   resetPrimaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
@@ -968,20 +1355,20 @@ const styles = StyleSheet.create({
   resetSecondaryBtn: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.58)",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,249,239,0.58)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: "rgba(30,42,36,0.1)",
     alignItems: "center",
     justifyContent: "center",
   },
   resetSecondaryBtnSolo: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.58)",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,249,239,0.58)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: "rgba(30,42,36,0.1)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -992,11 +1379,14 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   proCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 20,
-    backgroundColor: "rgba(242,181,65,0.18)",
+    backgroundColor: "rgba(198,155,66,0.18)",
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.34)",
+    borderColor: "rgba(198,155,66,0.34)",
+  },
+  proHeader: {
+    marginBottom: 4,
   },
   proTitle: {
     marginTop: 10,
@@ -1007,7 +1397,7 @@ const styles = StyleSheet.create({
   },
   proBody: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.76)",
+    color: "rgba(30,42,36,0.76)",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700",
@@ -1015,7 +1405,7 @@ const styles = StyleSheet.create({
   proButton: {
     marginTop: 16,
     minHeight: 50,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     backgroundColor: BRAND.charcoal,
     alignItems: "center",
     justifyContent: "center",

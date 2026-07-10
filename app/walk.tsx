@@ -5,6 +5,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Alert, AppState, type AppStateStatus, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { CampfireGlyph } from "../src/components/OutdoorDecor";
+import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import {
   clearCompletedWalkDraft,
   clearActiveWalkSnapshot,
@@ -12,6 +15,7 @@ import {
   setActiveWalkSnapshot,
   setCompletedWalkDraft,
 } from "../src/lib/activeWalk";
+import { logWalkStarted } from "../src/lib/analytics";
 import type { RoutePoint } from "../src/lib/store";
 import {
   calculateAcceptedRouteDistanceMeters,
@@ -21,6 +25,7 @@ import {
   haversineMeters,
 } from "../src/utils/gpsFiltering";
 import { calculateMovingTimeSeconds, getPaceMetrics } from "../src/utils/pace";
+import { formatElapsedClock } from "../src/utils/time";
 
 type PermissionState = "unknown" | "granted" | "denied";
 
@@ -30,12 +35,6 @@ const WALKING_GPS_ACCURACY =
   Location.Accuracy.BestForNavigation ?? Location.Accuracy.Highest;
 const WALKING_GPS_TIME_INTERVAL_MS = 4000;
 const WALKING_GPS_DISTANCE_INTERVAL_METERS = 5;
-
-function fmtTime(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = Math.max(0, sec % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 function fmtMeters(distanceM: number): string {
   return `${distanceM.toFixed(1)} m`;
@@ -839,6 +838,7 @@ export default function Walk() {
         await startGps("start");
       }
 
+      void logWalkStarted(ok ? "gps" : "timer");
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       console.error("[walk] start failed", error);
@@ -1138,7 +1138,7 @@ export default function Walk() {
           Math.max(0, snapshot.movingTimeSec ?? 0) || calculateMovingTimeSeconds(snapshot.routePoints ?? []) || 0;
         const recoveredElapsed =
           snapshot.running
-            ? snapshot.elapsedSec + Math.max(0, Math.round((Date.now() - snapshot.updatedAt) / 1000))
+            ? snapshot.elapsedSec + Math.max(0, Math.floor((Date.now() - snapshot.updatedAt) / 1000))
             : snapshot.elapsedSec;
 
         elapsedBeforeRunRef.current = Math.max(
@@ -1261,7 +1261,7 @@ export default function Walk() {
     phase === "tracking"
       ? "Walk in progress. Pause when you want a breather."
       : phase === "paused"
-        ? `Your walk is paused. ${fmtTime(pausedSec)} paused so far.`
+        ? `Your walk is paused. ${formatElapsedClock(pausedSec)} paused so far.`
         : phase === "saving"
           ? "Saving your walk now."
           : permission === "denied"
@@ -1270,22 +1270,26 @@ export default function Walk() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.bgGlowTop} />
-      <View style={styles.bgGlowBottom} />
+      <LayeredEnvironment intensity="quiet" />
 
-      <View style={styles.sessionCard}>
-        <View style={styles.sessionHeader}>
-          <View style={styles.sessionPill}>
-            <Text style={styles.sessionPillText}>
-              {phase === "tracking" ? "Walk live" : phase === "paused" ? "Paused" : phase === "saving" ? "Saving" : "Ready"}
-            </Text>
+      <PremiumHero
+        style={styles.sessionCard}
+        topSlot={(
+          <View style={styles.sessionHeader}>
+            <View style={styles.sessionPill}>
+              <Text style={styles.sessionPillText}>
+                {phase === "tracking" ? "Walk live" : phase === "paused" ? "Paused" : phase === "saving" ? "Saving" : "Ready"}
+              </Text>
+            </View>
+            <Text style={styles.sessionHint}>{permission === "denied" ? "Timer mode" : "GPS mode"}</Text>
           </View>
-          <Text style={styles.sessionHint}>{permission === "denied" ? "Timer mode" : "GPS mode"}</Text>
-        </View>
-
-        <Text style={styles.title}>Walk</Text>
-        <Text style={styles.sub}>Elapsed</Text>
-        <Text style={styles.big}>{fmtTime(elapsedSec)}</Text>
+        )}
+        eyebrow="Outdoor session"
+        title="Walk"
+        subtitle="Elapsed"
+      >
+        <CampfireGlyph style={styles.sessionFire} size={44} opacity={0.2} />
+        <Text style={styles.big}>{formatElapsedClock(elapsedSec)}</Text>
         <Text style={styles.sessionSupport}>
           {permission === "denied"
             ? "Timer mode is active. Turn location back on anytime for route and distance."
@@ -1302,7 +1306,7 @@ export default function Walk() {
             <Text style={styles.metricV}>{pace}</Text>
           </View>
         </View>
-      </View>
+      </PremiumHero>
 
       {permission === "denied" ? (
         <Text style={styles.warn}>Location is off, so this walk will track time only.</Text>
@@ -1312,7 +1316,7 @@ export default function Walk() {
 
       {!restored ? (
         <View style={styles.loadingState}>
-          <ActivityIndicator color="#F2B541" />
+          <ActivityIndicator color={OutdoorTheme.colors.gold} />
           <Text style={styles.loadingText}>Loading walk…</Text>
         </View>
       ) : (
@@ -1361,8 +1365,8 @@ export default function Walk() {
             <Text style={styles.debugRow}>Latest vertical: {fmtDebugNumber(gpsDebug.latestVerticalChangeM)} m</Text>
             <Text style={styles.debugRow}>Filtered distance: {fmtMeters(gpsDebug.totalFilteredDistanceM)}</Text>
             <Text style={styles.debugRow}>Raw distance: {fmtMeters(gpsDebug.totalRawDistanceM)}</Text>
-            <Text style={styles.debugRow}>Moving time: {fmtTime(gpsDebug.movingTimeSeconds)}</Text>
-            <Text style={styles.debugRow}>Paused time: {fmtTime(gpsDebug.pausedTimeSeconds)}</Text>
+            <Text style={styles.debugRow}>Moving time: {formatElapsedClock(gpsDebug.movingTimeSeconds)}</Text>
+            <Text style={styles.debugRow}>Paused time: {formatElapsedClock(gpsDebug.pausedTimeSeconds)}</Text>
             <Text style={styles.debugRow}>Current pace: {gpsDebug.currentPace}</Text>
             <Text style={styles.debugRow}>Rolling pace: {gpsDebug.currentRollingPace}</Text>
             <Text style={styles.debugRow}>Raw pace: {gpsDebug.currentRawPace}</Text>
@@ -1421,45 +1425,22 @@ export default function Walk() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
     paddingVertical: 18,
     overflow: "hidden",
   },
-  bgGlowTop: {
-    position: "absolute",
-    top: -90,
-    right: -44,
-    width: 220,
-    height: 220,
-    borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.08)",
-  },
-  bgGlowBottom: {
-    position: "absolute",
-    bottom: -80,
-    left: -60,
-    width: 210,
-    height: 210,
-    borderRadius: 999,
-    backgroundColor: "rgba(242,181,65,0.12)",
-  },
   sessionCard: {
     width: "100%",
     maxWidth: 380,
-    borderRadius: 30,
-    paddingHorizontal: 22,
-    paddingTop: 18,
-    paddingBottom: 22,
-    backgroundColor: "rgba(255,255,255,0.88)",
-    borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
+    minHeight: 460,
+  },
+  sessionFire: {
+    position: "absolute",
+    right: 20,
+    bottom: 24,
   },
   sessionHeader: {
     flexDirection: "row",
@@ -1470,27 +1451,27 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.1)",
+    backgroundColor: "rgba(24,68,47,0.1)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: "rgba(24,68,47,0.16)",
   },
   sessionPillText: {
-    color: "#255E36",
+    color: "#18442F",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.3,
   },
   sessionHint: {
-    color: "rgba(11,15,14,0.46)",
+    color: "rgba(30,42,36,0.46)",
     fontSize: 12,
     fontWeight: "800",
   },
-  title: { fontSize: 26, fontWeight: "900", color: "#0B0F0E" },
-  sub: { marginTop: 10, fontSize: 14, fontWeight: "800", color: "rgba(11,15,14,0.65)" },
-  big: { marginTop: 8, fontSize: 60, fontWeight: "900", color: "#255E36", letterSpacing: -1.2 },
+  title: { fontSize: 26, fontWeight: "900", color: "#1E2A24" },
+  sub: { marginTop: 10, fontSize: 14, fontWeight: "800", color: "rgba(30,42,36,0.65)" },
+  big: { marginTop: 8, fontSize: 60, fontWeight: "900", color: OutdoorTheme.colors.forest },
   sessionSupport: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "700",
@@ -1503,21 +1484,21 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 16,
-    backgroundColor: "rgba(248,244,238,0.9)",
+    backgroundColor: "rgba(247,244,236,0.9)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.14)",
     alignItems: "center",
   },
-  metricK: { fontSize: 13, fontWeight: "800", color: "rgba(11,15,14,0.58)" },
-  metricV: { marginTop: 6, fontSize: 17, fontWeight: "900", color: "#0B0F0E" },
+  metricK: { fontSize: 13, fontWeight: "800", color: "rgba(30,42,36,0.58)" },
+  metricV: { marginTop: 6, fontSize: 17, fontWeight: "900", color: "#1E2A24" },
 
   warn: {
     marginTop: 14,
-    color: "#8C6412",
+    color: OutdoorTheme.colors.goldText,
     fontWeight: "800",
-    backgroundColor: "rgba(242,181,65,0.16)",
+    backgroundColor: "rgba(198,155,66,0.16)",
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.24)",
+    borderColor: "rgba(198,155,66,0.24)",
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 14,
@@ -1528,7 +1509,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   loadingText: {
-    color: "rgba(11,15,14,0.7)",
+    color: "rgba(30,42,36,0.7)",
     fontWeight: "800",
   },
   debugCard: {
@@ -1537,9 +1518,9 @@ const styles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 18,
     padding: 14,
-    backgroundColor: "rgba(11,15,14,0.92)",
+    backgroundColor: "rgba(30,42,36,0.92)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,249,239,0.08)",
   },
   debugTitle: {
     color: "#FFFFFF",
@@ -1553,7 +1534,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   debugRow: {
-    color: "rgba(255,255,255,0.86)",
+    color: "rgba(255,249,239,0.86)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -1574,7 +1555,7 @@ const styles = StyleSheet.create({
   },
   controlHint: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.58)",
+    color: "rgba(30,42,36,0.58)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -1583,7 +1564,7 @@ const styles = StyleSheet.create({
   },
 
   btnPrimary: {
-    backgroundColor: "#255E36",
+    backgroundColor: OutdoorTheme.colors.forest,
     minHeight: 56,
     paddingVertical: 16,
     borderRadius: 18,
@@ -1593,14 +1574,16 @@ const styles = StyleSheet.create({
   btnPrimaryText: { color: "white", fontWeight: "900", letterSpacing: 1 },
 
   btnPause: {
-    backgroundColor: "#F2B541",
+    backgroundColor: OutdoorTheme.colors.goldTint,
+    borderWidth: 1,
+    borderColor: "rgba(198,155,66,0.28)",
     minHeight: 56,
     paddingVertical: 16,
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
   },
-  btnPauseText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
+  btnPauseText: { color: "#1E2A24", fontWeight: "900", letterSpacing: 1 },
   btnDisabled: {
     opacity: 0.45,
   },
@@ -1624,16 +1607,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   back: { minHeight: 44, paddingVertical: 8, paddingHorizontal: 12, justifyContent: "center" },
-  backText: { color: "rgba(11,15,14,0.65)", fontWeight: "800" },
+  backText: { color: "rgba(30,42,36,0.65)", fontWeight: "800" },
   home: {
     minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: "rgba(37,94,54,0.10)",
+    borderRadius: OutdoorTheme.radii.sm,
+    backgroundColor: "rgba(24,68,47,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.18)",
+    borderColor: "rgba(24,68,47,0.18)",
     justifyContent: "center",
   },
-  homeText: { color: "#255E36", fontWeight: "900" },
+  homeText: { color: "#18442F", fontWeight: "900" },
 });

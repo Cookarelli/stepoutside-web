@@ -1,4 +1,5 @@
 import type { OutsideSession } from "../lib/store";
+import { formatElapsedClock } from "./time";
 
 type SessionFallback = {
   durationSec?: number;
@@ -10,10 +11,7 @@ type SessionFallback = {
 };
 
 export function formatDurationClock(seconds: number): string {
-  const safe = Math.max(0, Math.floor(seconds));
-  const minutes = Math.floor(safe / 60);
-  const remainder = safe % 60;
-  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+  return formatElapsedClock(seconds);
 }
 
 export function formatDurationMinutesLabel(seconds: number): string {

@@ -14,7 +14,15 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
 import { BrandBadge } from "../src/components/BrandBadge";
+import { OutdoorIcon } from "../src/components/OutdoorIcons";
+import {
+  MountainLayersIllustration,
+  PineForestIllustration,
+  TrailIllustration,
+} from "../src/components/OutdoorIllustrations";
+import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import {
   getLeaderboardPage,
   refreshCurrentUserLeaderboardEntry,
@@ -26,11 +34,11 @@ import {
 import { getSessions } from "../src/lib/store";
 
 const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  goldText: "#8A5D09",
+  forest: OutdoorTheme.colors.forest,
+  sunrise: OutdoorTheme.colors.gold,
+  bone: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
+  goldText: OutdoorTheme.colors.goldText,
 } as const;
 
 const PAGE_SIZE = 20;
@@ -63,10 +71,10 @@ function initialsFor(entry: RankedLeaderboardEntry): string {
 }
 
 function topThreeColor(rank: number): string {
-  if (rank === 1) return "rgba(242,181,65,0.34)";
-  if (rank === 2) return "rgba(242,181,65,0.22)";
-  if (rank === 3) return "rgba(242,181,65,0.16)";
-  return "rgba(248,244,238,0.10)";
+  if (rank === 1) return "rgba(198,155,66,0.34)";
+  if (rank === 2) return "rgba(198,155,66,0.22)";
+  if (rank === 3) return "rgba(198,155,66,0.16)";
+  return "rgba(247,244,236,0.10)";
 }
 
 type LeaderboardRowProps = {
@@ -81,7 +89,7 @@ function LeaderboardRow({ entry, pinned = false }: LeaderboardRowProps) {
     <View
       style={[
         styles.rowCard,
-        isTopThree ? { backgroundColor: topThreeColor(entry.rank), borderColor: "rgba(242,181,65,0.42)" } : null,
+        isTopThree ? { backgroundColor: topThreeColor(entry.rank), borderColor: "rgba(198,155,66,0.42)" } : null,
         entry.isCurrentUser || pinned ? styles.currentUserRow : null,
       ]}
     >
@@ -225,6 +233,7 @@ export default function LeaderboardScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <LayeredEnvironment />
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <View style={styles.headerBrand}>
@@ -240,12 +249,12 @@ export default function LeaderboardScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.heroCard}>
-          <Text style={styles.heroTitle}>Small walks, steady momentum.</Text>
-          <Text style={styles.heroBody}>
-            Compare weekly, monthly, and all-time progress across friends or the wider Step Outside community.
-          </Text>
-        </View>
+        <PremiumHero
+          style={styles.heroCard}
+          eyebrow="Leaderboard"
+          title="Small walks, steady momentum."
+          subtitle="Compare weekly, monthly, and all-time progress across friends or the wider Step Outside community."
+        />
 
         <View style={styles.controlCard}>
           <View style={styles.segmentedControl}>
@@ -305,25 +314,38 @@ export default function LeaderboardScreen() {
 
           {loading ? (
             <View style={styles.emptyState}>
+              <View pointerEvents="none" style={styles.emptyStateArt}>
+                <MountainLayersIllustration width={190} height={112} opacity={0.16} variant="forest" />
+              </View>
               <ActivityIndicator color={BRAND.sunrise} />
               <Text style={styles.emptyTitle}>Loading leaderboard...</Text>
               <Text style={styles.emptyBody}>Pulling the latest rankings.</Text>
             </View>
           ) : error ? (
             <View style={styles.emptyState}>
+              <View pointerEvents="none" style={styles.emptyStateArt}>
+                <TrailIllustration width={170} height={104} opacity={0.18} variant="forest" />
+              </View>
               <Text style={styles.emptyTitle}>Leaderboard unavailable</Text>
               <Text style={styles.emptyBody}>{error}</Text>
             </View>
           ) : showNoFriends ? (
             <View style={styles.emptyState}>
-              <Ionicons name="people-outline" size={28} color={BRAND.sunrise} />
+              <View pointerEvents="none" style={styles.emptyStateArt}>
+                <TrailIllustration width={170} height={104} opacity={0.24} variant="forest" />
+                <PineForestIllustration width={190} height={100} opacity={0.12} variant="forest" style={styles.emptyStateForest} />
+              </View>
+              <OutdoorIcon name="tree" size={29} color={BRAND.sunrise} accentColor={OutdoorTheme.colors.campfire} />
               <Text style={styles.emptyTitle}>No friends yet</Text>
-              <Text style={styles.emptyBody}>Add friends from Profile to start a friends-only ranking.</Text>
+              <Text style={styles.emptyBody}>A quiet trail is open. Add friends from Profile to start a friends-only ranking.</Text>
             </View>
           ) : showNoData ? (
             <View style={styles.emptyState}>
-              <Ionicons name="podium-outline" size={28} color={BRAND.sunrise} />
-              <Text style={styles.emptyTitle}>No leaderboard data</Text>
+              <View pointerEvents="none" style={styles.emptyStateArt}>
+                <MountainLayersIllustration width={190} height={112} opacity={0.22} variant="forest" />
+              </View>
+              <OutdoorIcon name="mountain" size={29} color={BRAND.sunrise} accentColor={OutdoorTheme.colors.campfire} />
+              <Text style={styles.emptyTitle}>A mountain waiting to be climbed</Text>
               <Text style={styles.emptyBody}>Completed walks will appear here after rankings sync.</Text>
             </View>
           ) : (
@@ -349,7 +371,7 @@ export default function LeaderboardScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BRAND.bone,
+    backgroundColor: "transparent",
   },
   container: {
     flexGrow: 1,
@@ -389,24 +411,15 @@ const styles = StyleSheet.create({
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 8,
+    borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(37,94,54,0.10)",
+    backgroundColor: "rgba(24,68,47,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.14)",
   },
   heroCard: {
-    borderRadius: 8,
-    padding: 18,
-    backgroundColor: "rgba(255,255,255,0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
-    shadowColor: "#1F4A2C",
-    shadowOpacity: 0.07,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 2,
+    minHeight: 260,
   },
   heroTitle: {
     fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
@@ -417,17 +430,17 @@ const styles = StyleSheet.create({
   },
   heroBody: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700",
   },
   controlCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 10,
-    backgroundColor: "rgba(37,94,54,0.94)",
+    backgroundColor: "rgba(24,68,47,0.94)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.98)",
+    borderColor: "rgba(24,68,47,0.98)",
   },
   segmentedControl: {
     flexDirection: "row",
@@ -436,7 +449,7 @@ const styles = StyleSheet.create({
   segmentButton: {
     flex: 1,
     minHeight: 42,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -444,7 +457,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.bone,
   },
   segmentButtonText: {
-    color: "rgba(248,244,238,0.74)",
+    color: "rgba(247,244,236,0.74)",
     fontSize: 14,
     fontWeight: "900",
   },
@@ -459,19 +472,19 @@ const styles = StyleSheet.create({
   periodButton: {
     flex: 1,
     minHeight: 36,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.16)",
+    borderColor: "rgba(247,244,236,0.16)",
     paddingHorizontal: 4,
   },
   periodButtonActive: {
-    backgroundColor: "rgba(242,181,65,0.22)",
-    borderColor: "rgba(242,181,65,0.44)",
+    backgroundColor: "rgba(198,155,66,0.22)",
+    borderColor: "rgba(198,155,66,0.44)",
   },
   periodButtonText: {
-    color: "rgba(248,244,238,0.72)",
+    color: "rgba(247,244,236,0.72)",
     fontSize: 12,
     fontWeight: "900",
   },
@@ -479,11 +492,11 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   pinnedCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 12,
-    backgroundColor: "rgba(242,181,65,0.18)",
+    backgroundColor: "rgba(198,155,66,0.18)",
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.34)",
+    borderColor: "rgba(198,155,66,0.34)",
   },
   pinnedHeader: {
     flexDirection: "row",
@@ -504,11 +517,11 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   boardCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 12,
     backgroundColor: BRAND.forest,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.98)",
+    borderColor: "rgba(24,68,47,0.98)",
   },
   boardHeader: {
     flexDirection: "row",
@@ -531,25 +544,25 @@ const styles = StyleSheet.create({
   },
   rowCard: {
     marginTop: 10,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    backgroundColor: "rgba(248,244,238,0.10)",
+    backgroundColor: "rgba(247,244,236,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.14)",
+    borderColor: "rgba(247,244,236,0.14)",
   },
   currentUserRow: {
-    borderColor: "rgba(242,181,65,0.72)",
+    borderColor: "rgba(198,155,66,0.72)",
   },
   rankBadge: {
     width: 42,
     minHeight: 42,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(248,244,238,0.12)",
+    backgroundColor: "rgba(247,244,236,0.12)",
   },
   rankBadgeGold: {
     backgroundColor: BRAND.sunrise,
@@ -569,9 +582,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(248,244,238,0.14)",
+    backgroundColor: "rgba(247,244,236,0.14)",
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.44)",
+    borderColor: "rgba(198,155,66,0.44)",
   },
   avatarImage: {
     width: "100%",
@@ -593,7 +606,7 @@ const styles = StyleSheet.create({
   },
   name: {
     marginTop: 2,
-    color: "rgba(248,244,238,0.70)",
+    color: "rgba(247,244,236,0.70)",
     fontSize: 12,
     fontWeight: "700",
   },
@@ -605,7 +618,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   metricText: {
-    color: "rgba(248,244,238,0.78)",
+    color: "rgba(247,244,236,0.78)",
     fontSize: 11,
     fontWeight: "800",
   },
@@ -616,32 +629,51 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     marginTop: 10,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     alignItems: "center",
-    padding: 18,
-    backgroundColor: "rgba(248,244,238,0.10)",
+    minHeight: 178,
+    padding: 22,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(247,244,236,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(248,244,238,0.14)",
+    borderColor: "rgba(247,244,236,0.14)",
+    overflow: "hidden",
+  },
+  emptyStateArt: {
+    position: "absolute",
+    top: 4,
+    right: -10,
+    width: 196,
+    height: 118,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyStateForest: {
+    position: "absolute",
+    right: -18,
+    bottom: -20,
   },
   emptyTitle: {
-    marginTop: 8,
+    marginTop: 10,
     color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "900",
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "700",
     textAlign: "center",
   },
   emptyBody: {
     marginTop: 6,
-    color: "rgba(248,244,238,0.72)",
-    fontSize: 13,
-    lineHeight: 19,
+    color: "rgba(247,244,236,0.72)",
+    fontSize: 14,
+    lineHeight: 21,
     fontWeight: "700",
     textAlign: "center",
   },
   loadMoreButton: {
     marginTop: 12,
     minHeight: 50,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     backgroundColor: BRAND.bone,
     flexDirection: "row",
     gap: 8,

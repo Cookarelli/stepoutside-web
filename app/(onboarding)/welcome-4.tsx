@@ -5,10 +5,10 @@ import { OnboardingJournalPage } from "../../src/components/OnboardingJournalPag
 import { getPostWelcomeRoute } from "../../src/lib/authFlow";
 import { completeOnboarding } from "../../src/lib/onboarding";
 
-export default function Welcome2() {
+export default function Welcome4() {
   const router = useRouter();
 
-  const skip = async () => {
+  const finish = async () => {
     await completeOnboarding();
     const nextRoute = await getPostWelcomeRoute();
     router.replace(nextRoute as never);
@@ -16,16 +16,15 @@ export default function Welcome2() {
 
   return (
     <OnboardingJournalPage
-      step={2}
-      tone="ember"
-      eyebrow="Keep the fire"
-      title="Keep Your Fire Burning."
-      body={"Every walk adds fuel.\n\nEvery day you show up keeps your fire alive.\n\nOne day becomes one week.\n\nOne week becomes one month."}
-      reflection="Small moments become lasting change."
-      primaryLabel="Continue"
+      step={4}
+      tone="campfire"
+      eyebrow="Start where you are"
+      title="Every Step Matters."
+      body={"This isn't about being perfect.\n\nIt's about showing up today.\n\nAnd tomorrow.\n\nOne walk.\n\nOne breath.\n\nOne step at a time."}
+      reflection="The trail keeps going. Your fire is already lit."
+      primaryLabel="Start My Journey"
       onBackPress={() => router.back()}
-      onPrimaryPress={() => router.push("/(onboarding)/welcome-3")}
-      onSkipPress={skip}
+      onPrimaryPress={finish}
     />
   );
 }

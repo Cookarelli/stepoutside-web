@@ -4,6 +4,14 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, T
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PURCHASES_ERROR_CODE, type PurchasesError } from "react-native-purchases";
 
+import { OutdoorTheme } from "../constants/theme";
+import { EmptyStateCard, LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
+import {
+  logPaywallViewed,
+  logRestorePurchasesTapped,
+  logSubscriptionRestored,
+  logSubscriptionStarted,
+} from "../src/lib/analytics";
 import {
   clearProState,
   formatProMembershipLabel,
@@ -18,13 +26,13 @@ import {
 } from "../src/lib/pro";
 
 const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
+  forest: OutdoorTheme.colors.forest,
+  sunrise: OutdoorTheme.colors.gold,
+  bone: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
   red: "#C83333",
-  mist: "#E7EEE6",
-  sand: "#EFE7DA",
+  mist: OutdoorTheme.colors.mist,
+  sand: OutdoorTheme.colors.sand,
 } as const;
 
 const PRIVACY_URL = "https://stepoutside.app/privacy-policy";
@@ -72,6 +80,7 @@ export default function ProScreen() {
   }, []);
 
   useEffect(() => {
+    void logPaywallViewed("pro_screen");
     void (async () => {
       await load();
     })();
@@ -86,6 +95,7 @@ export default function ProScreen() {
     try {
       const next = await purchaseProPlan(pkg.plan, pkg.rcPackage);
       setProStateLocal(next);
+      void logSubscriptionStarted(pkg.plan);
       Alert.alert(
         next.isPro ? "Premium unlocked" : "Purchase complete",
         billingReady
@@ -113,9 +123,13 @@ export default function ProScreen() {
 
   const restore = async () => {
     setBusyAction("restore");
+    void logRestorePurchasesTapped("pro_screen");
     try {
       const next = await restorePurchasesScaffold();
       setProStateLocal(next);
+      if (next.isPro) {
+        void logSubscriptionRestored();
+      }
       Alert.alert(
         next.isPro ? "Purchases restored" : "No Premium purchases found",
         billingReady
@@ -174,16 +188,19 @@ export default function ProScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <LayeredEnvironment />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.container}>
-          <View style={styles.hero}>
-            <Text style={styles.eyebrow}>Step Outside Premium</Text>
-            <Text style={styles.title}>Premium tools for a steadier outdoor rhythm.</Text>
-            <Text style={styles.sub}>{PRO_DESCRIPTION}</Text>
+          <PremiumHero
+            style={styles.hero}
+            eyebrow="Step Outside Premium"
+            title="Premium tools for a steadier outdoor rhythm."
+            subtitle={PRO_DESCRIPTION}
+          >
             <Text style={styles.heroSupport}>
               Monthly, annual, and lifetime options are billed through Apple using live App Store pricing.
             </Text>
-          </View>
+          </PremiumHero>
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Current status</Text>
@@ -208,17 +225,19 @@ export default function ProScreen() {
               <Text style={styles.loadingText}>Loading plans…</Text>
             </View>
           ) : packages.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Plans not available right now</Text>
-              <Text style={styles.emptyBody}>
-                {billingReady
+            <EmptyStateCard
+              title="Plans not available right now"
+              body={
+                billingReady
                   ? "RevenueCat returned no active packages for this paywall yet. Please try again in a moment."
-                  : "Purchases are unavailable in this build right now."}
-              </Text>
-              <Pressable style={styles.retryBtn} onPress={() => void load()} disabled={busyAction !== null}>
-                <Text style={styles.retryText}>Reload plans</Text>
-              </Pressable>
-            </View>
+                  : "Purchases are unavailable in this build right now."
+              }
+              actionLabel="Reload plans"
+              onActionPress={() => void load()}
+              actionDisabled={busyAction !== null}
+              illustration="campsite"
+              style={styles.emptyCard}
+            />
           ) : (
             packages.map((pkg) => {
               const featured = pkg.plan === "yearly";
@@ -236,15 +255,21 @@ export default function ProScreen() {
                 >
                   <View style={styles.planTopRow}>
                     <View style={styles.planTitleWrap}>
-                      <Text style={featured ? styles.featuredTitle : styles.planTitle}>{pkg.title}</Text>
-                      <Text style={featured ? styles.featuredPeriod : styles.planPeriod}>{pkg.periodLabel}</Text>
+                      <Text style={featured ? styles.featuredTitle : styles.planTitle} numberOfLines={2}>
+                        {pkg.title}
+                      </Text>
+                      <Text style={featured ? styles.featuredPeriod : styles.planPeriod} numberOfLines={2}>
+                        {pkg.periodLabel}
+                      </Text>
                       {pkg.badge ? (
                         <View style={featured ? styles.featuredBadge : styles.planBadge}>
                           <Text style={featured ? styles.featuredBadgeText : styles.planBadgeText}>{pkg.badge}</Text>
                         </View>
                       ) : null}
                     </View>
-                    <Text style={featured ? styles.featuredPrice : styles.planPrice}>{pkg.priceLabel}</Text>
+                    <Text style={featured ? styles.featuredPrice : styles.planPrice} numberOfLines={2}>
+                      {pkg.priceLabel}
+                    </Text>
                   </View>
                   <Text style={featured ? styles.featuredDetail : styles.planDetail}>{pkg.detail}</Text>
                   <Text style={featured ? styles.featuredFootnote : styles.planFootnote}>
@@ -300,15 +325,11 @@ export default function ProScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BRAND.bone },
+  safe: { flex: 1, backgroundColor: "transparent" },
   content: { flexGrow: 1, paddingVertical: 10 },
-  container: { flex: 1, backgroundColor: BRAND.bone, padding: 20 },
+  container: { flex: 1, padding: 20 },
   hero: {
-    padding: 18,
-    borderRadius: 22,
-    backgroundColor: BRAND.mist,
-    borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.1)",
+    minHeight: 286,
   },
   eyebrow: {
     fontSize: 12,
@@ -318,20 +339,21 @@ const styles = StyleSheet.create({
     color: BRAND.forest,
   },
   title: { marginTop: 8, fontSize: 30, lineHeight: 34, fontWeight: "900", color: BRAND.charcoal },
-  sub: { marginTop: 10, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 22 },
-  heroSupport: { marginTop: 10, color: "rgba(11,15,14,0.56)", fontWeight: "700", lineHeight: 20, fontSize: 13 },
+  sub: { marginTop: 10, color: "rgba(30,42,36,0.72)", fontWeight: "700", lineHeight: 22 },
+  heroSupport: { marginTop: 10, color: "rgba(30,42,36,0.56)", fontWeight: "700", lineHeight: 20, fontSize: 13 },
   card: {
     marginTop: 18,
-    borderRadius: 16,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: "rgba(30,42,36,0.12)",
+    ...OutdoorTheme.shadows.soft,
   },
   cardTitle: { fontWeight: "900", color: BRAND.charcoal },
-  cardBody: { marginTop: 4, fontWeight: "700", color: "rgba(11,15,14,0.72)" },
-  cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: "rgba(11,15,14,0.58)" },
-  offeringNote: { marginTop: 8, color: "rgba(11,15,14,0.42)", fontSize: 11, fontWeight: "700" },
+  cardBody: { marginTop: 4, fontWeight: "700", color: "rgba(30,42,36,0.72)" },
+  cardCaption: { marginTop: 8, fontWeight: "700", fontSize: 12, lineHeight: 18, color: "rgba(30,42,36,0.58)" },
+  offeringNote: { marginTop: 8, color: "rgba(30,42,36,0.42)", fontSize: 11, fontWeight: "700" },
   alertCard: {
     marginTop: 14,
     borderRadius: 16,
@@ -341,14 +363,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(200,51,51,0.18)",
   },
   alertTitle: { fontWeight: "900", color: BRAND.red },
-  alertBody: { marginTop: 6, color: "rgba(11,15,14,0.72)", fontWeight: "700", lineHeight: 20 },
+  alertBody: { marginTop: 6, color: "rgba(30,42,36,0.72)", fontWeight: "700", lineHeight: 20 },
   retryBtn: {
     marginTop: 12,
     alignSelf: "flex-start",
     paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 10,
-    backgroundColor: "rgba(37,94,54,0.12)",
+    backgroundColor: "rgba(24,68,47,0.12)",
   },
   retryText: { color: BRAND.forest, fontWeight: "900" },
   loadingWrap: {
@@ -357,53 +379,49 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 16,
     alignItems: "center",
-    backgroundColor: "rgba(11,15,14,0.04)",
+    backgroundColor: "rgba(30,42,36,0.04)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
-  loadingText: { marginTop: 8, color: "rgba(11,15,14,0.62)", fontWeight: "700" },
+  loadingText: { marginTop: 8, color: "rgba(30,42,36,0.62)", fontWeight: "700" },
   emptyCard: {
     marginTop: 16,
     borderRadius: 18,
     padding: 18,
-    backgroundColor: "rgba(11,15,14,0.04)",
+    backgroundColor: "rgba(30,42,36,0.04)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   emptyTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17 },
-  emptyBody: { marginTop: 8, color: "rgba(11,15,14,0.64)", fontWeight: "700", lineHeight: 21 },
+  emptyBody: { marginTop: 8, color: "rgba(30,42,36,0.64)", fontWeight: "700", lineHeight: 21 },
   featuredPlan: {
     marginTop: 16,
     backgroundColor: BRAND.forest,
     paddingVertical: 16,
     paddingHorizontal: 16,
-    borderRadius: 18,
-    shadowColor: "#1F4A2C",
-    shadowOpacity: 0.12,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
+    borderRadius: OutdoorTheme.radii.lg,
+    ...OutdoorTheme.shadows.card,
   },
   planCard: {
     marginTop: 10,
     backgroundColor: BRAND.sand,
     paddingVertical: 16,
     paddingHorizontal: 16,
-    borderRadius: 18,
+    borderRadius: OutdoorTheme.radii.lg,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   planDisabled: { opacity: 0.75 },
   featuredTitle: { color: "white", fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
   planTitle: { color: BRAND.charcoal, fontWeight: "900", fontSize: 17, lineHeight: 22, flexShrink: 1 },
-  featuredPeriod: { color: "rgba(255,255,255,0.84)", fontWeight: "800", fontSize: 13 },
-  planPeriod: { color: "rgba(11,15,14,0.72)", fontWeight: "800", fontSize: 13 },
-  featuredPrice: { color: "white", fontWeight: "900", fontSize: 18, marginLeft: 12 },
-  planPrice: { color: BRAND.charcoal, fontWeight: "900", fontSize: 18, marginLeft: 12 },
-  featuredDetail: { marginTop: 10, color: "rgba(255,255,255,0.84)", fontWeight: "700" },
-  planDetail: { marginTop: 10, color: "rgba(11,15,14,0.66)", fontWeight: "700" },
-  featuredFootnote: { marginTop: 10, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 },
-  planFootnote: { marginTop: 10, color: "rgba(11,15,14,0.54)", fontWeight: "800", fontSize: 12 },
+  featuredPeriod: { color: "rgba(255,249,239,0.84)", fontWeight: "800", fontSize: 13 },
+  planPeriod: { color: "rgba(30,42,36,0.72)", fontWeight: "800", fontSize: 13 },
+  featuredPrice: { color: "white", fontWeight: "900", fontSize: 18, lineHeight: 23, marginLeft: 12, flexShrink: 1, textAlign: "right" },
+  planPrice: { color: BRAND.charcoal, fontWeight: "900", fontSize: 18, lineHeight: 23, marginLeft: 12, flexShrink: 1, textAlign: "right" },
+  featuredDetail: { marginTop: 10, color: "rgba(255,249,239,0.84)", fontWeight: "700" },
+  planDetail: { marginTop: 10, color: "rgba(30,42,36,0.66)", fontWeight: "700" },
+  featuredFootnote: { marginTop: 10, color: "rgba(255,249,239,0.72)", fontWeight: "800", fontSize: 12 },
+  planFootnote: { marginTop: 10, color: "rgba(30,42,36,0.54)", fontWeight: "800", fontSize: 12 },
   planTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -413,14 +431,14 @@ const styles = StyleSheet.create({
   planTitleWrap: { flex: 1, gap: 8 },
   featuredBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,249,239,0.18)",
     paddingVertical: 5,
     paddingHorizontal: 9,
     borderRadius: 999,
   },
   planBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(37,94,54,0.12)",
+    backgroundColor: "rgba(24,68,47,0.12)",
     paddingVertical: 5,
     paddingHorizontal: 9,
     borderRadius: 999,
@@ -429,28 +447,28 @@ const styles = StyleSheet.create({
   planBadgeText: { color: BRAND.forest, fontWeight: "900", fontSize: 11, letterSpacing: 0.3 },
   activePlan: {
     borderWidth: 2,
-    borderColor: "rgba(11,15,14,0.16)",
+    borderColor: "rgba(30,42,36,0.16)",
   },
   disclosureCard: {
     marginTop: 16,
-    borderRadius: 16,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: "rgba(30,42,36,0.12)",
     gap: 8,
   },
   disclosureTitle: { color: BRAND.charcoal, fontWeight: "900" },
-  disclosureBody: { color: "rgba(11,15,14,0.7)", fontWeight: "700", lineHeight: 20 },
+  disclosureBody: { color: "rgba(30,42,36,0.7)", fontWeight: "700", lineHeight: 20 },
   restoreBtn: {
     marginTop: 18,
     minHeight: 52,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 14,
-    backgroundColor: "rgba(37,94,54,0.1)",
+    backgroundColor: "rgba(24,68,47,0.1)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.14)",
     paddingVertical: 13,
   },
   restoreText: { fontWeight: "900", color: BRAND.forest },
@@ -460,9 +478,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 14,
-    backgroundColor: "rgba(11,15,14,0.05)",
+    backgroundColor: "rgba(30,42,36,0.05)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.09)",
+    borderColor: "rgba(30,42,36,0.09)",
     paddingVertical: 12,
   },
   manageText: { fontWeight: "900", color: BRAND.charcoal },
@@ -477,12 +495,12 @@ const styles = StyleSheet.create({
   done: {
     marginTop: 20,
     alignSelf: "flex-start",
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: "rgba(30,42,36,0.08)",
     borderRadius: 12,
     minHeight: 44,
     paddingVertical: 10,
     paddingHorizontal: 14,
     justifyContent: "center",
   },
-  doneText: { fontWeight: "900", color: "rgba(11,15,14,0.72)" },
+  doneText: { fontWeight: "900", color: "rgba(30,42,36,0.72)" },
 });

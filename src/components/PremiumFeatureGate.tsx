@@ -25,7 +25,7 @@ export function PremiumFeatureGate({
   if (isLoading) {
     return (
       <View style={[styles.stateCard, style]}>
-        <ActivityIndicator color="#255E36" />
+        <ActivityIndicator color="#18442F" />
         <Text style={styles.stateText}>Checking Premium access…</Text>
       </View>
     );
@@ -54,25 +54,25 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   stateText: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "700",
   },
   lockedCard: {
     marginTop: 12,
     borderRadius: 16,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.48)",
+    backgroundColor: "rgba(255,249,239,0.48)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.10)",
+    borderColor: "rgba(30,42,36,0.10)",
   },
   title: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontWeight: "900",
     fontSize: 16,
   },
   body: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontWeight: "700",
     lineHeight: 20,
   },
@@ -84,7 +84,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 12,
-    backgroundColor: "#255E36",
+    backgroundColor: "#18442F",
   },
   buttonText: {
     color: "#FFFFFF",

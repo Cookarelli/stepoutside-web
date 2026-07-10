@@ -14,6 +14,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { OutdoorIcon } from "../src/components/OutdoorIcons";
+import { EmptyStateCard, LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import {
   DEFAULT_FRIEND_CHALLENGE_OPTIONS,
   sendFriendChallengeInvitation,
@@ -22,10 +25,10 @@ import {
 import { getFriendsList, removeFriend, type FriendListItem } from "../src/lib/friendSystem";
 
 const BRAND = {
-  forest: "#255E36",
-  cream: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  gold: "#B98216",
+  forest: OutdoorTheme.colors.forest,
+  cream: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
+  gold: OutdoorTheme.colors.gold,
 } as const;
 
 function initialsFor(item: FriendListItem): string {
@@ -135,6 +138,7 @@ export default function FriendsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <LayeredEnvironment />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.iconButton, pressed ? styles.pressed : null]}>
           <Ionicons name="chevron-back" size={22} color={BRAND.charcoal} />
@@ -144,7 +148,7 @@ export default function FriendsScreen() {
           onPress={() => router.push("/friends-search" as never)}
           style={({ pressed }) => [styles.iconButton, pressed ? styles.pressed : null]}
         >
-          <Ionicons name="person-add" size={20} color={BRAND.charcoal} />
+          <OutdoorIcon name="binoculars" size={21} color={BRAND.charcoal} />
         </Pressable>
       </View>
 
@@ -158,6 +162,13 @@ export default function FriendsScreen() {
           />
         }
       >
+        <PremiumHero
+          style={styles.hero}
+          eyebrow="Your circle"
+          title="Friends"
+          subtitle="Keep your outdoor momentum close with the people who make showing up easier."
+        />
+
         {status ? <Text style={styles.statusText}>{status}</Text> : null}
 
         {isLoading ? (
@@ -168,18 +179,14 @@ export default function FriendsScreen() {
         ) : null}
 
         {!isLoading && friends.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Ionicons name="people" size={24} color={BRAND.forest} />
-            <Text style={styles.emptyTitle}>No friends yet</Text>
-            <Text style={styles.emptyBody}>Search by username to start building your Step Outside circle.</Text>
-            <Pressable
-              onPress={() => router.push("/friends-search" as never)}
-              style={({ pressed }) => [styles.emptyButton, pressed ? styles.pressed : null]}
-            >
-              <Ionicons name="search" size={17} color="#FFFFFF" />
-              <Text style={styles.emptyButtonText}>Find Friends</Text>
-            </Pressable>
-          </View>
+          <EmptyStateCard
+            title="No friends yet"
+            body="A quiet trail is open. Search by username when you are ready to build your Step Outside circle."
+            actionLabel="Find Friends"
+            onActionPress={() => router.push("/friends-search" as never)}
+            illustration="trail"
+            icon={<OutdoorIcon name="binoculars" size={20} color={BRAND.forest} accentColor={BRAND.gold} />}
+          />
         ) : null}
 
         {friends.map((friend) => {
@@ -254,7 +261,7 @@ export default function FriendsScreen() {
                 {isChallenging ? (
                   <ActivityIndicator color={BRAND.forest} />
                 ) : (
-                  <Ionicons name="flag" size={17} color={BRAND.forest} />
+                  <OutdoorIcon name="trail" size={18} color={BRAND.forest} />
                 )}
                 <Text style={styles.challengeButtonText}>
                   {isChallenging ? "Sending Challenge..." : "Challenge Friend"}
@@ -271,7 +278,7 @@ export default function FriendsScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: BRAND.cream,
+    backgroundColor: "transparent",
   },
   header: {
     flexDirection: "row",
@@ -286,9 +293,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   headerTitle: {
     color: BRAND.charcoal,
@@ -300,33 +307,38 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
     gap: 14,
   },
+  hero: {
+    minHeight: 258,
+  },
   statusText: {
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "800",
   },
   loadingCard: {
     minHeight: 86,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
+    borderColor: "rgba(24,68,47,0.10)",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
+    ...OutdoorTheme.shadows.soft,
   },
   loadingText: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "800",
   },
   emptyCard: {
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
+    borderColor: "rgba(24,68,47,0.10)",
     padding: 18,
     gap: 10,
+    ...OutdoorTheme.shadows.soft,
   },
   emptyTitle: {
     color: BRAND.charcoal,
@@ -334,7 +346,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   emptyBody: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "800",
@@ -356,12 +368,13 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   friendCard: {
-    borderRadius: 18,
+    borderRadius: OutdoorTheme.radii.xl,
     backgroundColor: BRAND.forest,
     borderWidth: 1,
-    borderColor: "rgba(185,130,22,0.34)",
+    borderColor: "rgba(198,155,66,0.34)",
     padding: 16,
     gap: 14,
+    ...OutdoorTheme.shadows.card,
   },
   friendTopRow: {
     flexDirection: "row",
@@ -372,12 +385,12 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,249,239,0.14)",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.24)",
+    borderColor: "rgba(255,249,239,0.24)",
   },
   avatarImage: {
     width: "100%",
@@ -399,7 +412,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   friendUsername: {
-    color: "rgba(255,255,255,0.74)",
+    color: "rgba(255,249,239,0.74)",
     fontSize: 13,
     fontWeight: "900",
   },
@@ -409,9 +422,9 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.92)",
+    backgroundColor: "rgba(255,249,239,0.92)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.28)",
+    borderColor: "rgba(255,249,239,0.28)",
   },
   statsRow: {
     flexDirection: "row",
@@ -421,9 +434,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 68,
     borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,249,239,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
+    borderColor: "rgba(255,249,239,0.16)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
@@ -435,21 +448,21 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   statLabel: {
-    color: "rgba(255,255,255,0.72)",
+    color: "rgba(255,249,239,0.72)",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
   },
   activityHint: {
-    color: "rgba(255,255,255,0.66)",
+    color: "rgba(255,249,239,0.66)",
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "800",
   },
   challengeButton: {
     minHeight: 48,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.94)",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,249,239,0.94)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

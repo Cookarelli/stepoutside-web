@@ -1,8 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { OutdoorTheme } from "../constants/theme";
+import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
+import { logProfileCompleted, logProfileUpdated } from "../src/lib/analytics";
 import {
   editableProfileFromSources,
   emptyEditableProfile,
@@ -49,9 +52,14 @@ export default function EditProfileScreen() {
   const onSave = async () => {
     if (saving) return;
 
+    Keyboard.dismiss();
     setSaving(true);
     try {
       await saveCurrentUserProfile(profile);
+      void logProfileUpdated();
+      if (profile.displayName.trim() && profile.username.trim()) {
+        void logProfileCompleted();
+      }
       router.back();
     } catch (error) {
       Alert.alert("Profile not saved", error instanceof Error ? error.message : "Please try again in a moment.");
@@ -61,20 +69,24 @@ export default function EditProfileScreen() {
   };
 
   return (
+    <View style={styles.screen}>
+      <LayeredEnvironment />
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={22} color="#255E36" />
-        </Pressable>
-        <View style={styles.headerCopy}>
-          <Text style={styles.eyebrow}>Step Outside</Text>
-          <Text style={styles.title}>Edit Profile</Text>
-        </View>
-      </View>
+      <PremiumHero
+        style={styles.header}
+        topSlot={(
+          <Pressable onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="chevron-back" size={22} color="#18442F" />
+          </Pressable>
+        )}
+        eyebrow="Step Outside"
+        title="Edit Profile"
+        subtitle="Keep your public trail identity clear and current."
+      />
 
       {loading ? (
         <View style={styles.loadingCard}>
-          <ActivityIndicator color="#255E36" />
+          <ActivityIndicator color="#18442F" />
           <Text style={styles.loadingText}>Loading profile...</Text>
         </View>
       ) : (
@@ -84,7 +96,7 @@ export default function EditProfileScreen() {
             value={profile.displayName}
             onChangeText={(value) => updateField("displayName", value)}
             placeholder="Your name"
-            placeholderTextColor="rgba(11,15,14,0.4)"
+            placeholderTextColor="rgba(30,42,36,0.4)"
             style={styles.input}
           />
 
@@ -95,7 +107,7 @@ export default function EditProfileScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             placeholder="username"
-            placeholderTextColor="rgba(11,15,14,0.4)"
+            placeholderTextColor="rgba(30,42,36,0.4)"
             style={styles.input}
           />
 
@@ -104,7 +116,7 @@ export default function EditProfileScreen() {
             value={profile.location}
             onChangeText={(value) => updateField("location", value)}
             placeholder="City, state"
-            placeholderTextColor="rgba(11,15,14,0.4)"
+            placeholderTextColor="rgba(30,42,36,0.4)"
             style={styles.input}
           />
 
@@ -113,7 +125,7 @@ export default function EditProfileScreen() {
             value={profile.favoriteActivity}
             onChangeText={(value) => updateField("favoriteActivity", value)}
             placeholder="Walks, hikes, resets"
-            placeholderTextColor="rgba(11,15,14,0.4)"
+            placeholderTextColor="rgba(30,42,36,0.4)"
             style={styles.input}
           />
 
@@ -122,7 +134,7 @@ export default function EditProfileScreen() {
             value={profile.outdoorGoal}
             onChangeText={(value) => updateField("outdoorGoal", value)}
             placeholder="What are you building?"
-            placeholderTextColor="rgba(11,15,14,0.4)"
+            placeholderTextColor="rgba(30,42,36,0.4)"
             style={[styles.input, styles.textArea]}
             multiline
           />
@@ -137,21 +149,23 @@ export default function EditProfileScreen() {
         </View>
       )}
     </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   container: {
     flexGrow: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
     padding: 18,
     paddingBottom: 36,
   },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     marginBottom: 18,
+    minHeight: 270,
   },
   backButton: {
     width: 42,
@@ -159,13 +173,15 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(37,94,54,0.1)",
+    backgroundColor: OutdoorTheme.colors.forestTint,
+    borderWidth: 1,
+    borderColor: OutdoorTheme.colors.line,
   },
   headerCopy: {
     flex: 1,
   },
   eyebrow: {
-    color: "#8A5D09",
+    color: OutdoorTheme.colors.goldText,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1.2,
@@ -177,32 +193,34 @@ const styles = StyleSheet.create({
     fontSize: 34,
     lineHeight: 39,
     fontWeight: "700",
-    color: "#0B0F0E",
+    color: OutdoorTheme.colors.charcoal,
   },
   loadingCard: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 18,
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.1)",
+    borderColor: OutdoorTheme.colors.lineSoft,
+    ...OutdoorTheme.shadows.soft,
   },
   loadingText: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "800",
   },
   card: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.76)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: OutdoorTheme.colors.line,
+    ...OutdoorTheme.shadows.soft,
   },
   label: {
     marginTop: 12,
     marginBottom: 7,
-    color: "#255E36",
+    color: OutdoorTheme.colors.forest,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
@@ -210,11 +228,11 @@ const styles = StyleSheet.create({
   },
   input: {
     minHeight: 50,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
-    backgroundColor: "#FFFFFF",
-    color: "#0B0F0E",
+    borderColor: "rgba(30,42,36,0.12)",
+    backgroundColor: OutdoorTheme.colors.paper,
+    color: OutdoorTheme.colors.charcoal,
     paddingHorizontal: 13,
     fontSize: 15,
     fontWeight: "700",
@@ -227,10 +245,10 @@ const styles = StyleSheet.create({
   saveButton: {
     marginTop: 18,
     minHeight: 52,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#255E36",
+    backgroundColor: OutdoorTheme.colors.forest,
   },
   saveButtonText: {
     color: "#FFFFFF",

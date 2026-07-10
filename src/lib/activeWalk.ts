@@ -43,10 +43,6 @@ function completedWalkDraftKeyForUid(uid: string): string {
   return `${ACTIVE_WALK_PREFIX}:${uid}:completedWalkDraft`;
 }
 
-async function removeLegacyActiveWalkStorage(): Promise<void> {
-  await AsyncStorage.multiRemove([LEGACY_KEY_ACTIVE_WALK, LEGACY_KEY_COMPLETED_WALK_DRAFT]);
-}
-
 export async function clearActiveWalkStorageForUid(uid: string | null | undefined): Promise<void> {
   const keys = [LEGACY_KEY_ACTIVE_WALK, LEGACY_KEY_COMPLETED_WALK_DRAFT];
   if (uid) {
@@ -56,31 +52,7 @@ export async function clearActiveWalkStorageForUid(uid: string | null | undefine
   await AsyncStorage.multiRemove(keys);
 }
 
-async function clearActiveWalkSnapshotForUid(uid: string | null | undefined): Promise<void> {
-  const keys = [LEGACY_KEY_ACTIVE_WALK];
-  if (uid) {
-    keys.push(activeWalkKeyForUid(uid));
-  }
-
-  await AsyncStorage.multiRemove(keys);
-}
-
-async function clearCompletedWalkDraftForUid(uid: string | null | undefined): Promise<void> {
-  const keys = [LEGACY_KEY_COMPLETED_WALK_DRAFT];
-  if (uid) {
-    keys.push(completedWalkDraftKeyForUid(uid));
-  }
-
-  await AsyncStorage.multiRemove(keys);
-}
-
-export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
-  await removeLegacyActiveWalkStorage();
-
-  const uid = currentUid();
-  if (!uid) return null;
-
-  const raw = await AsyncStorage.getItem(activeWalkKeyForUid(uid));
+function parseActiveWalkSnapshot(raw: string | null): ActiveWalkSnapshot | null {
   if (!raw) return null;
 
   try {
@@ -131,31 +103,7 @@ export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null
   }
 }
 
-export async function setActiveWalkSnapshot(snapshot: ActiveWalkSnapshot): Promise<void> {
-  await removeLegacyActiveWalkStorage();
-
-  const uid = currentUid();
-  if (!uid) return;
-
-  await AsyncStorage.setItem(activeWalkKeyForUid(uid), JSON.stringify(snapshot));
-}
-
-export async function clearActiveWalkSnapshot(): Promise<void> {
-  const uid = currentUid();
-  await clearActiveWalkSnapshotForUid(uid);
-}
-
-export async function hasActiveWalkSnapshot(): Promise<boolean> {
-  return (await getActiveWalkSnapshot()) !== null;
-}
-
-export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null> {
-  await removeLegacyActiveWalkStorage();
-
-  const uid = currentUid();
-  if (!uid) return null;
-
-  const raw = await AsyncStorage.getItem(completedWalkDraftKeyForUid(uid));
+function parseCompletedWalkDraft(raw: string | null): CompletedWalkDraft | null {
   if (!raw) return null;
 
   try {
@@ -209,13 +157,93 @@ export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null
   }
 }
 
-export async function setCompletedWalkDraft(draft: CompletedWalkDraft): Promise<void> {
-  await removeLegacyActiveWalkStorage();
+async function clearActiveWalkSnapshotForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_ACTIVE_WALK];
+  if (uid) {
+    keys.push(activeWalkKeyForUid(uid));
+  }
 
+  await AsyncStorage.multiRemove(keys);
+}
+
+async function clearCompletedWalkDraftForUid(uid: string | null | undefined): Promise<void> {
+  const keys = [LEGACY_KEY_COMPLETED_WALK_DRAFT];
+  if (uid) {
+    keys.push(completedWalkDraftKeyForUid(uid));
+  }
+
+  await AsyncStorage.multiRemove(keys);
+}
+
+export async function getActiveWalkSnapshot(): Promise<ActiveWalkSnapshot | null> {
+  const uid = currentUid();
+  if (!uid) return null;
+
+  const scopedKey = activeWalkKeyForUid(uid);
+  const snapshot = parseActiveWalkSnapshot(await AsyncStorage.getItem(scopedKey));
+  if (snapshot) return snapshot;
+
+  const legacySnapshot = parseActiveWalkSnapshot(await AsyncStorage.getItem(LEGACY_KEY_ACTIVE_WALK));
+  if (!legacySnapshot) {
+    await AsyncStorage.removeItem(LEGACY_KEY_ACTIVE_WALK);
+    return null;
+  }
+
+  await AsyncStorage.setItem(scopedKey, JSON.stringify(legacySnapshot));
+  await AsyncStorage.removeItem(LEGACY_KEY_ACTIVE_WALK);
+  return legacySnapshot;
+}
+
+async function removeLegacyActiveWalkSnapshot(): Promise<void> {
+  await AsyncStorage.removeItem(LEGACY_KEY_ACTIVE_WALK);
+}
+
+export async function setActiveWalkSnapshot(snapshot: ActiveWalkSnapshot): Promise<void> {
+  const uid = currentUid();
+  if (!uid) return;
+
+  await AsyncStorage.setItem(activeWalkKeyForUid(uid), JSON.stringify(snapshot));
+  await removeLegacyActiveWalkSnapshot();
+}
+
+export async function clearActiveWalkSnapshot(): Promise<void> {
+  const uid = currentUid();
+  await clearActiveWalkSnapshotForUid(uid);
+}
+
+export async function hasActiveWalkSnapshot(): Promise<boolean> {
+  return (await getActiveWalkSnapshot()) !== null;
+}
+
+export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null> {
+  const uid = currentUid();
+  if (!uid) return null;
+
+  const scopedKey = completedWalkDraftKeyForUid(uid);
+  const draft = parseCompletedWalkDraft(await AsyncStorage.getItem(scopedKey));
+  if (draft) return draft;
+
+  const legacyDraft = parseCompletedWalkDraft(await AsyncStorage.getItem(LEGACY_KEY_COMPLETED_WALK_DRAFT));
+  if (!legacyDraft) {
+    await AsyncStorage.removeItem(LEGACY_KEY_COMPLETED_WALK_DRAFT);
+    return null;
+  }
+
+  await AsyncStorage.setItem(scopedKey, JSON.stringify(legacyDraft));
+  await AsyncStorage.removeItem(LEGACY_KEY_COMPLETED_WALK_DRAFT);
+  return legacyDraft;
+}
+
+async function removeLegacyCompletedWalkDraft(): Promise<void> {
+  await AsyncStorage.removeItem(LEGACY_KEY_COMPLETED_WALK_DRAFT);
+}
+
+export async function setCompletedWalkDraft(draft: CompletedWalkDraft): Promise<void> {
   const uid = currentUid();
   if (!uid) return;
 
   await AsyncStorage.setItem(completedWalkDraftKeyForUid(uid), JSON.stringify(draft));
+  await removeLegacyCompletedWalkDraft();
 }
 
 export async function clearCompletedWalkDraft(): Promise<void> {

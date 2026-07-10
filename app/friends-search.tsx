@@ -13,6 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { OutdoorIcon } from "../src/components/OutdoorIcons";
+import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
+import { logBuddyAdded, logBuddySearch } from "../src/lib/analytics";
 import {
   searchUserForFriendDiscovery,
   sendFriendRequest,
@@ -20,10 +24,10 @@ import {
 } from "../src/lib/friendSystem";
 
 const BRAND = {
-  forest: "#255E36",
-  cream: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  sunrise: "#F2B541",
+  forest: OutdoorTheme.colors.forest,
+  cream: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
+  sunrise: OutdoorTheme.colors.gold,
 } as const;
 
 function initialsFor(result: FriendDiscoveryResult): string {
@@ -59,6 +63,7 @@ export default function FriendsSearchScreen() {
     setIsSearching(true);
     setStatus("");
     setResult(null);
+    void logBuddySearch(query.length);
 
     try {
       const nextResult = await searchUserForFriendDiscovery(query);
@@ -84,6 +89,7 @@ export default function FriendsSearchScreen() {
         relationshipStatus: "pending_sent",
         pendingRequestId: request.id,
       });
+      void logBuddyAdded();
       setStatus("Friend request sent.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Friend request failed.");
@@ -96,6 +102,7 @@ export default function FriendsSearchScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <LayeredEnvironment />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.iconButton, pressed ? styles.pressed : null]}>
           <Ionicons name="chevron-back" size={22} color={BRAND.charcoal} />
@@ -105,7 +112,12 @@ export default function FriendsSearchScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View style={styles.searchCard}>
+        <PremiumHero
+          style={styles.searchCard}
+          eyebrow="Your circle"
+          title="Find Friends"
+          subtitle="Search by username to build a quieter, more motivating outdoor circle."
+        >
           <View style={styles.searchRow}>
             <TextInput
               value={searchText}
@@ -115,7 +127,7 @@ export default function FriendsSearchScreen() {
               autoCorrect={false}
               keyboardType="default"
               placeholder="Username"
-              placeholderTextColor="rgba(11,15,14,0.42)"
+              placeholderTextColor="rgba(30,42,36,0.42)"
               returnKeyType="search"
               style={styles.searchInput}
             />
@@ -131,13 +143,13 @@ export default function FriendsSearchScreen() {
               {isSearching ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Ionicons name="search" size={20} color="#FFFFFF" />
+                <OutdoorIcon name="binoculars" size={21} color="#FFFFFF" accentColor={BRAND.sunrise} />
               )}
             </Pressable>
           </View>
 
           {status ? <Text style={styles.statusText}>{status}</Text> : null}
-        </View>
+        </PremiumHero>
 
         {result ? (
           <View style={styles.resultCard}>
@@ -177,7 +189,7 @@ export default function FriendsSearchScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: BRAND.cream,
+    backgroundColor: "transparent",
   },
   header: {
     flexDirection: "row",
@@ -192,9 +204,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   headerTitle: {
     color: BRAND.charcoal,
@@ -210,11 +222,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   searchCard: {
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
-    padding: 14,
+    minHeight: 330,
     gap: 10,
   },
   searchRow: {
@@ -225,10 +233,10 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     minHeight: 50,
-    borderRadius: 15,
+    borderRadius: OutdoorTheme.radii.lg,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
-    backgroundColor: "rgba(255,255,255,0.86)",
+    borderColor: "rgba(30,42,36,0.12)",
+    backgroundColor: "rgba(255,249,239,0.86)",
     paddingHorizontal: 14,
     color: BRAND.charcoal,
     fontSize: 15,
@@ -237,27 +245,28 @@ const styles = StyleSheet.create({
   searchButton: {
     width: 50,
     height: 50,
-    borderRadius: 16,
+    borderRadius: OutdoorTheme.radii.lg,
     backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
   },
   statusText: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "800",
   },
   resultCard: {
     minHeight: 86,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.82)",
+    borderRadius: OutdoorTheme.radii.xl,
+    backgroundColor: "rgba(255,249,239,0.82)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: "rgba(24,68,47,0.12)",
     padding: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    ...OutdoorTheme.shadows.soft,
   },
   avatar: {
     width: 54,
@@ -295,14 +304,14 @@ const styles = StyleSheet.create({
   addButton: {
     minWidth: 104,
     minHeight: 46,
-    borderRadius: 15,
+    borderRadius: OutdoorTheme.radii.lg,
     backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
   addButtonDisabled: {
-    backgroundColor: "rgba(11,15,14,0.18)",
+    backgroundColor: "rgba(30,42,36,0.18)",
   },
   addButtonText: {
     color: "#FFFFFF",

@@ -1,10 +1,15 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, Share, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, Share, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../../constants/theme";
+import { BrandHeaderMark } from "./BrandBadge";
+import { CampfireGlyph } from "./OutdoorDecor";
+import { LayeredEnvironment, PremiumHero } from "./OutdoorUI";
 import { RoutePreview } from "../components/RoutePreview";
+import { logRouteSaved } from "../lib/analytics";
 import { getSessionById, saveSessionRouteForLater, type OutsideSession } from "../lib/store";
 import { getPaceDisplay } from "../utils/pace";
 import {
@@ -116,6 +121,7 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
       if (nextSession) {
         setSession(nextSession);
         setSaveRouteMessage("Saved to your route history.");
+        void logRouteSaved();
         void Haptics.selectionAsync();
       }
     } finally {
@@ -125,6 +131,7 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <LayeredEnvironment />
       <ScrollView
         contentContainerStyle={[
           styles.container,
@@ -132,10 +139,13 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <Image source={require("../../assets/images/icon.png")} style={styles.logo} />
-        <Text style={styles.eyebrow}>Walk complete</Text>
-        <Text style={styles.title}>Let it land.</Text>
-        <Text style={styles.summary}>{summaryLine}</Text>
+        <PremiumHero
+          style={styles.summaryHero}
+          topSlot={<BrandHeaderMark size={64} showTagline style={styles.logo} />}
+          eyebrow="Walk complete"
+          title="Let it land."
+          subtitle={summaryLine}
+        />
 
         <View style={styles.metricsRow}>
           <View style={styles.metricCard}>
@@ -177,6 +187,7 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
 
         {reflectionText ? (
           <View style={styles.reflectionCard}>
+            <CampfireGlyph style={styles.reflectionFire} size={42} opacity={0.16} />
             <Text style={styles.reflectionLabel}>What you carried forward</Text>
             <Text style={styles.reflectionText}>{reflectionText}</Text>
           </View>
@@ -271,7 +282,7 @@ export function PostWalkSummaryScreen({ showTabShell = false }: PostWalkSummaryS
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F8F4EE" },
+  safe: { flex: 1, backgroundColor: "transparent" },
   container: {
     flexGrow: 1,
     alignItems: "center",
@@ -279,21 +290,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 32,
     paddingBottom: 32,
+    overflow: "hidden",
   },
   containerWithTabs: {
     justifyContent: "flex-start",
     paddingBottom: 24,
   },
-  logo: { width: 84, height: 84, borderRadius: 22, marginBottom: 16 },
+  summaryHero: {
+    width: "100%",
+    maxWidth: 560,
+    minHeight: 280,
+  },
+  logo: { marginBottom: 16 },
   eyebrow: {
-    color: "#255E36",
+    color: "#18442F",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
   },
   title: {
     marginTop: 10,
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 32,
     lineHeight: 37,
     fontWeight: "900",
@@ -301,7 +318,7 @@ const styles = StyleSheet.create({
   },
   summary: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.76)",
+    color: "rgba(30,42,36,0.76)",
     fontSize: 16,
     fontWeight: "800",
     textAlign: "center",
@@ -315,22 +332,23 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     flex: 1,
-    borderRadius: 18,
+    borderRadius: OutdoorTheme.radii.lg,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: "rgba(255,255,255,0.64)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
+    ...OutdoorTheme.shadows.soft,
   },
   metricLabel: {
-    color: "rgba(11,15,14,0.5)",
+    color: "rgba(30,42,36,0.5)",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.4,
   },
   metricValue: {
     marginTop: 6,
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 20,
     fontWeight: "900",
   },
@@ -345,12 +363,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: "rgba(24,68,47,0.16)",
   },
   chipText: {
-    color: "#255E36",
+    color: "#18442F",
     fontSize: 12,
     fontWeight: "900",
   },
@@ -358,28 +376,35 @@ const styles = StyleSheet.create({
     marginTop: 18,
     width: "100%",
     maxWidth: 540,
-    borderRadius: 20,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.6)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  reflectionFire: {
+    position: "absolute",
+    right: 16,
+    top: 14,
   },
   reflectionLabel: {
-    color: "rgba(11,15,14,0.54)",
+    color: "rgba(30,42,36,0.54)",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.5,
   },
   reflectionText: {
     marginTop: 8,
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 17,
     lineHeight: 24,
     fontWeight: "700",
   },
   subtle: {
     marginTop: 18,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700",
@@ -388,7 +413,7 @@ const styles = StyleSheet.create({
   },
   warning: {
     marginTop: 12,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -403,20 +428,20 @@ const styles = StyleSheet.create({
     marginTop: 18,
     width: "100%",
     maxWidth: 540,
-    borderRadius: 18,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.62)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   routeLockedTitle: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 15,
     fontWeight: "900",
   },
   routeLockedBody: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "700",
@@ -426,27 +451,27 @@ const styles = StyleSheet.create({
     minWidth: 240,
     minHeight: 50,
     borderRadius: 16,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.18)",
+    borderColor: "rgba(24,68,47,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   saveRouteBtnSaved: {
-    backgroundColor: "rgba(242,181,65,0.16)",
-    borderColor: "rgba(242,181,65,0.36)",
+    backgroundColor: "rgba(198,155,66,0.16)",
+    borderColor: "rgba(198,155,66,0.36)",
   },
   saveRouteBtnText: {
-    color: "#255E36",
+    color: "#18442F",
     fontWeight: "900",
     letterSpacing: 0.8,
   },
   saveRouteBtnTextSaved: {
-    color: "#8A5D09",
+    color: OutdoorTheme.colors.goldText,
   },
   saveRouteHint: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.58)",
+    color: "rgba(30,42,36,0.58)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -457,8 +482,8 @@ const styles = StyleSheet.create({
     marginTop: 22,
     minWidth: 240,
     minHeight: 54,
-    borderRadius: 16,
-    backgroundColor: "#255E36",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.forest,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -471,15 +496,15 @@ const styles = StyleSheet.create({
     marginTop: 10,
     minWidth: 240,
     minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: "rgba(30,42,36,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: "rgba(30,42,36,0.1)",
     alignItems: "center",
     justifyContent: "center",
   },
   secondaryBtnText: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontWeight: "900",
     letterSpacing: 0.8,
   },
@@ -489,13 +514,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   tertiaryBtnText: {
-    color: "rgba(11,15,14,0.68)",
+    color: "rgba(30,42,36,0.68)",
     fontWeight: "900",
     letterSpacing: 0.4,
   },
   tabHint: {
     marginTop: 12,
-    color: "rgba(11,15,14,0.54)",
+    color: "rgba(30,42,36,0.54)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",

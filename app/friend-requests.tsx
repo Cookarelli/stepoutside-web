@@ -12,6 +12,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { OutdoorIcon } from "../src/components/OutdoorIcons";
+import { EmptyStateCard, LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import {
   acceptFriendRequest,
   declineFriendRequest,
@@ -21,10 +24,10 @@ import {
 } from "../src/lib/friendSystem";
 
 const BRAND = {
-  forest: "#255E36",
-  cream: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  danger: "#A13B2B",
+  forest: OutdoorTheme.colors.forest,
+  cream: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
+  danger: OutdoorTheme.colors.danger,
 } as const;
 
 function initialsFor(item: FriendRequestListItem): string {
@@ -119,6 +122,7 @@ export default function FriendRequestsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <LayeredEnvironment />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.iconButton, pressed ? styles.pressed : null]}>
           <Ionicons name="chevron-back" size={22} color={BRAND.charcoal} />
@@ -129,11 +133,18 @@ export default function FriendRequestsScreen() {
           disabled={isLoading}
           style={({ pressed }) => [styles.iconButton, isLoading ? styles.disabled : null, pressed ? styles.pressed : null]}
         >
-          {isLoading ? <ActivityIndicator color={BRAND.forest} /> : <Ionicons name="refresh" size={20} color={BRAND.charcoal} />}
+          {isLoading ? <ActivityIndicator color={BRAND.forest} /> : <OutdoorIcon name="compass" size={21} color={BRAND.charcoal} />}
         </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.container}>
+        <PremiumHero
+          style={styles.hero}
+          eyebrow="Your circle"
+          title="Friend Requests"
+          subtitle="Review the people who want to join your Step Outside rhythm."
+        />
+
         {status ? <Text style={styles.statusText}>{status}</Text> : null}
 
         {isLoading ? (
@@ -146,7 +157,13 @@ export default function FriendRequestsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Incoming Requests</Text>
           {!isLoading && incoming.length === 0 ? (
-            <Text style={styles.emptyText}>No incoming requests right now.</Text>
+            <EmptyStateCard
+              title="No incoming requests"
+              body="The trail is quiet right now. New invites will appear here when someone reaches out."
+              illustration="trail"
+              icon={<OutdoorIcon name="binoculars" size={20} color={BRAND.forest} />}
+              style={styles.requestEmptyCard}
+            />
           ) : null}
           {incoming.map((item) => {
             const isAccepting = actionRequest?.id === item.request.id && actionRequest.type === "accept";
@@ -189,7 +206,13 @@ export default function FriendRequestsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Outgoing Requests</Text>
           {!isLoading && outgoing.length === 0 ? (
-            <Text style={styles.emptyText}>No outgoing requests pending.</Text>
+            <EmptyStateCard
+              title="No outgoing requests"
+              body="No invitations are waiting on the map. Search for a friend whenever you are ready."
+              illustration="map"
+              icon={<OutdoorIcon name="map" size={20} color={BRAND.forest} />}
+              style={styles.requestEmptyCard}
+            />
           ) : null}
           {outgoing.map((item) => (
             <View key={item.request.id} style={styles.requestCard}>
@@ -210,7 +233,7 @@ export default function FriendRequestsScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: BRAND.cream,
+    backgroundColor: "transparent",
   },
   header: {
     flexDirection: "row",
@@ -225,9 +248,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   headerTitle: {
     color: BRAND.charcoal,
@@ -239,24 +262,28 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
     gap: 18,
   },
+  hero: {
+    minHeight: 258,
+  },
   statusText: {
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "800",
   },
   loadingCard: {
     minHeight: 86,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
+    borderColor: "rgba(24,68,47,0.10)",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
+    ...OutdoorTheme.shadows.soft,
   },
   loadingText: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "800",
   },
   section: {
@@ -270,17 +297,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   emptyText: {
-    color: "rgba(11,15,14,0.58)",
+    color: "rgba(30,42,36,0.58)",
     fontWeight: "800",
     lineHeight: 20,
   },
+  requestEmptyCard: {
+    minHeight: 164,
+    padding: 18,
+  },
   requestCard: {
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.82)",
+    borderRadius: OutdoorTheme.radii.xl,
+    backgroundColor: "rgba(255,249,239,0.82)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: "rgba(24,68,47,0.12)",
     padding: 14,
     gap: 12,
+    ...OutdoorTheme.shadows.soft,
   },
   requestTopRow: {
     flexDirection: "row",
@@ -327,7 +359,7 @@ const styles = StyleSheet.create({
   acceptButton: {
     flex: 1,
     minHeight: 46,
-    borderRadius: 15,
+    borderRadius: OutdoorTheme.radii.lg,
     backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
@@ -339,7 +371,7 @@ const styles = StyleSheet.create({
   declineButton: {
     flex: 1,
     minHeight: 46,
-    borderRadius: 15,
+    borderRadius: OutdoorTheme.radii.lg,
     backgroundColor: "rgba(161,59,43,0.10)",
     borderWidth: 1,
     borderColor: "rgba(161,59,43,0.18)",
@@ -351,8 +383,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   pendingPill: {
-    borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.10)",
+    borderRadius: OutdoorTheme.radii.pill,
+    backgroundColor: OutdoorTheme.colors.goldTint,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },

@@ -1,10 +1,11 @@
 import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef } from "react";
-import { Animated, Easing, Image, StyleSheet, View } from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 
-import { hasActiveWalkSnapshot } from "../src/lib/activeWalk";
+import { BrandHeaderMark } from "../src/components/BrandBadge";
+import { LayeredEnvironment } from "../src/components/OutdoorUI";
+import { getInitialAppRoute } from "../src/lib/authFlow";
 import { refreshScheduledReminders } from "../src/lib/notifications";
-import { hasCompletedOnboarding } from "../src/lib/onboarding";
 
 const QUOTES = [
   "You’re exactly where you should be.",
@@ -67,10 +68,9 @@ export default function SplashScreen() {
 
     const t = setTimeout(() => {
       void (async () => {
-        const completed = await hasCompletedOnboarding();
-        const hasActiveWalk = completed ? await hasActiveWalkSnapshot() : false;
+        const nextRoute = await getInitialAppRoute();
         if (!alive) return;
-        router.replace(completed ? (hasActiveWalk ? "/walk" : "/(tabs)") : "/(onboarding)/welcome-1");
+        router.replace(nextRoute as never);
       })();
     }, 2500); // 2–3 seconds hold
 
@@ -82,6 +82,7 @@ export default function SplashScreen() {
 
   return (
     <View style={styles.container}>
+      <LayeredEnvironment intensity="quiet" />
       <View style={styles.glowOne} />
       <View style={styles.glowTwo} />
 
@@ -95,11 +96,7 @@ export default function SplashScreen() {
         ]}
       >
         <View style={styles.logoHalo} />
-        <Image
-          source={require("../assets/images/splash-icon.png")}
-          resizeMode="contain"
-          style={styles.logo}
-        />
+        <BrandHeaderMark size={92} showTagline style={styles.logoMark} />
       </Animated.View>
 
       <Animated.Text
@@ -120,7 +117,7 @@ export default function SplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 26,
@@ -133,7 +130,7 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
   },
   glowTwo: {
     position: "absolute",
@@ -142,7 +139,7 @@ const styles = StyleSheet.create({
     width: 160,
     height: 160,
     borderRadius: 999,
-    backgroundColor: "rgba(242,181,65,0.10)",
+    backgroundColor: "rgba(198,155,66,0.10)",
   },
   logoShell: {
     width: 248,
@@ -156,14 +153,13 @@ const styles = StyleSheet.create({
     width: 210,
     height: 210,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.64)",
+    backgroundColor: "rgba(255,249,239,0.64)",
   },
-  logo: {
-    width: 228,
-    height: 228,
+  logoMark: {
+    transform: [{ scale: 1.18 }],
   },
   quote: {
-    color: "rgba(11,15,14,0.86)",
+    color: "rgba(30,42,36,0.86)",
     fontSize: 22,
     lineHeight: 30,
     textAlign: "center",

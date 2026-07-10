@@ -5,9 +5,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { EmptyStateCard, LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import { RoutePreview } from "../src/components/RoutePreview";
 import { getSessionById, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../src/lib/store";
 import { getPaceDisplay } from "../src/utils/pace";
+import { formatElapsedClock } from "../src/utils/time";
 
 function fmtDate(ts: number): string {
   return new Date(ts).toLocaleString(undefined, {
@@ -21,19 +23,6 @@ function fmtDate(ts: number): string {
 function fmtMinutes(durationSec: number): string {
   const minutes = Math.max(1, Math.round(durationSec / 60));
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-}
-
-function fmtClockDuration(durationSec: number): string {
-  const totalSeconds = Math.max(0, Math.round(durationSec));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function fmtDistance(distanceM?: number): string {
@@ -114,13 +103,29 @@ export default function SavedRouteScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <LayeredEnvironment />
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.eyebrow}>Saved route</Text>
-        <Text style={styles.title}>Your walk, kept for later.</Text>
+        <PremiumHero
+          style={styles.hero}
+          eyebrow="Saved route"
+          title="Your walk, kept for later."
+          subtitle={
+            loading
+              ? "Loading route..."
+              : !session
+                ? "We couldn't find that saved route."
+                : "Captured from your Premium activity history."
+          }
+        />
 
-        {loading ? <Text style={styles.sub}>Loading route…</Text> : null}
-
-        {!loading && !session ? <Text style={styles.sub}>We couldn’t find that saved route.</Text> : null}
+        {!loading && !session ? (
+          <EmptyStateCard
+            title="Route not found"
+            body="The map for this walk is not available here. Head back to Steps to choose another saved route."
+            illustration="map"
+            style={styles.emptyRouteCard}
+          />
+        ) : null}
 
         {!loading && session ? (
           <>
@@ -128,9 +133,9 @@ export default function SavedRouteScreen() {
               {fmtMinutes(session.durationSec)} • {fmtDistance(session.distanceM)} • {paceLabel}
             </Text>
             <Text style={styles.detailSub}>
-              Elapsed {fmtClockDuration(session.elapsedTimeSec ?? session.durationSec)}
+              Elapsed {formatElapsedClock(session.elapsedTimeSec ?? session.durationSec)}
               {typeof session.movingTimeSec === "number" && session.movingTimeSec > 0
-                ? ` • Moving ${fmtClockDuration(session.movingTimeSec)}`
+                ? ` • Moving ${formatElapsedClock(session.movingTimeSec)}`
                 : ""}
             </Text>
             {session.source === "gps" && session.routePoints && session.routePoints.length > 1 ? (
@@ -169,10 +174,12 @@ export default function SavedRouteScreen() {
             ) : null}
 
             {session.source === "gps" && (!session.routePoints || session.routePoints.length < 2) ? (
-              <View style={styles.lockedCard}>
-                <Text style={styles.lockedTitle}>Route map unavailable</Text>
-                <Text style={styles.lockedBody}>Unlock saved GPS route maps with Step Outside Premium.</Text>
-              </View>
+              <EmptyStateCard
+                title="Route map unavailable"
+                body="This walk does not have enough GPS points for a route drawing. Your time and distance are still saved."
+                illustration="map"
+                style={styles.emptyRouteCard}
+              />
             ) : null}
 
             {lockedBonusTeaser ? (
@@ -222,14 +229,18 @@ export default function SavedRouteScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
   },
   container: {
     padding: 20,
     paddingBottom: 36,
   },
+  hero: {
+    marginBottom: 18,
+    minHeight: 260,
+  },
   eyebrow: {
-    color: "#255E36",
+    color: "#18442F",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
@@ -237,21 +248,21 @@ const styles = StyleSheet.create({
   },
   title: {
     marginTop: 10,
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 30,
     lineHeight: 36,
     fontWeight: "900",
   },
   sub: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.68)",
+    color: "rgba(30,42,36,0.68)",
     fontSize: 15,
     lineHeight: 22,
     fontWeight: "700",
   },
   detailSub: {
     marginTop: 6,
-    color: "rgba(11,15,14,0.56)",
+    color: "rgba(30,42,36,0.56)",
     fontSize: 13,
     lineHeight: 20,
     fontWeight: "700",
@@ -266,34 +277,38 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.14)",
   },
   metaChipText: {
-    color: "#255E36",
+    color: "#18442F",
     fontSize: 12,
     fontWeight: "900",
   },
   previewWrap: {
     marginTop: 18,
   },
+  emptyRouteCard: {
+    marginTop: 12,
+    minHeight: 184,
+  },
   lockedCard: {
     marginTop: 18,
     borderRadius: 18,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   lockedTitle: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 15,
     fontWeight: "900",
   },
   lockedBody: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700",
@@ -302,18 +317,18 @@ const styles = StyleSheet.create({
     marginTop: 18,
     borderRadius: 18,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   noteTitle: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 15,
     fontWeight: "900",
   },
   noteBody: {
     marginTop: 8,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700",
@@ -322,7 +337,7 @@ const styles = StyleSheet.create({
     marginTop: 22,
     minHeight: 54,
     borderRadius: 16,
-    backgroundColor: "#255E36",
+    backgroundColor: "#18442F",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -335,14 +350,14 @@ const styles = StyleSheet.create({
     marginTop: 10,
     minHeight: 50,
     borderRadius: 16,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    backgroundColor: "rgba(30,42,36,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: "rgba(30,42,36,0.1)",
     alignItems: "center",
     justifyContent: "center",
   },
   secondaryBtnText: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontWeight: "900",
     letterSpacing: 0.8,
   },

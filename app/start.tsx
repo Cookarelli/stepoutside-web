@@ -2,6 +2,9 @@ import { useRouter } from "expo-router";
 import React, { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { OutdoorTheme } from "../constants/theme";
+import { BrandHeaderMark } from "../src/components/BrandBadge";
+import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import { hasActiveWalkSnapshot } from "../src/lib/activeWalk";
 
 export default function StartScreen() {
@@ -24,10 +27,14 @@ export default function StartScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Start</Text>
-        <Text style={styles.sub}>10 minutes is enough.</Text>
-
+      <LayeredEnvironment />
+      <PremiumHero
+        style={styles.content}
+        topSlot={<BrandHeaderMark size={58} showTagline style={styles.brand} />}
+        eyebrow="Step Outside"
+        title="Start"
+        subtitle="10 minutes is enough."
+      >
         <Pressable
           onPress={() => router.push("/walk")}
           style={({ pressed }) => [styles.btn, pressed ? { opacity: 0.9 } : null]}
@@ -41,7 +48,7 @@ export default function StartScreen() {
         >
           <Text style={styles.btnAltText}>BACK TO HOME</Text>
         </Pressable>
-      </View>
+      </PremiumHero>
     </View>
   );
 }
@@ -49,21 +56,25 @@ export default function StartScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
+    overflow: "hidden",
   },
   content: {
     width: "100%",
     maxWidth: 560,
-    alignItems: "center",
+    minHeight: 390,
   },
-  title: { fontSize: 28, fontWeight: "900", color: "#0B0F0E" },
-  sub: { marginTop: 10, fontSize: 14, fontWeight: "700", color: "rgba(11,15,14,0.65)" },
+  brand: {
+    alignSelf: "center",
+  },
+  title: { fontSize: 28, fontWeight: "900", color: OutdoorTheme.colors.charcoal },
+  sub: { marginTop: 10, fontSize: 14, fontWeight: "700", color: "rgba(30,42,36,0.65)" },
   btn: {
     marginTop: 22,
-    backgroundColor: "#255E36",
+    backgroundColor: OutdoorTheme.colors.forest,
     paddingVertical: 14,
     paddingHorizontal: 22,
     borderRadius: 16,
@@ -71,12 +82,12 @@ const styles = StyleSheet.create({
   btnText: { color: "white", fontWeight: "900", letterSpacing: 1 },
   btnAlt: {
     marginTop: 10,
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: "rgba(30,42,36,0.08)",
     paddingVertical: 12,
     paddingHorizontal: 22,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: "rgba(30,42,36,0.12)",
   },
-  btnAltText: { color: "rgba(11,15,14,0.72)", fontWeight: "900", letterSpacing: 0.8 },
+  btnAltText: { color: OutdoorTheme.colors.forest, fontWeight: "900", letterSpacing: 0.8 },
 });

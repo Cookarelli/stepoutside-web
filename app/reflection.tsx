@@ -4,6 +4,8 @@ import React, { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import { pickReflectionPrompt, saveReflection } from "../src/lib/reflections";
 import { REFLECTION_PROMPTS } from "../src/lib/reflectionPrompts";
 import { getSessionById, type OutsideSession } from "../src/lib/store";
@@ -145,6 +147,7 @@ export default function ReflectionScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <LayeredEnvironment />
       <KeyboardAvoidingView
         style={styles.keyboardWrap}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -155,25 +158,26 @@ export default function ReflectionScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
         >
-          <View style={styles.card}>
-            <Text style={styles.eyebrow}>After your walk</Text>
-            <Text style={styles.title}>Pause for a second</Text>
-            <Text style={styles.prompt}>{promptReady ? prompt : "Taking a second to find your next prompt…"}</Text>
-
+          <PremiumHero
+            style={styles.card}
+            eyebrow="After your walk"
+            title="Pause for a second"
+            subtitle={promptReady ? prompt : "Taking a second to find your next prompt..."}
+          >
             <TextInput
               value={text}
               onChangeText={setText}
               multiline
               textAlignVertical="top"
               placeholder="A few words is enough."
-              placeholderTextColor="rgba(11,15,14,0.35)"
+              placeholderTextColor="rgba(30,42,36,0.35)"
               style={styles.input}
               maxLength={500}
             />
 
             <Text style={styles.helper}>Keep it simple. This is for you, not for a performance.</Text>
             {statusText ? <Text style={styles.status}>{statusText}</Text> : null}
-          </View>
+          </PremiumHero>
         </ScrollView>
 
         <View style={styles.footerActions}>
@@ -202,7 +206,7 @@ export default function ReflectionScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F8F4EE" },
+  safe: { flex: 1, backgroundColor: "transparent" },
   keyboardWrap: { flex: 1 },
   container: {
     flexGrow: 1,
@@ -211,28 +215,24 @@ const styles = StyleSheet.create({
     paddingBottom: 180,
   },
   card: {
-    borderRadius: 28,
-    padding: 22,
-    backgroundColor: "rgba(255,255,255,0.62)",
-    borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    minHeight: 560,
   },
   eyebrow: {
-    color: "#255E36",
+    color: OutdoorTheme.colors.goldText,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.8,
   },
   title: {
     marginTop: 10,
-    color: "#0B0F0E",
+    color: OutdoorTheme.colors.charcoal,
     fontSize: 30,
     lineHeight: 35,
     fontWeight: "900",
   },
   prompt: {
     marginTop: 14,
-    color: "rgba(11,15,14,0.82)",
+    color: "rgba(30,42,36,0.82)",
     fontSize: 18,
     lineHeight: 26,
     fontWeight: "800",
@@ -240,26 +240,26 @@ const styles = StyleSheet.create({
   input: {
     marginTop: 18,
     minHeight: 180,
-    borderRadius: 18,
-    backgroundColor: "rgba(248,244,238,0.92)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paper,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: "rgba(30,42,36,0.1)",
     padding: 16,
-    color: "#0B0F0E",
+    color: OutdoorTheme.colors.charcoal,
     fontSize: 16,
     lineHeight: 22,
     fontWeight: "600",
   },
   helper: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.54)",
+    color: "rgba(30,42,36,0.54)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
   },
   status: {
     marginTop: 12,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -269,14 +269,14 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 18,
     gap: 10,
-    backgroundColor: "rgba(248,244,238,0.96)",
+    backgroundColor: OutdoorTheme.colors.creamTranslucent,
     borderTopWidth: 1,
-    borderTopColor: "rgba(11,15,14,0.08)",
+    borderTopColor: "rgba(30,42,36,0.08)",
   },
   primaryBtn: {
     minHeight: 54,
-    borderRadius: 16,
-    backgroundColor: "#255E36",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.forest,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -290,15 +290,15 @@ const styles = StyleSheet.create({
   },
   secondaryBtn: {
     minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: "rgba(30,42,36,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
+    borderColor: "rgba(30,42,36,0.1)",
     alignItems: "center",
     justifyContent: "center",
   },
   secondaryBtnText: {
-    color: "#0B0F0E",
+    color: OutdoorTheme.colors.charcoal,
     fontWeight: "900",
     letterSpacing: 0.8,
   },

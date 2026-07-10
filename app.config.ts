@@ -1,11 +1,16 @@
+import { existsSync } from "node:fs";
 import type { ExpoConfig } from "expo/config";
 
 const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
+const iosGoogleServicesFile = "./GoogleService-Info.plist";
+const androidGoogleServicesFile = "./google-services.json";
+const hasIosGoogleServicesFile = existsSync(iosGoogleServicesFile);
+const hasAndroidGoogleServicesFile = existsSync(androidGoogleServicesFile);
 
 const config: ExpoConfig = {
   name: "Step Outside",
   slug: "step-outside-v2",
-  version: "2.1.0",
+  version: "2.2.1",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "stepoutsidev2",
@@ -26,6 +31,7 @@ const config: ExpoConfig = {
           },
         }
       : {}),
+    ...(hasIosGoogleServicesFile ? { googleServicesFile: iosGoogleServicesFile } : {}),
   },
   android: {
     package: "com.stevencook.stepoutside",
@@ -48,6 +54,7 @@ const config: ExpoConfig = {
           },
         }
       : {}),
+    ...(hasAndroidGoogleServicesFile ? { googleServicesFile: androidGoogleServicesFile } : {}),
   },
   web: {
     output: "static",
@@ -56,6 +63,16 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     "expo-dev-client",
+    "@react-native-firebase/app",
+    "@react-native-firebase/analytics",
+    [
+      "expo-build-properties",
+      {
+        ios: {
+          useFrameworks: "static",
+        },
+      },
+    ],
     [
       "expo-notifications",
       {

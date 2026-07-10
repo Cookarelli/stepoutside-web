@@ -1,10 +1,20 @@
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
 import { BrandBadge } from "../src/components/BrandBadge";
+import { CampfireGlyph } from "../src/components/OutdoorDecor";
+import {
+  BootPrintsIllustration,
+  CampfireIllustration,
+  MapIllustration,
+  MorningFogIllustration,
+  MountainLayersIllustration,
+} from "../src/components/OutdoorIllustrations";
+import { LayeredEnvironment, PremiumHero, SectionHeader, StatCard } from "../src/components/OutdoorUI";
 import { PremiumFeatureGate } from "../src/components/PremiumFeatureGate";
 import {
   getLeaderboardEntries,
@@ -84,20 +94,60 @@ function formatDelta(value: number, formatter: (input: number) => string): strin
   return `${prefix}${formatter(Math.abs(value))}`;
 }
 
+function StatsEmptyPanel({
+  title,
+  body,
+  illustration = "bootprints",
+  actionLabel,
+  onActionPress,
+}: {
+  title: string;
+  body: string;
+  illustration?: "bootprints" | "mountain" | "campsite" | "map";
+  actionLabel?: string;
+  onActionPress?: () => void;
+}) {
+  return (
+    <View style={styles.emptyPanel}>
+      <View pointerEvents="none" style={styles.emptyPanelArt}>
+        {illustration === "mountain" ? (
+          <MountainLayersIllustration width={178} height={106} opacity={0.18} />
+        ) : illustration === "campsite" ? (
+          <CampfireIllustration size={118} opacity={0.2} />
+        ) : illustration === "map" ? (
+          <MapIllustration width={138} height={102} opacity={0.18} />
+        ) : (
+          <>
+            <BootPrintsIllustration width={142} height={96} opacity={0.2} />
+            <MorningFogIllustration width={170} height={70} opacity={0.26} style={styles.emptyPanelFog} />
+          </>
+        )}
+      </View>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyBody}>{body}</Text>
+      {actionLabel && onActionPress ? (
+        <Pressable style={styles.unlockBtn} onPress={onActionPress}>
+          <Text style={styles.unlockBtnText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 export default function StatsScreen() {
   const router = useRouter();
 
   const t = {
-    bg: "#F8F4EE",
-    text: "rgba(11,15,14,0.92)",
-    sub: "rgba(11,15,14,0.62)",
-    card: "rgba(11,15,14,0.06)",
-    cardBorder: "rgba(11,15,14,0.12)",
-    highlight: "#F2B541",
-    greenTint: "rgba(37,94,54,0.10)",
-    greenBorder: "rgba(37,94,54,0.16)",
-    yellowTint: "rgba(242,181,65,0.16)",
-    yellowBorder: "rgba(242,181,65,0.34)",
+    bg: OutdoorTheme.colors.cream,
+    text: OutdoorTheme.colors.charcoal,
+    sub: OutdoorTheme.colors.mutedText,
+    card: OutdoorTheme.colors.paperTranslucent,
+    cardBorder: OutdoorTheme.colors.line,
+    highlight: OutdoorTheme.colors.campfire,
+    greenTint: OutdoorTheme.colors.forestTint,
+    greenBorder: OutdoorTheme.colors.line,
+    goldTint: OutdoorTheme.colors.goldTint,
+    goldBorder: "rgba(198,155,66,0.28)",
     watermark: 0.08,
   } as const;
 
@@ -232,8 +282,9 @@ export default function StatsScreen() {
   const hasAnyStats = totalSessions > 0;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: t.bg }]} edges={["top", "left", "right", "bottom"]}>
-      <View style={[styles.container, { backgroundColor: t.bg }]}>
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <LayeredEnvironment />
+      <View style={styles.container}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <BrandBadge size={30} />
@@ -262,63 +313,43 @@ export default function StatsScreen() {
         />
 
         <ScrollView contentContainerStyle={styles.scrollPad}>
-          <View style={[styles.summaryHero, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
-            <Text style={[styles.summaryEyebrow, { color: t.sub }]}>Your rhythm</Text>
-            <Text style={[styles.summaryTitle, { color: t.text }]}>
-              {totalSessions === 0 ? "Your first walk starts the story." : `${totalSessions} walks creating steadier momentum.`}
-            </Text>
-            <Text style={[styles.summaryBody, { color: t.sub }]}>
-              {totalSessions === 0
+          <PremiumHero
+            style={styles.summaryHero}
+            eyebrow="Your rhythm"
+            title={totalSessions === 0 ? "Your first walk starts the story." : `${totalSessions} walks creating steadier momentum.`}
+            subtitle={
+              totalSessions === 0
                 ? "Stats will fill in gently as soon as you log a first outside reset."
-                : `You’ve logged ${totalMinutes} minutes outside with a best streak of ${bestStreak} day${bestStreak === 1 ? "" : "s"}.`}
-            </Text>
-
+                : `You’ve logged ${totalMinutes} minutes outside with a best streak of ${bestStreak} day${bestStreak === 1 ? "" : "s"}.`
+            }
+          >
             <View style={styles.summaryRow}>
-              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
+              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,249,239,0.54)", borderColor: t.cardBorder }]}>
                 <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Current streak</Text>
                 <Text style={[styles.summaryMetricValue, { color: t.text }]}>{currentStreak}</Text>
               </View>
-              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,255,255,0.54)", borderColor: t.cardBorder }]}>
+              <View style={[styles.summaryMetric, { backgroundColor: "rgba(255,249,239,0.54)", borderColor: t.cardBorder }]}>
                 <Text style={[styles.summaryMetricLabel, { color: t.sub }]}>Outside</Text>
                 <Text style={[styles.summaryMetricValue, { color: t.text }]}>{formatMinutesLabel(totalMinutes)}</Text>
               </View>
             </View>
-          </View>
+          </PremiumHero>
 
           <View style={styles.grid}>
-            <View style={[styles.card, { backgroundColor: t.greenTint, borderColor: t.greenBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Current streak</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{currentStreak}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>days</Text>
-            </View>
-
-            <View style={[styles.card, { backgroundColor: t.yellowTint, borderColor: t.yellowBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Total outside</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{totalMinutes}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>minutes</Text>
-            </View>
-
-            <View style={[styles.card, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Best streak</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{bestStreak}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>days</Text>
-            </View>
-
-            <View style={[styles.card, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
-              <Text style={[styles.cardLabel, { color: t.sub }]}>Sessions</Text>
-              <Text style={[styles.cardValue, { color: t.text }]}>{totalSessions}</Text>
-              <Text style={[styles.cardSub, { color: t.sub }]}>completed</Text>
-            </View>
+            <StatCard label="Current streak" value={currentStreak} meta="days" style={styles.card} />
+            <StatCard label="Total outside" value={totalMinutes} meta="minutes" style={styles.card} />
+            <StatCard label="Best streak" value={bestStreak} meta="days" style={styles.card} />
+            <StatCard label="Sessions" value={totalSessions} meta="completed" style={styles.card} />
           </View>
 
           <View style={styles.leaderboardHeader}>
-            <Text style={[styles.sectionTitle, { color: t.text }]}>Leaderboard</Text>
+            <SectionHeader title="Leaderboard" style={styles.inlineSectionHeader} />
             <Text style={[styles.leaderboardMeta, { color: t.sub }]}>{periodLabel(leaderboardPeriod)} minutes</Text>
           </View>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
           <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
-            <View style={[styles.segmentedControl, { backgroundColor: "rgba(255,255,255,0.58)", borderColor: t.cardBorder }]}>
+            <View style={[styles.segmentedControl, { backgroundColor: "rgba(255,249,239,0.58)", borderColor: t.cardBorder }]}>
               {(["friends", "global"] as LeaderboardScope[]).map((scope) => {
                 const selected = leaderboardScope === scope;
                 return (
@@ -330,7 +361,7 @@ export default function StatsScreen() {
                       void Haptics.selectionAsync();
                       setLeaderboardScope(scope);
                     }}
-                    style={[styles.segmentButton, selected ? { backgroundColor: "#255E36" } : null]}
+                    style={[styles.segmentButton, selected ? { backgroundColor: "#18442F" } : null]}
                   >
                     <Text style={[styles.segmentButtonText, { color: selected ? "white" : t.text }]}>
                       {scope === "friends" ? "Friends" : "Global"}
@@ -354,7 +385,7 @@ export default function StatsScreen() {
                     }}
                     style={[
                       styles.periodButton,
-                      { borderColor: selected ? "#255E36" : t.cardBorder, backgroundColor: selected ? t.greenTint : "transparent" },
+                      { borderColor: selected ? "#18442F" : t.cardBorder, backgroundColor: selected ? t.greenTint : "transparent" },
                     ]}
                   >
                     <Text style={[styles.periodButtonText, { color: selected ? t.text : t.sub }]}>{periodLabel(period)}</Text>
@@ -364,24 +395,23 @@ export default function StatsScreen() {
             </View>
 
             {leaderboardLoading ? (
-              <View style={styles.emptyPanel}>
-                <Text style={[styles.emptyTitle, { color: t.text }]}>Loading rankings…</Text>
-                <Text style={[styles.emptyBody, { color: t.sub }]}>Finding the latest {leaderboardScope} leaderboard.</Text>
-              </View>
+              <StatsEmptyPanel
+                title="Loading rankings..."
+                body={`Finding the latest ${leaderboardScope} leaderboard.`}
+                illustration="map"
+              />
             ) : leaderboardError ? (
-              <View style={styles.emptyPanel}>
-                <Text style={[styles.emptyTitle, { color: t.text }]}>Leaderboard unavailable</Text>
-                <Text style={[styles.emptyBody, { color: t.sub }]}>{leaderboardError}</Text>
-              </View>
+              <StatsEmptyPanel title="Leaderboard unavailable" body={leaderboardError} illustration="map" />
             ) : leaderboardEntries.length === 0 ? (
-              <View style={styles.emptyPanel}>
-                <Text style={[styles.emptyTitle, { color: t.text }]}>No rankings yet</Text>
-                <Text style={[styles.emptyBody, { color: t.sub }]}>
-                  {leaderboardScope === "friends"
+              <StatsEmptyPanel
+                title="A mountain waiting to be climbed"
+                body={
+                  leaderboardScope === "friends"
                     ? "Add friends and complete a walk to start a friends-only ranking."
-                    : "Global rankings appear as Step Outside users sync completed walks."}
-                </Text>
-              </View>
+                    : "Global rankings appear as Step Outside users sync completed walks."
+                }
+                illustration="mountain"
+              />
             ) : (
               leaderboardEntries.slice(0, 10).map((entry) => (
                 <View
@@ -429,19 +459,13 @@ export default function StatsScreen() {
                 );
               })
             ) : (
-              <View style={styles.emptyPanel}>
-                <Text style={[styles.emptyTitle, { color: t.text }]}>{loading ? "Loading your rhythm…" : "No walk history yet"}</Text>
-                <Text style={[styles.emptyBody, { color: t.sub }]}>
-                  {loading
-                    ? "We’re pulling your latest progress now."
-                    : "Your last 7 days will fill in after your first completed walk."}
-                </Text>
-                {!loading ? (
-                  <Pressable style={styles.unlockBtn} onPress={() => router.push("/walk")}>
-                    <Text style={styles.unlockBtnText}>Start a walk</Text>
-                  </Pressable>
-                ) : null}
-              </View>
+              <StatsEmptyPanel
+                title={loading ? "Loading your rhythm..." : "Bootprints waiting in fresh dirt"}
+                body={loading ? "We are pulling your latest progress now." : "Your last 7 days will fill in after your first completed walk."}
+                illustration="bootprints"
+                actionLabel={!loading ? "Start a walk" : undefined}
+                onActionPress={!loading ? () => router.push("/walk") : undefined}
+              />
             )}
           </View>
 
@@ -561,7 +585,8 @@ export default function StatsScreen() {
           <Text style={[styles.sectionTitle, { color: t.text }]}>Golden Hours</Text>
           <View style={[styles.accentRule, { backgroundColor: t.highlight }]} />
 
-          <View style={[styles.panel, { backgroundColor: t.yellowTint, borderColor: t.yellowBorder }]}>
+          <View style={[styles.panel, { backgroundColor: t.goldTint, borderColor: t.goldBorder }]}>
+            <CampfireGlyph style={styles.panelFire} size={54} opacity={0.18} />
             <View style={styles.row}>
               <Text style={[styles.rowLeft, { color: t.sub }]}>Sunrise bonuses</Text>
               <Text style={[styles.rowRight, { color: t.text }]}>{sunriseBonusCount}</Text>
@@ -611,14 +636,11 @@ export default function StatsScreen() {
 
           <View style={[styles.panel, { backgroundColor: t.card, borderColor: t.cardBorder }]}>
             {sessions.length === 0 ? (
-              <View style={styles.emptyPanel}>
-                <Text style={[styles.emptyTitle, { color: t.text }]}>{loading ? "Loading sessions…" : "No recent sessions yet"}</Text>
-                <Text style={[styles.emptyBody, { color: t.sub }]}>
-                  {loading
-                    ? "Your recent walks are on the way."
-                    : "Finish one walk and it will show up here with time and date."}
-                </Text>
-              </View>
+              <StatsEmptyPanel
+                title={loading ? "Loading sessions..." : "Bootprints waiting in fresh dirt"}
+                body={loading ? "Your recent walks are on the way." : "Finish one walk and it will show up here with time and date."}
+                illustration="bootprints"
+              />
             ) : (
               sessions.slice(0, 10).map((s, idx) => {
                 const mins = Math.max(1, Math.round(s.durationSec / 60));
@@ -673,11 +695,9 @@ const styles = StyleSheet.create({
 
   scrollPad: { paddingBottom: 28 },
   summaryHero: {
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
     marginTop: 10,
     marginBottom: 14,
+    minHeight: 286,
   },
   summaryEyebrow: {
     fontSize: 12,
@@ -726,17 +746,17 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "48%",
-    borderRadius: 22,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1,
+    ...OutdoorTheme.shadows.soft,
   },
   cardLabel: { fontWeight: "800", fontSize: 13 },
   cardValue: {
     fontSize: 40,
     fontWeight: "900",
     marginTop: 8,
-    letterSpacing: -0.3,
   },
   cardSub: { fontWeight: "800", marginTop: 2, fontSize: 13 },
 
@@ -745,6 +765,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  inlineSectionHeader: {
+    flex: 1,
   },
   leaderboardMeta: {
     fontSize: 12,
@@ -807,7 +830,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#255E36",
+    backgroundColor: "#18442F",
     overflow: "hidden",
   },
   leaderboardAvatarImage: {
@@ -854,9 +877,15 @@ const styles = StyleSheet.create({
   },
 
   panel: {
-    borderRadius: 22,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
     borderWidth: 1,
+    overflow: "hidden",
+  },
+  panelFire: {
+    position: "absolute",
+    right: 18,
+    top: 14,
   },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 9 },
   rowLeft: { fontWeight: "800", fontSize: 15 },
@@ -867,9 +896,42 @@ const styles = StyleSheet.create({
   sessionSub: { marginTop: 4, fontWeight: "700", fontSize: 14 },
 
   muted: { fontWeight: "700" },
-  emptyPanel: { gap: 8 },
-  emptyTitle: { fontSize: 16, fontWeight: "900" },
-  emptyBody: { fontWeight: "700", lineHeight: 20 },
+  emptyPanel: {
+    minHeight: 150,
+    justifyContent: "flex-end",
+    gap: 8,
+    overflow: "hidden",
+    paddingTop: 40,
+  },
+  emptyPanelArt: {
+    position: "absolute",
+    right: -18,
+    top: 0,
+    width: 180,
+    height: 112,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyPanelFog: {
+    position: "absolute",
+    right: -18,
+    bottom: 2,
+  },
+  emptyTitle: {
+    maxWidth: 310,
+    color: OutdoorTheme.colors.charcoal,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "700",
+  },
+  emptyBody: {
+    maxWidth: 330,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 15,
+    fontWeight: "700",
+    lineHeight: 23,
+  },
   monthTitle: {
     fontSize: 18,
     fontWeight: "900",
@@ -883,9 +945,9 @@ const styles = StyleSheet.create({
     marginTop: 12,
     borderRadius: 16,
     padding: 12,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: "rgba(24,68,47,0.12)",
   },
   monthComparisonTitle: {
     fontWeight: "900",
@@ -904,7 +966,7 @@ const styles = StyleSheet.create({
   unlockBtn: {
     marginTop: 10,
     alignSelf: "flex-start",
-    backgroundColor: "#255E36",
+    backgroundColor: "#18442F",
     paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 10,

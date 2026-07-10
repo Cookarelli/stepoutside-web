@@ -106,6 +106,10 @@ export function validatePhotoURL(value: string): string | null {
   return null;
 }
 
+export function isUserProfileComplete(profile: UserProfile | null): boolean {
+  return Boolean(profile && !validateUsername(profile.username).error);
+}
+
 export function emptyEditableProfile(): EditableUserProfile {
   return {
     displayName: "",

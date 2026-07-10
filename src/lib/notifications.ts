@@ -55,7 +55,7 @@ async function getNotificationsModule(): Promise<NotificationsModule | null> {
       name: "Default",
       importance: notifications.AndroidImportance.DEFAULT,
       vibrationPattern: [0, 180],
-      lightColor: "#255E36",
+      lightColor: "#18442F",
     });
   }
 

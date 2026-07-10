@@ -6,7 +6,9 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../../constants/theme";
 import { usePremiumAccess } from "../../hooks/use-premium-access";
+import { EmptyStateCard, LayeredEnvironment, PremiumHero, PrimaryButton } from "../../src/components/OutdoorUI";
 import { RoutePreview } from "../../src/components/RoutePreview";
 import { auth } from "../../src/lib/firebase";
 import { getSavedRouteSessions, hasSunriseBonus, hasSunsetBonus, type OutsideSession } from "../../src/lib/store";
@@ -39,10 +41,10 @@ type TrailSuggestion = {
 type PermissionState = "unknown" | "granted" | "denied";
 
 const BRAND = {
-  forest: "#255E36",
-  sunrise: "#F2B541",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
+  forest: OutdoorTheme.colors.forest,
+  sunrise: OutdoorTheme.colors.gold,
+  bone: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
 } as const;
 
 const LEGACY_SAVED_WALKS_KEY = "@stepoutside/savedWalks";
@@ -533,13 +535,15 @@ export default function StepsTab() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <LayeredEnvironment />
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Resets & Suggestions</Text>
-        <Text style={styles.sub}>Short nearby park loops, trail resets, and indoor backup walks.</Text>
-
-        <Pressable style={styles.refreshBtn} onPress={() => void loadNearby(true)}>
-          <Text style={styles.refreshText}>Refresh Nearby</Text>
-        </Pressable>
+        <PremiumHero
+          style={styles.heroPanel}
+          eyebrow="Step Outside"
+          title="Resets & Suggestions"
+          subtitle="Short nearby park loops, trail resets, and indoor backup walks."
+          footer={<PrimaryButton style={styles.refreshBtn} onPress={() => void loadNearby(true)} label="Refresh Nearby" textStyle={styles.refreshText} />}
+        />
 
         {savedWalks.length > 0 ? (
           <View style={styles.savedWrap}>
@@ -655,8 +659,12 @@ export default function StepsTab() {
         ) : null}
 
         {!loading && permission === "denied" ? (
-          <View style={styles.centerState}>
-            <Text style={styles.stateText}>Location is off. Use a ZIP code to browse our route catalog instead.</Text>
+          <EmptyStateCard
+            title="Choose a starting point"
+            body="Location is off. Use a ZIP code to browse quiet routes and nearby reset ideas instead."
+            illustration="map"
+            style={styles.routeEmptyCard}
+          >
             <View style={styles.zipRow}>
               <TextInput
                 value={zipCode}
@@ -667,7 +675,7 @@ export default function StepsTab() {
                 }}
                 keyboardType="number-pad"
                 placeholder="ZIP code"
-                placeholderTextColor="rgba(11,15,14,0.35)"
+                placeholderTextColor="rgba(30,42,36,0.35)"
                 maxLength={5}
                 style={styles.zipInput}
               />
@@ -676,7 +684,7 @@ export default function StepsTab() {
               </Pressable>
             </View>
             <Text style={styles.zipHint}>{zipHint}</Text>
-          </View>
+          </EmptyStateCard>
         ) : null}
 
         {!loading && error ? (
@@ -686,9 +694,12 @@ export default function StepsTab() {
         ) : null}
 
         {!loading && !hasResults && !error && permission === "granted" ? (
-          <View style={styles.centerState}>
-            <Text style={styles.stateText}>No short trails found yet. Try refresh or move to a nearby park.</Text>
-          </View>
+          <EmptyStateCard
+            title="A quiet trail is still coming into view"
+            body="No short trails found yet. Try refresh, search a ZIP code, or move toward a nearby park."
+            illustration="trail"
+            style={styles.routeEmptyCard}
+          />
         ) : null}
 
         {!loading
@@ -760,11 +771,14 @@ export default function StepsTab() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: BRAND.bone,
+    backgroundColor: "transparent",
   },
   container: {
     padding: 20,
     paddingBottom: 28,
+  },
+  heroPanel: {
+    minHeight: 278,
   },
   title: {
     fontSize: 28,
@@ -775,7 +789,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     fontWeight: "700",
-    color: "rgba(11,15,14,0.65)",
+    color: "rgba(30,42,36,0.65)",
   },
   refreshBtn: {
     marginTop: 14,
@@ -783,7 +797,8 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.forest,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 12,
+    borderRadius: OutdoorTheme.radii.md,
+    ...OutdoorTheme.shadows.button,
   },
   refreshText: {
     color: "white",
@@ -798,10 +813,10 @@ const styles = StyleSheet.create({
   zipInput: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: "rgba(255,255,255,0.8)",
+    backgroundColor: "rgba(255,249,239,0.8)",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: "rgba(30,42,36,0.12)",
     paddingVertical: 10,
     paddingHorizontal: 12,
     color: BRAND.charcoal,
@@ -819,28 +834,32 @@ const styles = StyleSheet.create({
   },
   zipHint: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "700",
     lineHeight: 19,
   },
   centerState: {
     marginTop: 20,
-    borderRadius: 14,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.10)",
+    borderColor: "rgba(30,42,36,0.10)",
     padding: 14,
+  },
+  routeEmptyCard: {
+    marginTop: 20,
+    minHeight: 196,
   },
   proNudge: {
     marginTop: 14,
-    borderRadius: 14,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 12,
-    backgroundColor: "rgba(242,181,65,0.18)",
+    backgroundColor: OutdoorTheme.colors.goldTint,
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.4)",
+    borderColor: "rgba(198,155,66,0.4)",
   },
   proNudgeText: {
-    color: "rgba(11,15,14,0.78)",
+    color: "rgba(30,42,36,0.78)",
     fontWeight: "800",
     lineHeight: 20,
   },
@@ -858,19 +877,19 @@ const styles = StyleSheet.create({
   },
   savedWrap: {
     marginTop: 14,
-    borderRadius: 14,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 12,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: OutdoorTheme.colors.forestTint,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: "rgba(24,68,47,0.16)",
   },
   savedRoutesWrap: {
     marginTop: 14,
-    borderRadius: 14,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 12,
-    backgroundColor: "rgba(242,181,65,0.12)",
+    backgroundColor: OutdoorTheme.colors.campfireTint,
     borderWidth: 1,
-    borderColor: "rgba(242,181,65,0.28)",
+    borderColor: "rgba(198,155,66,0.28)",
   },
   savedHeaderRow: {
     flexDirection: "row",
@@ -896,7 +915,7 @@ const styles = StyleSheet.create({
   savedRoutesMeta: {
     fontSize: 11,
     fontWeight: "900",
-    color: "rgba(11,15,14,0.56)",
+    color: "rgba(30,42,36,0.56)",
   },
   savedRow: {
     flexDirection: "row",
@@ -915,7 +934,7 @@ const styles = StyleSheet.create({
   },
   savedMeta: {
     marginTop: 2,
-    color: "rgba(11,15,14,0.7)",
+    color: "rgba(30,42,36,0.7)",
     fontWeight: "700",
     fontSize: 12,
   },
@@ -923,7 +942,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(200,51,51,0.12)",
     paddingVertical: 6,
     paddingHorizontal: 9,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.sm,
   },
   removeText: {
     color: "#C83333",
@@ -932,11 +951,11 @@ const styles = StyleSheet.create({
   },
   savedRouteCard: {
     marginTop: 10,
-    borderRadius: 16,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 12,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   savedRouteCardPressed: {
     opacity: 0.92,
@@ -955,15 +974,15 @@ const styles = StyleSheet.create({
   savedRouteBadge: {
     fontSize: 11,
     fontWeight: "900",
-    color: "#8A5D09",
-    backgroundColor: "rgba(242,181,65,0.18)",
+    color: OutdoorTheme.colors.goldText,
+    backgroundColor: "rgba(198,155,66,0.18)",
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 999,
   },
   savedRouteStats: {
     marginTop: 6,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 12,
     fontWeight: "700",
   },
@@ -977,9 +996,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: "rgba(24,68,47,0.16)",
   },
   savedRouteMetaChipText: {
     color: BRAND.forest,
@@ -988,7 +1007,7 @@ const styles = StyleSheet.create({
   },
   savedRouteLockedText: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
@@ -998,17 +1017,18 @@ const styles = StyleSheet.create({
   },
   stateText: {
     marginTop: 6,
-    color: "rgba(11,15,14,0.72)",
+    color: "rgba(30,42,36,0.72)",
     fontWeight: "700",
     lineHeight: 21,
   },
   card: {
     marginTop: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.7)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.10)",
+    borderColor: OutdoorTheme.colors.lineSoft,
     padding: 14,
+    ...OutdoorTheme.shadows.soft,
   },
   cardTop: {
     flexDirection: "row",
@@ -1026,7 +1046,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "900",
     color: BRAND.forest,
-    backgroundColor: "rgba(37,94,54,0.14)",
+    backgroundColor: "rgba(24,68,47,0.14)",
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 999,
@@ -1037,18 +1057,18 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   chip: {
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: "rgba(30,42,36,0.08)",
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 10,
   },
   chipText: {
     fontWeight: "800",
-    color: "rgba(11,15,14,0.75)",
+    color: "rgba(30,42,36,0.75)",
   },
   cardNote: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "700",
     lineHeight: 18,
   },
@@ -1059,7 +1079,9 @@ const styles = StyleSheet.create({
   },
   mapBtn: {
     alignSelf: "flex-start",
-    backgroundColor: BRAND.sunrise,
+    backgroundColor: OutdoorTheme.colors.goldTint,
+    borderWidth: 1,
+    borderColor: "rgba(198,155,66,0.26)",
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
@@ -1070,25 +1092,25 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: OutdoorTheme.colors.forestTint,
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
   },
   saveBtnActive: {
-    backgroundColor: "rgba(37,94,54,0.18)",
+    backgroundColor: "rgba(24,68,47,0.18)",
   },
   saveBtnDisabled: {
     opacity: 0.5,
   },
   saveBtnText: {
     fontWeight: "900",
-    color: "rgba(11,15,14,0.72)",
+    color: "rgba(30,42,36,0.72)",
   },
   saveBtnTextActive: {
     color: BRAND.forest,
   },
   saveBtnTextDisabled: {
-    color: "rgba(11,15,14,0.45)",
+    color: "rgba(30,42,36,0.45)",
   },
 });

@@ -1,16 +1,17 @@
 import React from "react";
 import { StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
 
-const BRAND = {
-  forest: "#255E36",
-  bone: "#F8F4EE",
-  charcoal: "#0B0F0E",
-} as const;
+import { OutdoorTheme } from "../../constants/theme";
+import { NationalParkBadgeIllustration } from "./OutdoorIllustrations";
 
 type BrandBadgeProps = {
   size?: number;
   variant?: "default" | "inverse";
   style?: StyleProp<ViewStyle>;
+};
+
+type BrandHeaderMarkProps = BrandBadgeProps & {
+  showTagline?: boolean;
 };
 
 export function BrandBadge({
@@ -19,7 +20,7 @@ export function BrandBadge({
   style,
 }: BrandBadgeProps) {
   const isInverse = variant === "inverse";
-  const fontSize = Math.max(12, Math.round(size * 0.34));
+  const colors = OutdoorTheme.colors;
 
   return (
     <View
@@ -28,33 +29,43 @@ export function BrandBadge({
         {
           width: size,
           height: size,
-          borderRadius: Math.round(size * 0.3),
-          backgroundColor: isInverse ? "rgba(248,244,238,0.14)" : "rgba(37,94,54,0.10)",
-          borderColor: isInverse ? "rgba(248,244,238,0.16)" : "rgba(37,94,54,0.14)",
+          borderRadius: Math.round(size * 0.28),
+          backgroundColor: isInverse ? "rgba(255,249,239,0.14)" : colors.forestTint,
+          borderColor: isInverse ? "rgba(255,249,239,0.18)" : colors.line,
         },
         style,
       ]}
     >
-      <Text
-        style={[
-          styles.mark,
-          {
-            fontSize,
-            color: isInverse ? BRAND.bone : BRAND.forest,
-            letterSpacing: Math.max(0.4, size * 0.03),
-          },
-        ]}
-      >
-        SO
-      </Text>
-      <View
-        style={[
-          styles.dot,
-          {
-            backgroundColor: isInverse ? "rgba(248,244,238,0.78)" : "rgba(37,94,54,0.62)",
-          },
-        ]}
+      <NationalParkBadgeIllustration
+        size={Math.round(size * 0.78)}
+        variant={isInverse ? "forest" : "light"}
+        opacity={0.98}
       />
+    </View>
+  );
+}
+
+export function BrandHeaderMark({
+  size = 58,
+  variant = "default",
+  showTagline = true,
+  style,
+}: BrandHeaderMarkProps) {
+  const isInverse = variant === "inverse";
+  const colors = OutdoorTheme.colors;
+
+  return (
+    <View style={[styles.headerMark, style]}>
+      <BrandBadge size={size} variant={variant} />
+      <View style={styles.wordmark}>
+        <Text style={[styles.word, { color: isInverse ? colors.paper : colors.forest }]}>STEP</Text>
+        <Text style={[styles.word, { color: isInverse ? colors.paper : colors.forest }]}>OUTSIDE</Text>
+        {showTagline ? (
+          <Text style={[styles.tagline, { color: isInverse ? colors.gold : colors.sage }]}>
+            DISCOVER. RESET. LIVE.
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -66,15 +77,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: "hidden",
   },
-  mark: {
-    fontWeight: "900",
-    lineHeight: 24,
+  headerMark: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  dot: {
-    position: "absolute",
-    bottom: 10,
-    width: 6,
-    height: 6,
-    borderRadius: 999,
+  wordmark: {
+    minWidth: 0,
+  },
+  word: {
+    fontSize: 17,
+    lineHeight: 17,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+  tagline: {
+    marginTop: 5,
+    fontSize: 8,
+    lineHeight: 10,
+    fontWeight: "900",
+    letterSpacing: 0.9,
   },
 });

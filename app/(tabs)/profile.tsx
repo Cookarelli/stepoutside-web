@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -18,19 +19,25 @@ import {
   View,
 } from "react-native";
 
+import { OutdoorTheme } from "../../constants/theme";
 import { ENV } from "../../env";
 import { usePremiumAccess } from "../../hooks/use-premium-access";
+import { CampfireGlyph } from "../../src/components/OutdoorDecor";
+import { OutdoorIcon } from "../../src/components/OutdoorIcons";
+import { BrandCard, LayeredEnvironment, PremiumHero, SectionHeader, StatCard } from "../../src/components/OutdoorUI";
+import { logRestorePurchasesTapped, logSignupStarted, logSubscriptionRestored } from "../../src/lib/analytics";
 import {
   createEmailPasswordAccount,
   getCachedAuthUser,
   sendEmailPasswordReset,
   signInWithEmailPassword,
-  signInWithGoogleIdToken,
+  signInWithGoogleIdTokenResult,
   signOutUser,
   subscribeToAuth,
   type AuthUserSnapshot,
 } from "../../src/lib/auth";
-import { resetOnboarding } from "../../src/lib/onboarding";
+import { getAuthenticatedEntryRoute } from "../../src/lib/authFlow";
+import { clearNewAccountNeedsWelcome, markNewAccountNeedsWelcome, resetOnboarding } from "../../src/lib/onboarding";
 import {
   getNotificationPrefs,
   requestNotificationPermission,
@@ -140,7 +147,7 @@ type GoogleSignInButtonProps = {
   isLoading: boolean;
   onStart: () => void;
   onFinish: () => void;
-  onAuthenticated: (user: AuthUserSnapshot) => Promise<void>;
+  onAuthenticated: (user: AuthUserSnapshot, isNewAccount?: boolean) => Promise<void>;
   onStatus: (message: string) => void;
 };
 
@@ -189,11 +196,11 @@ function GoogleSignInButton({
 
     void (async () => {
       try {
-        const user = await signInWithGoogleIdToken(
+        const result = await signInWithGoogleIdTokenResult(
           idToken,
           response.authentication?.accessToken ?? response.params?.access_token ?? null
         );
-        await onAuthenticated(user);
+        await onAuthenticated(result.user, result.isNewUser);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onStatus("Signed in with Google.");
       } catch (error) {
@@ -236,7 +243,7 @@ function GoogleSignInButton({
       ]}
     >
       {isLoading ? (
-        <ActivityIndicator color="#0B0F0E" />
+        <ActivityIndicator color="#1E2A24" />
       ) : (
         <View style={styles.googleBtnContent}>
           <View style={styles.googleIcon}>
@@ -279,17 +286,17 @@ export default function ProfileTab() {
     ? profile?.username
       ? `@${profile.username}`
       : "Choose a username"
-    : "Sign in to choose a username";
+    : "Create or sign in first";
   const emailStatus = visibleUser
     ? firstNonEmpty(visibleUser.email, `${providerLabel} account connected`)
-    : "Signed out";
+    : "No account connected";
   const profileBody = visibleUser
     ? firstNonEmpty(
         profile?.outdoorGoal,
         profile?.favoriteActivity,
         "Your outdoor rhythm, friends, and Premium access live here."
       )
-    : "Sign in to connect your Premium access to your account instead of only this device.";
+    : "Create an account or sign in first. After that, you can add a display name, username, and photo.";
   const founderActive = isPremium && (plan === "lifetime" || membershipLabel === "Founder Lifetime");
 
   const loadSettings = useCallback(async () => {
@@ -411,18 +418,21 @@ export default function ProfileTab() {
   };
 
   const onAuthenticated = useCallback(
-    async (user: AuthUserSnapshot) => {
+    async (user: AuthUserSnapshot, isNewAccount = false) => {
       setAuthUser(user);
       setCachedAuthUser(user);
       await loadSettings();
       setAuthPassword("");
+      const nextRoute = isNewAccount ? "/profile-setup" : await getAuthenticatedEntryRoute();
+      router.replace(nextRoute as never);
     },
-    [loadSettings]
+    [loadSettings, router]
   );
 
   const onEmailSignIn = async () => {
     if (authAction !== null) return;
 
+    Keyboard.dismiss();
     const form = validateEmailForm(true);
     if (!form) return;
 
@@ -432,7 +442,8 @@ export default function ProfileTab() {
 
     try {
       const user = await signInWithEmailPassword(form.email, form.password);
-      await onAuthenticated(user);
+      await clearNewAccountNeedsWelcome();
+      await onAuthenticated(user, false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Signed in.");
     } catch (error) {
@@ -446,16 +457,19 @@ export default function ProfileTab() {
   const onEmailSignUp = async () => {
     if (authAction !== null) return;
 
+    Keyboard.dismiss();
     const form = validateEmailForm(true);
     if (!form) return;
 
     setAuthStatus("");
     setAuthAction("emailSignUp");
+    void logSignupStarted();
     void Haptics.selectionAsync();
 
     try {
       const user = await createEmailPasswordAccount(form.email, form.password);
-      await onAuthenticated(user);
+      await markNewAccountNeedsWelcome();
+      await onAuthenticated(user, true);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setAuthStatus("Account created.");
     } catch (error) {
@@ -469,6 +483,7 @@ export default function ProfileTab() {
   const onPasswordReset = async () => {
     if (authAction !== null) return;
 
+    Keyboard.dismiss();
     const form = validateEmailForm(false);
     if (!form) return;
 
@@ -506,6 +521,7 @@ export default function ProfileTab() {
             setAuthPassword("");
             setAuthStatus("Signed out.");
             void Haptics.selectionAsync();
+            router.replace("/auth" as never);
           } catch (error) {
             setAuthStatus(formatAuthError(error, "Couldn’t sign out right now."));
           } finally {
@@ -521,9 +537,13 @@ export default function ProfileTab() {
 
     setAuthStatus("");
     setAuthAction("restorePurchases");
+    void logRestorePurchasesTapped("profile");
     try {
       const next = await restorePurchasesScaffold();
       await refreshPremiumStatus();
+      if (next.isPro) {
+        void logSubscriptionRestored();
+      }
       Alert.alert(
         next.isPro ? "Purchases restored" : "No Premium purchases found",
         next.isPro
@@ -558,14 +578,18 @@ export default function ProfileTab() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.hero}>
-        <Text style={styles.eyebrow}>Step Outside</Text>
-        <Text style={styles.title}>Profile</Text>
-        <Text style={styles.sub}>Your walks, people, and Premium access in one quiet place.</Text>
-      </View>
+    <View style={styles.screen}>
+      <LayeredEnvironment />
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <PremiumHero
+        variant="forest"
+        style={styles.hero}
+        eyebrow="Step Outside"
+        title="Profile"
+        subtitle="Your walks, people, and Premium access in one quiet place."
+      />
 
-      <View style={styles.userCard}>
+      <BrandCard withPines style={styles.userCard}>
         <View style={styles.userTopRow}>
           <View style={styles.avatar}>
             {profilePhotoURL ? (
@@ -583,7 +607,7 @@ export default function ProfileTab() {
               {usernameLabel}
             </Text>
             <View style={styles.statusPill}>
-              <Ionicons name={visibleUser ? "checkmark-circle" : "person-circle-outline"} size={15} color="#255E36" />
+              <Ionicons name={visibleUser ? "checkmark-circle" : "person-circle-outline"} size={15} color="#18442F" />
               <Text style={styles.statusPillText} numberOfLines={1}>
                 {emailStatus}
               </Text>
@@ -595,13 +619,19 @@ export default function ProfileTab() {
 
         {authLoading && !visibleUser ? (
           <View style={styles.authLoadingRow}>
-            <ActivityIndicator color="#255E36" />
+            <ActivityIndicator color="#18442F" />
             <Text style={styles.authLoadingText}>Checking your account...</Text>
           </View>
         ) : null}
 
         {!visibleUser ? (
           <View style={styles.authPanel}>
+            <View style={styles.authIntro}>
+              <Text style={styles.authIntroTitle}>Start with your account</Text>
+              <Text style={styles.authIntroText}>
+                Use email and password below, then edit your public profile after you are signed in.
+              </Text>
+            </View>
             <TextInput
               value={authEmail}
               onChangeText={setAuthEmail}
@@ -610,7 +640,7 @@ export default function ProfileTab() {
               keyboardType="email-address"
               textContentType="emailAddress"
               placeholder="Email"
-              placeholderTextColor="rgba(11,15,14,0.42)"
+              placeholderTextColor="rgba(30,42,36,0.42)"
               style={styles.authInput}
             />
             <TextInput
@@ -621,7 +651,7 @@ export default function ProfileTab() {
               secureTextEntry
               textContentType="password"
               placeholder="Password"
-              placeholderTextColor="rgba(11,15,14,0.42)"
+              placeholderTextColor="rgba(30,42,36,0.42)"
               style={styles.authInput}
             />
             <View style={styles.authButtonGrid}>
@@ -668,7 +698,14 @@ export default function ProfileTab() {
                 isLoading={authAction === "google"}
                 onStart={() => setAuthAction("google")}
                 onFinish={() => setAuthAction(null)}
-                onAuthenticated={onAuthenticated}
+                onAuthenticated={async (user, isNewAccount = false) => {
+                  if (isNewAccount) {
+                    await markNewAccountNeedsWelcome();
+                  } else {
+                    await clearNewAccountNeedsWelcome();
+                  }
+                  await onAuthenticated(user, isNewAccount);
+                }}
                 onStatus={setAuthStatus}
               />
             ) : (
@@ -680,27 +717,15 @@ export default function ProfileTab() {
         ) : null}
 
         {authStatus ? <Text style={styles.authStatus}>{authStatus}</Text> : null}
-      </View>
+      </BrandCard>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Stats</Text>
+        <SectionHeader title="Stats" style={styles.profileSectionHeader} />
         <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Walks</Text>
-            <Text style={styles.statValue}>{summary.totalSessions}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Streak</Text>
-            <Text style={styles.statValue}>{currentStreak}d</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Outside Time</Text>
-            <Text style={styles.statValue}>{formatMinutesLabel(summary.totalMinutes)}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Miles</Text>
-            <Text style={styles.statValue}>{formatMilesLabel(totalMiles)}</Text>
-          </View>
+          <StatCard label="Walks" value={summary.totalSessions} style={styles.statCard} />
+          <StatCard label="Streak" value={`${currentStreak}d`} style={styles.statCard} />
+          <StatCard label="Outside Time" value={formatMinutesLabel(summary.totalMinutes)} style={styles.statCard} />
+          <StatCard label="Miles" value={formatMilesLabel(totalMiles)} style={styles.statCard} />
         </View>
       </View>
 
@@ -711,7 +736,7 @@ export default function ProfileTab() {
             onPress={() => openSignedInRoute("/friends")}
             style={({ pressed }) => [styles.actionTile, pressed ? styles.pressed : null]}
           >
-            <Ionicons name="people" size={22} color="#255E36" />
+            <OutdoorIcon name="tree" size={23} color="#18442F" />
             <Text style={styles.actionTitle}>Friends</Text>
             <Text style={styles.actionHint}>Your circle</Text>
           </Pressable>
@@ -719,7 +744,7 @@ export default function ProfileTab() {
             onPress={() => openSignedInRoute("/friends-search")}
             style={({ pressed }) => [styles.actionTile, pressed ? styles.pressed : null]}
           >
-            <Ionicons name="search" size={22} color="#255E36" />
+            <OutdoorIcon name="binoculars" size={23} color="#18442F" />
             <Text style={styles.actionTitle}>Find Friends</Text>
             <Text style={styles.actionHint}>Search by username</Text>
           </Pressable>
@@ -727,7 +752,7 @@ export default function ProfileTab() {
             onPress={() => openSignedInRoute("/friend-requests")}
             style={({ pressed }) => [styles.actionTileWide, pressed ? styles.pressed : null]}
           >
-            <Ionicons name="mail-unread-outline" size={22} color="#255E36" />
+            <OutdoorIcon name="map" size={23} color="#18442F" />
             <View style={styles.actionCopy}>
               <Text style={styles.actionTitle}>Requests</Text>
               <Text style={styles.actionHint}>Incoming and outgoing invites</Text>
@@ -737,7 +762,7 @@ export default function ProfileTab() {
             onPress={() => openSignedInRoute("/leaderboard")}
             style={({ pressed }) => [styles.actionTileWide, pressed ? styles.pressed : null]}
           >
-            <Ionicons name="podium-outline" size={22} color="#255E36" />
+            <OutdoorIcon name="mountain" size={23} color="#18442F" />
             <View style={styles.actionCopy}>
               <Text style={styles.actionTitle}>Leaderboard</Text>
               <Text style={styles.actionHint}>Friends, global, weekly, monthly</Text>
@@ -753,17 +778,18 @@ export default function ProfileTab() {
           style={({ pressed }) => [styles.challengeTile, pressed ? styles.pressed : null]}
         >
           <View style={styles.challengeIcon}>
-            <Ionicons name="flag" size={22} color="#255E36" />
+            <OutdoorIcon name="trail" size={23} color="#18442F" />
           </View>
           <View style={styles.actionCopy}>
             <Text style={styles.actionTitle}>Friend Challenges</Text>
             <Text style={styles.actionHint}>Incoming invites and weekly challenges you sent</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color="rgba(11,15,14,0.42)" />
+          <Ionicons name="chevron-forward" size={20} color="rgba(30,42,36,0.42)" />
         </Pressable>
       </View>
 
       <View style={styles.premiumCard}>
+        <CampfireGlyph style={styles.premiumFire} size={50} opacity={0.2} />
         <View style={styles.premiumHeader}>
           <View>
             <Text style={styles.sectionEyebrow}>Premium</Text>
@@ -798,16 +824,18 @@ export default function ProfileTab() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Settings</Text>
         <View style={styles.settingsList}>
-          <Pressable onPress={onEditProfile} style={({ pressed }) => [styles.settingsRow, pressed ? styles.pressed : null]}>
-            <View style={styles.settingsIcon}>
-              <Ionicons name="create-outline" size={20} color="#255E36" />
-            </View>
-            <View style={styles.settingsCopy}>
-              <Text style={styles.settingsTitle}>Edit Profile</Text>
-              <Text style={styles.settingsHint}>Photo, display name, and username</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="rgba(11,15,14,0.38)" />
-          </Pressable>
+          {visibleUser ? (
+            <Pressable onPress={onEditProfile} style={({ pressed }) => [styles.settingsRow, pressed ? styles.pressed : null]}>
+              <View style={styles.settingsIcon}>
+                <OutdoorIcon name="park-badge" size={21} color="#18442F" />
+              </View>
+              <View style={styles.settingsCopy}>
+                <Text style={styles.settingsTitle}>Edit Profile</Text>
+                <Text style={styles.settingsHint}>Photo, display name, and username</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="rgba(30,42,36,0.38)" />
+            </Pressable>
+          ) : null}
 
           <View style={styles.notificationsBlock}>
             <View style={styles.notificationsHeader}>
@@ -815,7 +843,7 @@ export default function ProfileTab() {
                 <Text style={styles.settingsTitle}>Notifications</Text>
                 <Text style={styles.settingsHint}>{reminderCount === 0 ? "All reminders off" : `${reminderCount} reminders on`}</Text>
               </View>
-              <Ionicons name="notifications-outline" size={20} color="#8A5D09" />
+              <OutdoorIcon name="fire" size={21} color={OutdoorTheme.colors.gold} accentColor={OutdoorTheme.colors.campfire} />
             </View>
 
             <View style={styles.toggleRow}>
@@ -873,7 +901,7 @@ export default function ProfileTab() {
             style={({ pressed }) => [styles.settingsRow, authAction !== null ? styles.disabled : null, pressed ? styles.pressed : null]}
           >
             <View style={styles.settingsIcon}>
-              <Ionicons name="refresh-outline" size={20} color="#255E36" />
+              <OutdoorIcon name="compass" size={21} color="#18442F" />
             </View>
             <View style={styles.settingsCopy}>
               <Text style={styles.settingsTitle}>
@@ -881,18 +909,18 @@ export default function ProfileTab() {
               </Text>
               <Text style={styles.settingsHint}>Refresh Premium from RevenueCat</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="rgba(11,15,14,0.38)" />
+            <Ionicons name="chevron-forward" size={18} color="rgba(30,42,36,0.38)" />
           </Pressable>
 
           <Pressable onPress={onResetOnboarding} style={({ pressed }) => [styles.settingsRow, pressed ? styles.pressed : null]}>
             <View style={styles.settingsIcon}>
-              <Ionicons name="sparkles-outline" size={20} color="#255E36" />
+              <OutdoorIcon name="fire" size={21} color="#18442F" />
             </View>
             <View style={styles.settingsCopy}>
               <Text style={styles.settingsTitle}>Replay Welcome Screens</Text>
               <Text style={styles.settingsHint}>See onboarding again next launch</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="rgba(11,15,14,0.38)" />
+            <Ionicons name="chevron-forward" size={18} color="rgba(30,42,36,0.38)" />
           </Pressable>
 
           {visibleUser ? (
@@ -912,23 +940,28 @@ export default function ProfileTab() {
           ) : null}
         </View>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   container: {
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 36,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
     flexGrow: 1,
   },
   hero: {
     marginBottom: 18,
+    minHeight: 250,
   },
   eyebrow: {
-    color: "#8A5D09",
+    color: OutdoorTheme.colors.gold,
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 1.2,
@@ -940,28 +973,24 @@ const styles = StyleSheet.create({
     fontSize: 42,
     lineHeight: 48,
     fontWeight: "700",
-    color: "#0B0F0E",
+    color: "#1E2A24",
   },
   sub: {
     marginTop: 8,
     maxWidth: 360,
     fontSize: 15,
     fontWeight: "700",
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     lineHeight: 22,
   },
   userCard: {
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderRadius: OutdoorTheme.radii.xl,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: OutdoorTheme.colors.line,
     padding: 16,
     gap: 16,
-    shadowColor: "#1F4A2C",
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    ...OutdoorTheme.shadows.card,
   },
   userTopRow: {
     flexDirection: "row",
@@ -972,12 +1001,12 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "#255E36",
+    backgroundColor: "#18442F",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     borderWidth: 2,
-    borderColor: "rgba(242,181,65,0.75)",
+    borderColor: "rgba(198,155,66,0.75)",
   },
   avatarImage: {
     width: "100%",
@@ -994,14 +1023,14 @@ const styles = StyleSheet.create({
   },
   userName: {
     fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 26,
     lineHeight: 30,
     fontWeight: "700",
   },
   username: {
     marginTop: 4,
-    color: "#255E36",
+    color: "#18442F",
     fontSize: 14,
     fontWeight: "900",
   },
@@ -1015,16 +1044,16 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 7,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
   },
   statusPillText: {
-    color: "rgba(11,15,14,0.72)",
+    color: "rgba(30,42,36,0.72)",
     fontSize: 12,
     fontWeight: "800",
     flexShrink: 1,
   },
   userBody: {
-    color: "rgba(11,15,14,0.68)",
+    color: "rgba(30,42,36,0.68)",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700",
@@ -1035,20 +1064,39 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   authLoadingText: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "800",
   },
   authPanel: {
     gap: 12,
   },
+  authIntro: {
+    borderRadius: OutdoorTheme.radii.md,
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.1)",
+    backgroundColor: "rgba(24,68,47,0.06)",
+    padding: 12,
+    gap: 4,
+  },
+  authIntroTitle: {
+    color: "#1E2A24",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  authIntroText: {
+    color: "rgba(30,42,36,0.62)",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+  },
   authInput: {
     minHeight: 50,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderColor: "rgba(30,42,36,0.12)",
+    backgroundColor: "rgba(255,249,239,0.78)",
     paddingHorizontal: 14,
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 15,
     fontWeight: "700",
   },
@@ -1061,8 +1109,8 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 136,
     minHeight: 50,
-    borderRadius: 8,
-    backgroundColor: "#255E36",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "#18442F",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
@@ -1075,16 +1123,16 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 136,
     minHeight: 50,
-    borderRadius: 8,
-    backgroundColor: "rgba(37,94,54,0.11)",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(24,68,47,0.11)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.16)",
+    borderColor: "rgba(24,68,47,0.16)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
   },
   secondaryButtonText: {
-    color: "#255E36",
+    color: "#18442F",
     fontWeight: "900",
   },
   textButton: {
@@ -1092,16 +1140,16 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   textButtonText: {
-    color: "rgba(11,15,14,0.58)",
+    color: "rgba(30,42,36,0.58)",
     fontSize: 13,
     fontWeight: "800",
   },
   googleBtn: {
     minHeight: 52,
-    borderRadius: 8,
-    backgroundColor: "#FFFFFF",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: OutdoorTheme.colors.paper,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.13)",
+    borderColor: "rgba(30,42,36,0.13)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
@@ -1116,17 +1164,17 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "#F7F4EC",
     alignItems: "center",
     justifyContent: "center",
   },
   googleIconText: {
-    color: "#255E36",
+    color: "#18442F",
     fontWeight: "900",
     fontSize: 14,
   },
   googleBtnText: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontWeight: "900",
     letterSpacing: 0.3,
   },
@@ -1140,21 +1188,21 @@ const styles = StyleSheet.create({
     opacity: 0.88,
   },
   authSetupNote: {
-    color: "rgba(11,15,14,0.55)",
+    color: "rgba(30,42,36,0.55)",
     fontSize: 12,
     lineHeight: 18,
     fontWeight: "700",
   },
   setupNoteCard: {
     borderRadius: 14,
-    backgroundColor: "rgba(11,15,14,0.05)",
+    backgroundColor: "rgba(30,42,36,0.05)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
     padding: 12,
     gap: 4,
   },
   setupNoteTitle: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontWeight: "900",
     fontSize: 13,
   },
@@ -1173,12 +1221,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.12)",
-    color: "#255E36",
+    backgroundColor: "rgba(24,68,47,0.12)",
+    color: "#18442F",
     fontWeight: "900",
   },
   signedInHelper: {
-    color: "rgba(11,15,14,0.52)",
+    color: "rgba(30,42,36,0.52)",
     fontSize: 12,
     fontWeight: "700",
   },
@@ -1186,14 +1234,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 14,
-    backgroundColor: "rgba(11,15,14,0.08)",
+    backgroundColor: "rgba(30,42,36,0.08)",
   },
   signOutBtnText: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontWeight: "900",
   },
   authStatus: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "700",
@@ -1206,11 +1254,14 @@ const styles = StyleSheet.create({
     fontSize: 25,
     lineHeight: 30,
     fontWeight: "700",
-    color: "#0B0F0E",
+    color: "#1E2A24",
+    marginBottom: 12,
+  },
+  profileSectionHeader: {
     marginBottom: 12,
   },
   sectionEyebrow: {
-    color: "#8A5D09",
+    color: OutdoorTheme.colors.goldText,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1,
@@ -1225,22 +1276,22 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: "47%",
     minHeight: 92,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
     justifyContent: "space-between",
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.11)",
+    borderColor: "rgba(24,68,47,0.11)",
   },
   statLabel: {
-    color: "rgba(11,15,14,0.52)",
+    color: "rgba(30,42,36,0.52)",
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 0.7,
   },
   statValue: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 24,
     fontWeight: "900",
   },
@@ -1253,32 +1304,32 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: "47%",
     minHeight: 118,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.1)",
+    borderColor: "rgba(24,68,47,0.1)",
     justifyContent: "space-between",
   },
   actionTileWide: {
     flexBasis: "100%",
     minHeight: 72,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.1)",
+    borderColor: "rgba(24,68,47,0.1)",
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
   challengeTile: {
     minHeight: 78,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     padding: 14,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.1)",
+    borderColor: "rgba(24,68,47,0.1)",
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -1287,7 +1338,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: "rgba(242,181,65,0.18)",
+    backgroundColor: "rgba(198,155,66,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1296,24 +1347,31 @@ const styles = StyleSheet.create({
   },
   actionTitle: {
     marginTop: 8,
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 15,
     fontWeight: "900",
   },
   actionHint: {
     marginTop: 3,
-    color: "rgba(11,15,14,0.54)",
+    color: "rgba(30,42,36,0.54)",
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 17,
   },
   premiumCard: {
     marginTop: 22,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 16,
-    backgroundColor: "rgba(242,181,65,0.16)",
+    backgroundColor: OutdoorTheme.colors.goldTint,
     borderWidth: 1,
-    borderColor: "rgba(138,93,9,0.2)",
+    borderColor: "rgba(198,155,66,0.26)",
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  premiumFire: {
+    position: "absolute",
+    right: 18,
+    top: 18,
   },
   premiumHeader: {
     flexDirection: "row",
@@ -1327,11 +1385,11 @@ const styles = StyleSheet.create({
     fontSize: 25,
     lineHeight: 30,
     fontWeight: "700",
-    color: "#0B0F0E",
+    color: "#1E2A24",
   },
   founderBadge: {
     borderRadius: 999,
-    backgroundColor: "#255E36",
+    backgroundColor: "#18442F",
     paddingVertical: 7,
     paddingHorizontal: 10,
   },
@@ -1344,7 +1402,7 @@ const styles = StyleSheet.create({
   },
   premiumBody: {
     marginTop: 12,
-    color: "rgba(11,15,14,0.68)",
+    color: "rgba(30,42,36,0.68)",
     fontSize: 14,
     fontWeight: "700",
     lineHeight: 21,
@@ -1358,8 +1416,8 @@ const styles = StyleSheet.create({
   benefit: {
     overflow: "hidden",
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.54)",
-    color: "rgba(11,15,14,0.72)",
+    backgroundColor: "rgba(255,249,239,0.54)",
+    color: "rgba(30,42,36,0.72)",
     paddingVertical: 8,
     paddingHorizontal: 10,
     fontSize: 12,
@@ -1370,8 +1428,8 @@ const styles = StyleSheet.create({
     minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 8,
-    backgroundColor: "#255E36",
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "#18442F",
     paddingHorizontal: 16,
   },
   premiumButtonText: {
@@ -1379,11 +1437,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   settingsList: {
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.lg,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.1)",
-    backgroundColor: "rgba(255,255,255,0.7)",
+    borderColor: "rgba(30,42,36,0.1)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
+    ...OutdoorTheme.shadows.soft,
   },
   settingsRow: {
     minHeight: 72,
@@ -1393,13 +1452,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(11,15,14,0.08)",
+    borderBottomColor: "rgba(30,42,36,0.08)",
   },
   settingsIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "rgba(37,94,54,0.1)",
+    backgroundColor: "rgba(24,68,47,0.1)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1408,13 +1467,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   settingsTitle: {
-    color: "#0B0F0E",
+    color: "#1E2A24",
     fontSize: 15,
     fontWeight: "900",
   },
   settingsHint: {
     marginTop: 3,
-    color: "rgba(11,15,14,0.52)",
+    color: "rgba(30,42,36,0.52)",
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 17,
@@ -1422,7 +1481,7 @@ const styles = StyleSheet.create({
   notificationsBlock: {
     padding: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(11,15,14,0.08)",
+    borderBottomColor: "rgba(30,42,36,0.08)",
     gap: 8,
   },
   notificationsHeader: {
@@ -1444,13 +1503,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   toggleLabel: {
-    color: "rgba(11,15,14,0.78)",
+    color: "rgba(30,42,36,0.78)",
     fontSize: 14,
     fontWeight: "900",
   },
   toggleHint: {
     marginTop: 3,
-    color: "rgba(11,15,14,0.52)",
+    color: "rgba(30,42,36,0.52)",
     fontSize: 12,
     lineHeight: 17,
     fontWeight: "700",
@@ -1458,13 +1517,13 @@ const styles = StyleSheet.create({
   smallGoldButton: {
     marginTop: 4,
     alignSelf: "flex-start",
-    borderRadius: 8,
-    backgroundColor: "rgba(242,181,65,0.22)",
+    borderRadius: OutdoorTheme.radii.sm,
+    backgroundColor: "rgba(198,155,66,0.22)",
     paddingVertical: 9,
     paddingHorizontal: 11,
   },
   smallGoldButtonText: {
-    color: "#8A5D09",
+    color: OutdoorTheme.colors.goldText,
     fontSize: 12,
     fontWeight: "900",
   },

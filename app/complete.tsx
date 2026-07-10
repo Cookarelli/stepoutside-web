@@ -1,10 +1,14 @@
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { BrandHeaderMark } from "../src/components/BrandBadge";
+import { LayeredEnvironment } from "../src/components/OutdoorUI";
 import { RoutePreview } from "../src/components/RoutePreview";
+import { logWalkCompleted } from "../src/lib/analytics";
 import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
 import { getPremiumStatus } from "../src/lib/pro";
 import { evaluateSolarBonus } from "../src/lib/solarBonus";
@@ -201,6 +205,7 @@ export default function CompleteScreen() {
 
         setSummary(result.summary);
         setSavedSession(result.session);
+        void logWalkCompleted(durationSec / 60, Math.max(0, distanceM) / 1609.344);
 
         if (__DEV__) {
           console.log("[complete] saved-session", {
@@ -261,9 +266,9 @@ export default function CompleteScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+      <LayeredEnvironment />
       <View style={styles.container}>
-        <Image source={require("../assets/images/icon.png")} style={styles.logo} />
-        <Text style={styles.title}>Step Outside</Text>
+        <BrandHeaderMark size={64} showTagline style={styles.logo} />
 
         <Text style={styles.headline}>{headline}</Text>
 
@@ -300,8 +305,8 @@ export default function CompleteScreen() {
             {!saving && (displaySession.routePoints?.length ?? 0) > 1 ? (
               <Text style={styles.routeNote}>Route captured for this walk.</Text>
             ) : null}
-            {sunriseBonus ? <Text style={styles.bonus}>☀️ Sunrise Bonus earned</Text> : null}
-            {sunsetBonus ? <Text style={styles.bonus}>🌅 Sunset Bonus earned</Text> : null}
+            {sunriseBonus ? <Text style={styles.bonus}>Sunrise Bonus earned</Text> : null}
+            {sunsetBonus ? <Text style={styles.bonus}>Sunset Bonus earned</Text> : null}
             {lockedBonusTeaser ? (
               <Text style={styles.bonusTeaser}>Premium unlocks sunrise and sunset bonus achievements.</Text>
             ) : null}
@@ -340,32 +345,31 @@ export default function CompleteScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F8F4EE" },
+  safe: { flex: 1, backgroundColor: "transparent" },
   container: {
     flex: 1,
-    backgroundColor: "#F8F4EE",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
   },
-  logo: { width: 88, height: 88, borderRadius: 22, marginBottom: 14 },
-  title: { fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
-  headline: { marginTop: 14, fontSize: 22, fontWeight: "900", color: "#0B0F0E" },
-  big: { marginTop: 10, fontSize: 44, fontWeight: "900", color: "#0B0F0E" },
+  logo: { marginBottom: 14 },
+  headline: { marginTop: 14, fontSize: 22, fontWeight: "900", color: OutdoorTheme.colors.charcoal },
+  big: { marginTop: 10, fontSize: 44, fontWeight: "900", color: OutdoorTheme.colors.charcoal },
 
   metricsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
   metricCard: {
     minWidth: 140,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: "rgba(30,42,36,0.12)",
     alignItems: "center",
   },
-  metricK: { fontSize: 12, fontWeight: "900", color: "rgba(11,15,14,0.62)" },
-  metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: "#0B0F0E" },
+  metricK: { fontSize: 12, fontWeight: "900", color: "rgba(30,42,36,0.62)" },
+  metricV: { marginTop: 6, fontSize: 16, fontWeight: "900", color: OutdoorTheme.colors.charcoal },
   routeWrap: {
     marginTop: 18,
     width: "100%",
@@ -376,7 +380,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     fontWeight: "700",
-    color: "rgba(11,15,14,0.65)",
+    color: "rgba(30,42,36,0.65)",
     textAlign: "center",
     paddingHorizontal: 10,
   },
@@ -384,26 +388,32 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 13,
     fontWeight: "900",
-    color: "#255E36",
+    color: OutdoorTheme.colors.goldText,
+    backgroundColor: OutdoorTheme.colors.goldTint,
+    borderWidth: 1,
+    borderColor: "rgba(198,155,66,0.24)",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: OutdoorTheme.radii.pill,
   },
   bonusTeaser: {
     marginTop: 8,
     fontSize: 13,
     lineHeight: 20,
     fontWeight: "700",
-    color: "rgba(11,15,14,0.7)",
+    color: "rgba(30,42,36,0.7)",
     textAlign: "center",
   },
   routeNote: {
     marginTop: 8,
     fontSize: 13,
     fontWeight: "800",
-    color: "rgba(37,94,54,0.86)",
+    color: "rgba(24,68,47,0.86)",
   },
 
   btnPrimary: {
     marginTop: 22,
-    backgroundColor: "#255E36",
+    backgroundColor: OutdoorTheme.colors.forest,
     paddingVertical: 14,
     paddingHorizontal: 22,
     borderRadius: 16,
@@ -417,14 +427,14 @@ const styles = StyleSheet.create({
 
   btnSecondary: {
     marginTop: 12,
-    backgroundColor: "rgba(11,15,14,0.06)",
+    backgroundColor: "rgba(30,42,36,0.06)",
     paddingVertical: 12,
     paddingHorizontal: 22,
     borderRadius: 16,
     minWidth: 240,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.12)",
+    borderColor: "rgba(30,42,36,0.12)",
   },
-  btnSecondaryText: { color: "#0B0F0E", fontWeight: "900", letterSpacing: 1 },
+  btnSecondaryText: { color: OutdoorTheme.colors.charcoal, fontWeight: "900", letterSpacing: 1 },
 });

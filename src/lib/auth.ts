@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   createUserWithEmailAndPassword,
+  getAdditionalUserInfo,
   GoogleAuthProvider,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -14,6 +15,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 
 import { auth, db } from "./firebase";
 import { syncRevenueCatIdentity } from "./pro";
+import { logLoginCompleted, logSignupCompleted } from "./analytics";
 
 
 const AUTH_CACHE_KEY = "stepoutside:v2:auth-cache";
@@ -27,6 +29,11 @@ export type AuthUserSnapshot = {
   isAnonymous: boolean;
 };
 
+export type AuthSignInResult = {
+  user: AuthUserSnapshot;
+  isNewUser: boolean;
+};
+
 function toSnapshot(user: User | null): AuthUserSnapshot | null {
   if (!user) return null;
 
@@ -38,6 +45,51 @@ function toSnapshot(user: User | null): AuthUserSnapshot | null {
     providerIds: user.providerData.map((item) => item.providerId).filter(Boolean),
     isAnonymous: user.isAnonymous,
   };
+}
+
+export function getCurrentAuthUserSnapshot(): AuthUserSnapshot | null {
+  return toSnapshot(auth.currentUser);
+}
+
+export function waitForAuthUserSnapshot(timeoutMs = 4000): Promise<AuthUserSnapshot | null> {
+  const current = getCurrentAuthUserSnapshot();
+  if (current) return Promise.resolve(current);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    const finish = (snapshot: AuthUserSnapshot | null) => {
+      if (settled) return;
+      settled = true;
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      resolve(snapshot);
+    };
+
+    const timeout = setTimeout(() => {
+      if (__DEV__) {
+        console.warn("[auth] timed out waiting for Firebase auth state");
+      }
+      finish(null);
+    }, timeoutMs);
+
+    unsubscribe = onAuthStateChanged(
+      auth,
+      (user) => {
+        clearTimeout(timeout);
+        finish(toSnapshot(user));
+      },
+      (error) => {
+        clearTimeout(timeout);
+        if (__DEV__) {
+          console.warn("[auth] auth state listener failed", error);
+        }
+        finish(null);
+      }
+    );
+  });
 }
 
 async function writeCachedUser(user: AuthUserSnapshot | null): Promise<void> {
@@ -92,9 +144,21 @@ export function subscribeToAuth(listener: (user: AuthUserSnapshot | null) => voi
 }
 
 export async function signInWithGoogleIdToken(idToken: string, accessToken?: string | null): Promise<AuthUserSnapshot> {
+  return (await signInWithGoogleIdTokenResult(idToken, accessToken)).user;
+}
+
+export async function signInWithGoogleIdTokenResult(
+  idToken: string,
+  accessToken?: string | null
+): Promise<AuthSignInResult> {
   const credential = GoogleAuthProvider.credential(idToken, accessToken ?? undefined);
   const result = await signInWithCredential(auth, credential);
-  return finishFirebaseAuth(result.user, "Google sign-in did not return a user.");
+  const snapshot = await finishFirebaseAuth(result.user, "Google sign-in did not return a user.");
+  void logLoginCompleted("google");
+  return {
+    user: snapshot,
+    isNewUser: Boolean(getAdditionalUserInfo(result)?.isNewUser),
+  };
 }
 
 export async function signOutUser(): Promise<void> {
@@ -171,20 +235,34 @@ async function finishFirebaseAuth(user: User, fallback: string): Promise<AuthUse
     throw new Error(fallback);
   }
 
-  await ensureUserProfileDocument(user);
   await writeCachedUser(snapshot);
   await syncRevenueCatIdentity(snapshot.uid);
+
+  try {
+    await ensureUserProfileDocument(user);
+  } catch (error) {
+    if (__DEV__) {
+      console.warn("[auth] profile document could not be prepared after auth", error);
+    }
+    // Auth should still complete if the profile document cannot be prepared yet.
+    // The editable profile flow can create or repair it after the user is signed in.
+  }
+
   return snapshot;
 }
 
 export async function signInWithEmailPassword(email: string, password: string): Promise<AuthUserSnapshot> {
   const result = await signInWithEmailAndPassword(auth, normalizeEmail(email), password);
-  return finishFirebaseAuth(result.user, "Email sign-in did not return a user.");
+  const snapshot = await finishFirebaseAuth(result.user, "Email sign-in did not return a user.");
+  void logLoginCompleted("email");
+  return snapshot;
 }
 
 export async function createEmailPasswordAccount(email: string, password: string): Promise<AuthUserSnapshot> {
   const result = await createUserWithEmailAndPassword(auth, normalizeEmail(email), password);
-  return finishFirebaseAuth(result.user, "Email sign-up did not return a user.");
+  const snapshot = await finishFirebaseAuth(result.user, "Email sign-up did not return a user.");
+  void logSignupCompleted("email");
+  return snapshot;
 }
 
 export async function sendEmailPasswordReset(email: string): Promise<void> {

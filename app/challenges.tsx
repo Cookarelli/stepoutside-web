@@ -13,6 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { OutdoorTheme } from "../constants/theme";
+import { OutdoorIcon } from "../src/components/OutdoorIcons";
+import { BrandCard, EmptyStateCard, LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
+import { logChallengeJoined, logChallengeViewed } from "../src/lib/analytics";
 import {
   acceptFriendChallenge,
   challengeTitle,
@@ -25,11 +29,11 @@ import {
 } from "../src/lib/friendChallenges";
 
 const BRAND = {
-  forest: "#255E36",
-  cream: "#F8F4EE",
-  charcoal: "#0B0F0E",
-  gold: "#B98216",
-  danger: "#A13B2B",
+  forest: OutdoorTheme.colors.forest,
+  cream: OutdoorTheme.colors.cream,
+  charcoal: OutdoorTheme.colors.charcoal,
+  gold: OutdoorTheme.colors.gold,
+  danger: OutdoorTheme.colors.danger,
 } as const;
 
 function initialsFor(item: FriendChallengeListItem): string {
@@ -112,11 +116,11 @@ function ChallengeCard({
         <Text style={styles.challengeTitle}>{challengeTitle(challenge.type, challenge.target)}</Text>
         <View style={styles.metaRow}>
           <View style={styles.metaPill}>
-            <Ionicons name="flag-outline" size={14} color={BRAND.gold} />
+            <OutdoorIcon name="trail" size={15} color={BRAND.gold} accentColor={OutdoorTheme.colors.campfire} strokeWidth={1.8} />
             <Text style={styles.metaText}>{challengeTypeLabel(challenge.type)}</Text>
           </View>
           <View style={styles.metaPill}>
-            <Ionicons name="calendar-outline" size={14} color={BRAND.gold} />
+            <OutdoorIcon name="map" size={15} color={BRAND.gold} accentColor={OutdoorTheme.colors.campfire} strokeWidth={1.8} />
             <Text style={styles.metaText}>{formatDateRange(challenge.startDate, challenge.endDate)}</Text>
           </View>
         </View>
@@ -176,6 +180,9 @@ export default function ChallengesScreen() {
       ]);
       setIncoming(nextIncoming);
       setSent(nextSent);
+      for (const item of [...nextIncoming, ...nextSent]) {
+        void logChallengeViewed(item.challenge.id);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Challenges could not be loaded.");
     } finally {
@@ -197,6 +204,7 @@ export default function ChallengesScreen() {
     try {
       if (response === "accept") {
         await acceptFriendChallenge(challengeId);
+        void logChallengeJoined(challengeId);
       } else {
         await declineFriendChallenge(challengeId);
       }
@@ -225,6 +233,7 @@ export default function ChallengesScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <LayeredEnvironment />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.iconButton, pressed ? styles.pressed : null]}>
           <Ionicons name="chevron-back" size={22} color={BRAND.charcoal} />
@@ -257,32 +266,43 @@ export default function ChallengesScreen() {
           />
         }
       >
-        <View style={styles.heroCard}>
-          <Text style={styles.eyebrow}>Friend Challenges</Text>
-          <Text style={styles.heroTitle}>Weekly invites from your circle</Text>
-          <Text style={styles.heroBody}>Challenge friends to a simple weekly distance, walk count, or outside minutes goal.</Text>
-        </View>
+        <PremiumHero
+          variant="forest"
+          style={styles.heroCard}
+          eyebrow="Friend Challenges"
+          title="Weekly invites from your circle"
+          subtitle="Challenge friends to a simple weekly distance, walk count, or outside minutes goal."
+        />
 
         {status ? <Text style={styles.statusText}>{status}</Text> : null}
 
         {isLoading ? (
-          <View style={styles.loadingCard}>
+          <BrandCard style={styles.loadingCard}>
             <ActivityIndicator color={BRAND.forest} />
             <Text style={styles.loadingText}>Loading challenges...</Text>
-          </View>
+          </BrandCard>
         ) : null}
 
         {showEmpty ? (
-          <View style={styles.emptyCard}>
-            <Ionicons name="flag-outline" size={24} color={BRAND.forest} />
-            <Text style={styles.emptyTitle}>No challenges yet</Text>
-            <Text style={styles.emptyBody}>Open a friend profile and send a weekly challenge invitation.</Text>
-          </View>
+          <EmptyStateCard
+            title="No challenges yet"
+            body="An empty campsite is waiting. Invite a friend when you are ready for a gentle weekly goal."
+            illustration="campsite"
+            icon={<OutdoorIcon name="trail" size={25} color={BRAND.forest} />}
+          />
         ) : null}
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Incoming Challenges</Text>
-          {!isLoading && incoming.length === 0 ? <Text style={styles.emptyLine}>No incoming challenges.</Text> : null}
+          {!showEmpty && !isLoading && incoming.length === 0 ? (
+            <EmptyStateCard
+              title="No incoming challenges"
+              body="The campsite is quiet. New invitations from friends will appear here."
+              illustration="campsite"
+              icon={<OutdoorIcon name="fire" size={20} color={BRAND.forest} />}
+              style={styles.compactEmptyCard}
+            />
+          ) : null}
           {incoming.map((item) => (
             <ChallengeCard
               key={item.challenge.id}
@@ -297,7 +317,15 @@ export default function ChallengesScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Sent Challenges</Text>
-          {!isLoading && sent.length === 0 ? <Text style={styles.emptyLine}>No sent challenges.</Text> : null}
+          {!showEmpty && !isLoading && sent.length === 0 ? (
+            <EmptyStateCard
+              title="No sent challenges"
+              body="No trail markers are waiting on friends yet. Send one when the week needs momentum."
+              illustration="trail"
+              icon={<OutdoorIcon name="trail" size={20} color={BRAND.forest} />}
+              style={styles.compactEmptyCard}
+            />
+          ) : null}
           {sent.map((item) => (
             <ChallengeCard
               key={item.challenge.id}
@@ -317,7 +345,7 @@ export default function ChallengesScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: BRAND.cream,
+    backgroundColor: "transparent",
   },
   header: {
     flexDirection: "row",
@@ -332,9 +360,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.72)",
+    backgroundColor: "rgba(255,249,239,0.72)",
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: "rgba(30,42,36,0.08)",
   },
   headerTitle: {
     color: BRAND.charcoal,
@@ -347,12 +375,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   heroCard: {
-    borderRadius: 8,
-    backgroundColor: BRAND.forest,
-    borderWidth: 1,
-    borderColor: "rgba(185,130,22,0.32)",
-    padding: 16,
-    gap: 8,
+    minHeight: 258,
   },
   eyebrow: {
     color: BRAND.gold,
@@ -368,36 +391,36 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   heroBody: {
-    color: "rgba(255,255,255,0.74)",
+    color: "rgba(255,249,239,0.74)",
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "800",
   },
   statusText: {
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "800",
   },
   loadingCard: {
     minHeight: 86,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
+    borderColor: "rgba(24,68,47,0.10)",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
   },
   loadingText: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontWeight: "800",
   },
   emptyCard: {
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.10)",
+    borderColor: "rgba(24,68,47,0.10)",
     padding: 18,
     gap: 8,
   },
@@ -407,7 +430,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   emptyBody: {
-    color: "rgba(11,15,14,0.62)",
+    color: "rgba(30,42,36,0.62)",
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "800",
@@ -421,17 +444,22 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   emptyLine: {
-    color: "rgba(11,15,14,0.56)",
+    color: "rgba(30,42,36,0.56)",
     fontSize: 13,
     fontWeight: "800",
   },
+  compactEmptyCard: {
+    minHeight: 164,
+    padding: 18,
+  },
   challengeCard: {
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.82)",
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.12)",
+    borderColor: "rgba(24,68,47,0.12)",
     padding: 14,
     gap: 14,
+    ...OutdoorTheme.shadows.soft,
   },
   cardHeader: {
     flexDirection: "row",
@@ -483,13 +511,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 7,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(11,15,14,0.07)",
+    backgroundColor: "rgba(30,42,36,0.07)",
   },
   pendingPill: {
-    backgroundColor: "rgba(185,130,22,0.15)",
+    backgroundColor: "rgba(198,155,66,0.15)",
   },
   statusPillText: {
-    color: "rgba(11,15,14,0.66)",
+    color: "rgba(30,42,36,0.66)",
     fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -512,13 +540,13 @@ const styles = StyleSheet.create({
     minHeight: 32,
     borderRadius: 999,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: "rgba(24,68,47,0.08)",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
   metaText: {
-    color: "rgba(11,15,14,0.64)",
+    color: "rgba(30,42,36,0.64)",
     fontSize: 12,
     fontWeight: "900",
   },
@@ -529,7 +557,7 @@ const styles = StyleSheet.create({
   acceptButton: {
     flex: 1,
     minHeight: 46,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     backgroundColor: BRAND.forest,
     alignItems: "center",
     justifyContent: "center",
@@ -541,7 +569,7 @@ const styles = StyleSheet.create({
   declineButton: {
     flex: 1,
     minHeight: 46,
-    borderRadius: 8,
+    borderRadius: OutdoorTheme.radii.md,
     backgroundColor: "rgba(161,59,43,0.08)",
     borderWidth: 1,
     borderColor: "rgba(161,59,43,0.18)",

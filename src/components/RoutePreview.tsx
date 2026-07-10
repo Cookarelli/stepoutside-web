@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 
+import { OutdoorTheme } from "../../constants/theme";
 import { ENV } from "../../env";
+import { PineCluster } from "./OutdoorDecor";
 import type { DisplayRoutePoint, FilteredRoutePoint } from "../types/routes";
 
 type RoutePreviewProps = {
@@ -259,14 +261,14 @@ function NativeRouteMap({ points, useGoogleProvider }: { points: DisplayRoutePoi
         {/* Map rendering is display-only. Do not use this for distance or pace calculations. */}
         <Polyline
           coordinates={coordinates}
-          strokeColor="#255E36"
+          strokeColor={OutdoorTheme.colors.forest}
           strokeWidth={4}
           lineCap="round"
           lineJoin="round"
           geodesic
         />
-        {start ? <Marker coordinate={start} pinColor="#F2B541" /> : null}
-        {end ? <Marker coordinate={end} pinColor="#255E36" /> : null}
+        {start ? <Marker coordinate={start} pinColor={OutdoorTheme.colors.campfire} /> : null}
+        {end ? <Marker coordinate={end} pinColor={OutdoorTheme.colors.forest} /> : null}
       </MapView>
     </View>
   );
@@ -285,6 +287,7 @@ function FallbackRoutePreview({ points }: { points: FilteredRoutePoint[] }) {
 
   return (
     <View style={styles.previewFrame}>
+      <PineCluster style={styles.previewPines} opacity={0.08} />
       {segments.map((segment, index) => (
         <View
           key={`segment-${index}`}
@@ -331,6 +334,7 @@ export function RoutePreview({ points, title = "Your route", subtitle = "Capture
 
   return (
     <View style={styles.card}>
+      <PineCluster style={styles.cardPines} opacity={0.06} />
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.subtitle}>{subtitle}</Text>
@@ -370,11 +374,18 @@ export function RoutePreview({ points, title = "Your route", subtitle = "Capture
 const styles = StyleSheet.create({
   card: {
     width: "100%",
-    borderRadius: 22,
+    borderRadius: OutdoorTheme.radii.xl,
     padding: 16,
-    backgroundColor: "rgba(255,255,255,0.7)",
+    backgroundColor: OutdoorTheme.colors.paperTranslucent,
     borderWidth: 1,
-    borderColor: "rgba(11,15,14,0.08)",
+    borderColor: OutdoorTheme.colors.line,
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  cardPines: {
+    position: "absolute",
+    right: -34,
+    top: 4,
   },
   header: {
     marginBottom: 12,
@@ -389,24 +400,24 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: "rgba(37,94,54,0.08)",
+    backgroundColor: OutdoorTheme.colors.forestTint,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: OutdoorTheme.colors.line,
   },
   metaChipText: {
-    color: "#255E36",
+    color: OutdoorTheme.colors.forest,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.2,
   },
   title: {
-    color: "#0B0F0E",
+    color: OutdoorTheme.colors.charcoal,
     fontSize: 16,
     fontWeight: "900",
   },
   subtitle: {
     marginTop: 4,
-    color: "rgba(11,15,14,0.58)",
+    color: OutdoorTheme.colors.faintText,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -415,9 +426,9 @@ const styles = StyleSheet.create({
     height: MAP_HEIGHT,
     alignSelf: "center",
     borderRadius: 18,
-    backgroundColor: "rgba(37,94,54,0.06)",
+    backgroundColor: "rgba(24,68,47,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.14)",
     overflow: "hidden",
   },
   previewFrame: {
@@ -425,37 +436,42 @@ const styles = StyleSheet.create({
     height: PREVIEW_HEIGHT,
     alignSelf: "center",
     borderRadius: 18,
-    backgroundColor: "rgba(37,94,54,0.06)",
+    backgroundColor: OutdoorTheme.colors.forestTint,
     borderWidth: 1,
-    borderColor: "rgba(37,94,54,0.14)",
+    borderColor: "rgba(24,68,47,0.14)",
     overflow: "hidden",
+  },
+  previewPines: {
+    position: "absolute",
+    right: -22,
+    bottom: -18,
   },
   segment: {
     position: "absolute",
     height: 3.5,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.3)",
+    backgroundColor: "rgba(24,68,47,0.34)",
   },
   dot: {
     position: "absolute",
     width: 5,
     height: 5,
     borderRadius: 999,
-    backgroundColor: "rgba(37,94,54,0.36)",
+    backgroundColor: "rgba(24,68,47,0.36)",
   },
   startDot: {
     width: 9,
     height: 9,
-    backgroundColor: "#F2B541",
+    backgroundColor: OutdoorTheme.colors.campfire,
   },
   endDot: {
     width: 9,
     height: 9,
-    backgroundColor: "#255E36",
+    backgroundColor: OutdoorTheme.colors.forest,
   },
   footnote: {
     marginTop: 10,
-    color: "rgba(11,15,14,0.54)",
+    color: OutdoorTheme.colors.faintText,
     fontSize: 12,
     fontWeight: "700",
     textAlign: "center",
