@@ -103,6 +103,7 @@ export type FriendListItem = {
 
 export type GetFriendsListOptions = {
   includeActivity?: boolean;
+  ensureCurrentUserDiscoveryProfile?: boolean;
 };
 
 export type FriendSystemUserInput = Partial<FriendSystemUser> & {
@@ -641,7 +642,9 @@ export async function getFriendsList(options: GetFriendsListOptions = {}): Promi
   if (!currentUid) throw new Error("Sign in before viewing friends.");
   const includeActivity = options.includeActivity ?? true;
 
-  await upsertCurrentUserDiscoveryProfile();
+  if (options.ensureCurrentUserDiscoveryProfile ?? true) {
+    await upsertCurrentUserDiscoveryProfile();
+  }
 
   const snapshot = await getDocs(
     query(

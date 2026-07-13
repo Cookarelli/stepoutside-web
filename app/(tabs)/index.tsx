@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,13 +29,29 @@ import {
 } from "../../src/components/OutdoorUI";
 import { getDailySpark, type DailySpark } from "../../src/lib/dailySpark";
 import {
+  challengeTitle,
+  getIncomingFriendChallenges,
+  getSentFriendChallenges,
+  type FriendChallengeListItem,
+} from "../../src/lib/friendChallenges";
+import { getFriendsList, type FriendListItem } from "../../src/lib/friendSystem";
+import { auth } from "../../src/lib/firebase";
+import { REFLECTION_PROMPTS } from "../../src/lib/reflectionPrompts";
+import {
   cacheRouteSuggestions,
   getRouteSuggestionsByZip,
   getRouteSuggestionsNearCoords,
   normalizeZip,
   type RouteSuggestion,
 } from "../../src/lib/routeCatalog";
-import { dayKeyLocal, EMPTY_SUMMARY, getSummary, type SummaryStats } from "../../src/lib/store";
+import { dayKeyLocal, EMPTY_SUMMARY, getSessions, getSummary, type SummaryStats } from "../../src/lib/store";
+import {
+  calculateChallengeProgress,
+  challengeDaysRemaining,
+  dailyPromptIndex,
+  friendsActiveToday,
+  selectCurrentChallenge,
+} from "../../src/utils/homeV3";
 
 const BRAND = {
   forest: OutdoorTheme.colors.forest,
@@ -54,6 +71,7 @@ const MICROCOPY = [
 ] as const;
 
 const ZIP_CODE_KEY = "@stepoutside/routeZipCode";
+const CAMPFIRE_DRAFT_PREFIX = "stepoutside:v3:user";
 const GOLDEN_HOUR_WINDOW_MIN = 45;
 
 type WeatherSnapshot = {
@@ -407,6 +425,15 @@ export default function HomeTab() {
     sourceLine: "Looking for a nearby reset…",
   });
   const [loadingContext, setLoadingContext] = useState(true);
+  const [friends, setFriends] = useState<FriendListItem[]>([]);
+  const [currentChallenge, setCurrentChallenge] = useState<FriendChallengeListItem | null>(null);
+  const [challengeSessions, setChallengeSessions] = useState<Awaited<ReturnType<typeof getSessions>>>([]);
+  const [pendingChallengeCount, setPendingChallengeCount] = useState(0);
+  const [communityLoading, setCommunityLoading] = useState(true);
+  const [communityUnavailable, setCommunityUnavailable] = useState(false);
+  const [challengeUnavailable, setChallengeUnavailable] = useState(false);
+  const [campfireResponse, setCampfireResponse] = useState("");
+  const [campfireSaved, setCampfireSaved] = useState(false);
   const { isPremium, isLoading: premiumLoading } = usePremiumAccess();
 
   const now = new Date();
@@ -430,6 +457,85 @@ export default function HomeTab() {
     activeDaysThisWeek >= weeklyGoal
       ? "Weekly goal complete. Keep the rhythm going."
       : `${weeklyGoalRemaining} more active day${weeklyGoalRemaining === 1 ? "" : "s"} to hit your weekly goal.`;
+  const activeFriends = friendsActiveToday(friends, now);
+  const recentFriendUpdates = activeFriends.slice(0, 2);
+  const challengeProgress = currentChallenge
+    ? calculateChallengeProgress(currentChallenge, challengeSessions)
+    : null;
+  const reflectionPrompt = REFLECTION_PROMPTS[dailyPromptIndex(now, REFLECTION_PROMPTS.length)];
+
+  const loadCommunity = useCallback(async () => {
+    setCommunityLoading(true);
+    setCommunityUnavailable(false);
+    setChallengeUnavailable(false);
+
+    const currentUid = auth.currentUser?.uid;
+    if (!currentUid) {
+      setFriends([]);
+      setCurrentChallenge(null);
+      setChallengeSessions([]);
+      setPendingChallengeCount(0);
+      setCampfireResponse("");
+      setCommunityLoading(false);
+      return;
+    }
+
+    const [friendsResult, incomingResult, sentResult, draftResult] =
+      await Promise.allSettled([
+        getFriendsList({ includeActivity: true, ensureCurrentUserDiscoveryProfile: false }),
+        getIncomingFriendChallenges(),
+        getSentFriendChallenges(),
+        AsyncStorage.getItem(`${CAMPFIRE_DRAFT_PREFIX}:${currentUid}:campfire:${dayKeyLocal(new Date())}`),
+      ]);
+
+    const nextFriends = friendsResult.status === "fulfilled" ? friendsResult.value : [];
+    const incoming = incomingResult.status === "fulfilled" ? incomingResult.value : [];
+    const sent = sentResult.status === "fulfilled" ? sentResult.value : [];
+    const challengeItems = [...incoming, ...sent];
+    const nextCurrentChallenge = selectCurrentChallenge(challengeItems, new Date());
+    let nextChallengeSessions: Awaited<ReturnType<typeof getSessions>> = [];
+    let challengeSessionsUnavailable = false;
+
+    if (nextCurrentChallenge) {
+      try {
+        nextChallengeSessions = await getSessions();
+      } catch {
+        challengeSessionsUnavailable = true;
+      }
+    }
+
+    setFriends(nextFriends);
+    setCurrentChallenge(nextCurrentChallenge);
+    setPendingChallengeCount(
+      new Set(
+        challengeItems
+          .filter((item) => item.challenge.status === "pending")
+          .map((item) => item.challenge.id)
+      ).size
+    );
+    setChallengeSessions(nextChallengeSessions);
+    setCampfireResponse(draftResult.status === "fulfilled" ? draftResult.value ?? "" : "");
+    setCampfireSaved(Boolean(draftResult.status === "fulfilled" && draftResult.value));
+    setCommunityUnavailable(friendsResult.status === "rejected");
+    setChallengeUnavailable(
+      incomingResult.status === "rejected" ||
+        sentResult.status === "rejected" ||
+        challengeSessionsUnavailable
+    );
+    setCommunityLoading(false);
+  }, []);
+
+  const saveCampfireResponse = useCallback(async () => {
+    const currentUid = auth.currentUser?.uid;
+    const trimmedResponse = campfireResponse.trim();
+    if (!currentUid || !trimmedResponse) return;
+    await AsyncStorage.setItem(
+      `${CAMPFIRE_DRAFT_PREFIX}:${currentUid}:campfire:${todayKey}`,
+      trimmedResponse
+    );
+    setCampfireResponse(trimmedResponse);
+    setCampfireSaved(true);
+  }, [campfireResponse, todayKey]);
 
   const loadHome = useCallback(async () => {
     setLoadingContext(true);
@@ -489,7 +595,8 @@ export default function HomeTab() {
   useFocusEffect(
     useCallback(() => {
       void loadHome();
-    }, [loadHome])
+      void loadCommunity();
+    }, [loadCommunity, loadHome])
   );
 
   return (
@@ -519,7 +626,7 @@ export default function HomeTab() {
           </View>
 
           <View style={styles.heroCopy}>
-            <Text style={styles.greeting}>{greeting}</Text>
+            <Text style={styles.greeting}>Personal Today · {greeting}</Text>
             <Text style={styles.microcopy}>Your next Step Outside is waiting.</Text>
             <Text style={styles.heroSupportLine}>{microcopy}</Text>
             <Text style={styles.heroSupportLineSecondary}>
@@ -527,19 +634,217 @@ export default function HomeTab() {
             </Text>
           </View>
 
-          <PrimaryButton
-            onPress={() => router.push("/walk")}
-            label="Start Walk"
-            style={styles.primaryCta}
-            textStyle={styles.primaryCtaText}
-          />
+          <View style={styles.personalMetricsRow}>
+            <View style={styles.personalMetric}>
+              <Text style={styles.personalMetricValue}>{currentStreak}</Text>
+              <Text style={styles.personalMetricLabel}>day streak</Text>
+            </View>
+            <View style={styles.personalMetric}>
+              <Text style={styles.personalMetricValue}>{todayMinutes > 0 ? formatMinutes(todayMinutes) : "Ready"}</Text>
+              <Text style={styles.personalMetricLabel}>today</Text>
+            </View>
+            <View style={styles.personalMetric}>
+              <Text style={styles.personalMetricValue}>{weeklyProgressLabel}</Text>
+              <Text style={styles.personalMetricLabel}>goal</Text>
+            </View>
+          </View>
+
+          <View style={styles.personalActions}>
+            <PrimaryButton
+              onPress={() => router.push("/walk")}
+              label={todayMinutes > 0 ? "Record Activity" : "Step Outside"}
+              accessibilityLabel={todayMinutes > 0 ? "Record another outdoor activity" : "Start an outdoor walk"}
+              style={styles.primaryCta}
+              textStyle={styles.primaryCtaText}
+            />
+            <SecondaryButton
+              onPress={() => router.push("/(tabs)/stats")}
+              label="View Stats"
+              accessibilityLabel="View personal outdoor statistics"
+              style={styles.heroSecondaryCta}
+              textStyle={styles.heroSecondaryCtaText}
+            />
+          </View>
         </View>
+
+        <BrandCard withPines style={styles.communityCard}>
+          <SectionHeader
+            eyebrow="Community Today"
+            title="Outside feels better together."
+            actionLabel="Buddies"
+            onActionPress={() => router.push("/friends")}
+          />
+
+          {communityLoading ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={BRAND.forest} />
+              <Text style={styles.loadingText}>Checking in with your circle…</Text>
+            </View>
+          ) : !auth.currentUser ? (
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>Sign in to see your community.</Text>
+              <Text style={styles.emptyBody}>Your personal activity remains private until you choose to connect.</Text>
+              <SecondaryButton
+                onPress={() => router.replace("/auth")}
+                label="Sign In"
+                style={styles.cardAction}
+                textStyle={styles.cardActionText}
+              />
+            </View>
+          ) : communityUnavailable ? (
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>Community updates are resting.</Text>
+              <Text style={styles.emptyBody}>Your personal progress is safe. Try the Buddies screen again when you are connected.</Text>
+            </View>
+          ) : (
+            <>
+              <View style={styles.communityCountRow}>
+                <Text style={styles.communityCount}>{activeFriends.length}</Text>
+                <Text style={styles.communityCountLabel}>
+                  {activeFriends.length === 1 ? "buddy active today" : "buddies active today"}
+                </Text>
+              </View>
+
+              {recentFriendUpdates.length > 0 ? (
+                <View style={styles.updateList}>
+                  {recentFriendUpdates.map((friend) => {
+                    const name = friend.profile.displayName || `@${friend.profile.username}`;
+                    return (
+                      <View key={friend.profile.uid} style={styles.updateRow}>
+                        <View style={styles.updateDot} />
+                        <View style={styles.updateCopy}>
+                          <Text style={styles.updateTitle}>{name} stepped outside today.</Text>
+                          <Text style={styles.updateMeta}>
+                            {friend.activity?.currentStreak
+                              ? `${friend.activity.currentStreak}-day outdoor streak`
+                              : "A little shared momentum for the day."}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={styles.emptyPanelCompact}>
+                  <Text style={styles.emptyTitle}>
+                    {friends.length > 0 ? "Your circle is quiet so far today." : "Your outdoor circle starts here."}
+                  </Text>
+                  <Text style={styles.emptyBody}>
+                    {friends.length > 0
+                      ? "A short walk from you could be today’s first bit of momentum."
+                      : "Add a buddy to share light accountability without adding screen noise."}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.encouragementPanel}>
+                <Text style={styles.encouragementLabel}>Recent encouragement</Text>
+                <Text style={styles.encouragementText}>No encouragement has been shared yet.</Text>
+              </View>
+            </>
+          )}
+        </BrandCard>
+
+        <BrandCard style={styles.challengeCard}>
+          <SectionHeader
+            eyebrow="Current Challenge"
+            title={currentChallenge ? challengeTitle(currentChallenge.challenge.type, currentChallenge.challenge.target) : "Choose a shared goal."}
+            actionLabel="Challenges"
+            onActionPress={() => router.push("/challenges")}
+          />
+
+          {communityLoading ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={BRAND.forest} />
+              <Text style={styles.loadingText}>Loading challenge progress…</Text>
+            </View>
+          ) : challengeUnavailable ? (
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>Challenge progress is unavailable right now.</Text>
+              <Text style={styles.emptyBody}>Nothing was changed. Open Challenges to try again when your connection returns.</Text>
+              <SecondaryButton
+                onPress={() => router.push("/challenges")}
+                label="Open Challenges"
+                style={styles.cardAction}
+                textStyle={styles.cardActionText}
+              />
+            </View>
+          ) : currentChallenge && challengeProgress ? (
+            <>
+              <Text style={styles.challengeWith}>
+                With {currentChallenge.profile?.displayName || currentChallenge.profile?.username || "a buddy"}
+              </Text>
+              <View style={styles.challengeProgressTrack} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: challengeProgress.percent }}>
+                <View style={[styles.challengeProgressFill, { width: `${challengeProgress.percent}%` }]} />
+              </View>
+              <View style={styles.challengeStatRow}>
+                <View style={styles.challengeStat}>
+                  <Text style={styles.challengeStatValue}>
+                    {challengeProgress.unit === "miles" ? challengeProgress.current.toFixed(1) : Math.round(challengeProgress.current)} / {challengeProgress.target}
+                  </Text>
+                  <Text style={styles.challengeStatLabel}>{challengeProgress.unit}</Text>
+                </View>
+                <View style={styles.challengeStat}>
+                  <Text style={styles.challengeStatValue}>{challengeDaysRemaining(currentChallenge.challenge.endDate, now)}</Text>
+                  <Text style={styles.challengeStatLabel}>days remaining</Text>
+                </View>
+                <View style={styles.challengeStat}>
+                  <Text style={styles.challengeStatValue}>—</Text>
+                  <Text style={styles.challengeStatLabel}>rank not used</Text>
+                </View>
+              </View>
+              <Text style={styles.challengeNote}>Friend challenges track personal progress; ranked challenge scoring is not available yet.</Text>
+            </>
+          ) : (
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>
+                {pendingChallengeCount > 0
+                  ? `${pendingChallengeCount} challenge invitation${pendingChallengeCount === 1 ? " is" : "s are"} waiting.`
+                  : "No active challenge right now."}
+              </Text>
+              <Text style={styles.emptyBody}>Invite a buddy to a weekly distance, walk, or outdoor-minutes goal.</Text>
+              <SecondaryButton
+                onPress={() => router.push("/challenges")}
+                label={pendingChallengeCount > 0 ? "Review Invitations" : "Explore Challenges"}
+                style={styles.cardAction}
+                textStyle={styles.cardActionText}
+              />
+            </View>
+          )}
+        </BrandCard>
+
+        <BrandCard withPines style={styles.teamCard}>
+          <SectionHeader eyebrow="Team or Group" title="Make outside time a shared rhythm." />
+          <View style={styles.emptyPanelForest}>
+            <Text style={styles.emptyTitleForest}>No group or organization yet.</Text>
+            <Text style={styles.emptyBodyForest}>
+              Groups, team progress, and group leaderboards need a dedicated privacy-safe data model and are coming in a later V3 phase.
+            </Text>
+            <View style={styles.teamUnavailableRow}>
+              <View style={styles.teamUnavailableItem}>
+                <Text style={styles.teamUnavailableLabel}>Team progress</Text>
+                <Text style={styles.teamUnavailableValue}>Not available</Text>
+              </View>
+              <View style={styles.teamUnavailableItem}>
+                <Text style={styles.teamUnavailableLabel}>Leaderboard position</Text>
+                <Text style={styles.teamUnavailableValue}>Not ranked</Text>
+              </View>
+            </View>
+            <SecondaryButton
+              onPress={() => router.push("/friends")}
+              label="Build Your Circle"
+              accessibilityLabel="Find buddies while groups are being prepared"
+              style={styles.cardActionLight}
+              textStyle={styles.cardActionLightText}
+            />
+          </View>
+        </BrandCard>
 
         <BrandCard withCampfire style={styles.focusCard}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.cardHeaderCopy}>
               <SectionHeader
-                eyebrow="Today’s Focus"
+                eyebrow="Daily Outdoor Mission"
                 title={dailySpark ? `“${dailySpark.quote}”` : "Start with one calm reset."}
                 style={styles.focusHeader}
               />
@@ -552,6 +857,38 @@ export default function HomeTab() {
           <Text style={styles.focusReward}>
             {dailySpark ? dailySpark.reward : "Start a walk whenever you want a calmer reset."}
           </Text>
+        </BrandCard>
+
+        <BrandCard withCampfire style={styles.campfirePreviewCard}>
+          <SectionHeader eyebrow="Campfire Preview" title="Pause for one quiet thought." />
+          <Text style={styles.reflectionPrompt}>{reflectionPrompt}</Text>
+          <TextInput
+            value={campfireResponse}
+            onChangeText={(value) => {
+              setCampfireResponse(value);
+              setCampfireSaved(false);
+            }}
+            placeholder="Optional private reflection"
+            placeholderTextColor="rgba(30,42,36,0.45)"
+            multiline
+            maxLength={280}
+            textAlignVertical="top"
+            accessibilityLabel="Optional private daily reflection"
+            style={styles.reflectionInput}
+          />
+          <View style={styles.reflectionFooter}>
+            <Text style={styles.reflectionPrivacy}>
+              {auth.currentUser ? "Private on this device." : "Sign in to save a private response."}
+            </Text>
+            <PrimaryButton
+              onPress={() => void saveCampfireResponse()}
+              label={campfireSaved ? "Saved" : "Save"}
+              disabled={!auth.currentUser || !campfireResponse.trim() || campfireSaved}
+              accessibilityLabel={campfireSaved ? "Reflection saved" : "Save private reflection"}
+              style={styles.reflectionSave}
+              textStyle={styles.reflectionSaveText}
+            />
+          </View>
         </BrandCard>
 
         <BrandCard style={styles.statsSummaryCard}>
@@ -806,10 +1143,8 @@ const styles = StyleSheet.create({
     maxWidth: 350,
   },
   primaryCta: {
-    marginTop: 26,
     minHeight: 56,
-    alignSelf: "flex-start",
-    minWidth: 172,
+    flex: 1,
     borderRadius: OutdoorTheme.radii.pill,
     backgroundColor: "#101814",
     alignItems: "center",
@@ -826,6 +1161,367 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "900",
     letterSpacing: 1.2,
+  },
+  personalMetricsRow: {
+    marginTop: 22,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  personalMetric: {
+    flex: 1,
+    minWidth: 88,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,249,239,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.12)",
+  },
+  personalMetricValue: {
+    color: BRAND.forest,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: "900",
+  },
+  personalMetricLabel: {
+    marginTop: 3,
+    color: "rgba(30,42,36,0.58)",
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  personalActions: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
+  heroSecondaryCta: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: OutdoorTheme.radii.pill,
+    backgroundColor: "rgba(255,249,239,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroSecondaryCtaText: {
+    color: BRAND.forest,
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  communityCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 20,
+    backgroundColor: "rgba(255,249,239,0.9)",
+    borderWidth: 1,
+    borderColor: OutdoorTheme.colors.lineSoft,
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  communityCountRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 9,
+  },
+  communityCount: {
+    color: BRAND.forest,
+    fontSize: 36,
+    lineHeight: 40,
+    fontWeight: "900",
+  },
+  communityCountLabel: {
+    flex: 1,
+    color: BRAND.charcoal,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+  },
+  updateList: {
+    marginTop: 12,
+    gap: 8,
+  },
+  updateRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 12,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(24,68,47,0.06)",
+  },
+  updateDot: {
+    marginTop: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: BRAND.sunrise,
+  },
+  updateCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  updateTitle: {
+    color: BRAND.charcoal,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "900",
+  },
+  updateMeta: {
+    marginTop: 3,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+  },
+  encouragementPanel: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(24,68,47,0.18)",
+  },
+  encouragementLabel: {
+    color: OutdoorTheme.colors.goldText,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  encouragementText: {
+    marginTop: 5,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  emptyPanel: {
+    marginTop: 14,
+    padding: 15,
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: "rgba(24,68,47,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.09)",
+  },
+  emptyPanelCompact: {
+    marginTop: 12,
+    padding: 13,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(24,68,47,0.05)",
+  },
+  emptyTitle: {
+    color: BRAND.charcoal,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "900",
+  },
+  emptyBody: {
+    marginTop: 5,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  cardAction: {
+    marginTop: 13,
+    minHeight: 46,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,249,239,0.7)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardActionText: {
+    color: BRAND.forest,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+  challengeCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 20,
+    backgroundColor: "rgba(255,249,239,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(198,155,66,0.26)",
+    ...OutdoorTheme.shadows.soft,
+  },
+  challengeWith: {
+    marginTop: 12,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+  },
+  challengeProgressTrack: {
+    marginTop: 14,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(24,68,47,0.1)",
+    overflow: "hidden",
+  },
+  challengeProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: BRAND.sunrise,
+  },
+  challengeStatRow: {
+    marginTop: 15,
+    flexDirection: "row",
+    gap: 8,
+  },
+  challengeStat: {
+    flex: 1,
+    minWidth: 0,
+  },
+  challengeStatValue: {
+    color: BRAND.forest,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: "900",
+  },
+  challengeStatLabel: {
+    marginTop: 2,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "800",
+  },
+  challengeNote: {
+    marginTop: 12,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "700",
+  },
+  teamCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 20,
+    backgroundColor: "rgba(255,249,239,0.9)",
+    borderWidth: 1,
+    borderColor: OutdoorTheme.colors.lineSoft,
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  emptyPanelForest: {
+    marginTop: 14,
+    padding: 16,
+    borderRadius: OutdoorTheme.radii.lg,
+    backgroundColor: BRAND.forest,
+  },
+  emptyTitleForest: {
+    color: OutdoorTheme.colors.onForest,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: "900",
+  },
+  emptyBodyForest: {
+    marginTop: 6,
+    color: OutdoorTheme.colors.onForestMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  teamUnavailableRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    gap: 10,
+  },
+  teamUnavailableItem: {
+    flex: 1,
+    padding: 11,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,249,239,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,249,239,0.12)",
+  },
+  teamUnavailableLabel: {
+    color: OutdoorTheme.colors.onForestMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "800",
+  },
+  teamUnavailableValue: {
+    marginTop: 4,
+    color: OutdoorTheme.colors.onForest,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "900",
+  },
+  cardActionLight: {
+    marginTop: 14,
+    minHeight: 46,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: OutdoorTheme.colors.paper,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardActionLightText: {
+    color: BRAND.forest,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+  campfirePreviewCard: {
+    borderRadius: OutdoorTheme.radii.xl,
+    padding: 20,
+    backgroundColor: "rgba(255,249,239,0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(217,132,47,0.2)",
+    overflow: "hidden",
+    ...OutdoorTheme.shadows.soft,
+  },
+  reflectionPrompt: {
+    marginTop: 13,
+    color: BRAND.charcoal,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
+    fontSize: 19,
+    lineHeight: 26,
+    fontWeight: "700",
+  },
+  reflectionInput: {
+    marginTop: 13,
+    minHeight: 88,
+    padding: 13,
+    borderRadius: OutdoorTheme.radii.md,
+    backgroundColor: "rgba(255,255,255,0.56)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.14)",
+    color: BRAND.charcoal,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  reflectionFooter: {
+    marginTop: 11,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  reflectionPrivacy: {
+    flex: 1,
+    color: OutdoorTheme.colors.mutedText,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "700",
+  },
+  reflectionSave: {
+    minWidth: 84,
+    minHeight: 44,
+    borderRadius: OutdoorTheme.radii.pill,
+    backgroundColor: BRAND.forest,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reflectionSaveText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.6,
   },
   focusCard: {
     borderRadius: OutdoorTheme.radii.xl,

@@ -10,7 +10,7 @@ const hasAndroidGoogleServicesFile = existsSync(androidGoogleServicesFile);
 const config: ExpoConfig = {
   name: "Step Outside",
   slug: "step-outside-v2",
-  version: "2.2.1",
+  version: "3.0.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "stepoutsidev2",
