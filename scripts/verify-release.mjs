@@ -36,10 +36,18 @@ function verifyProduction() {
   assert.equal(config.owner, "cookarell");
   assert.equal(config.extra?.eas?.projectId, "a406fe2d-b4e7-47cf-8ede-10db0667d753");
   assert.equal(config.ios?.bundleIdentifier, "com.cookarell.stepoutside");
-  assert.equal(config.ios?.buildNumber, "38");
+  assert.equal(config.ios?.buildNumber, "39");
   assert.equal(config.android?.package, "com.stevencook.stepoutside");
   assert.equal(config.android?.versionCode, 7);
   assert.equal(config.version, "3.0.0");
+  const buildProperties = config.plugins?.find(
+    (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties"
+  );
+  assert.ok(Array.isArray(buildProperties), "expo-build-properties plugin missing");
+  assert.ok(
+    buildProperties[1]?.ios?.forceStaticLinking?.includes("react-native-maps"),
+    "react-native-maps must be statically linked when RN Firebase enables useFrameworks"
+  );
   assert.equal(eas.cli?.appVersionSource, "remote");
   assert.equal(eas.build?.production?.distribution, "store");
   assert.equal(eas.build?.production?.environment, "production");
@@ -61,7 +69,7 @@ function verifyProduction() {
     androidFirebaseClients?.includes("com.stevencook.stepoutside"),
     "google-services.json is missing the Step Outside Android package"
   );
-  console.log("Production validation passed: Step Outside project, iOS/Android identifiers, version 3.0.0, iOS build 38, and Android test code 7.");
+  console.log("Production validation passed: Step Outside project, iOS/Android identifiers, version 3.0.0, iOS build 39, and Android test code 7.");
 }
 
 function verifyBuddySystem() {

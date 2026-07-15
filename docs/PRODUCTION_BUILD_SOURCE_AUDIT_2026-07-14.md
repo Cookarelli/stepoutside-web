@@ -1,7 +1,7 @@
 # Step Outside iOS Production Build-Source Audit
 
 Audit date: July 14, 2026 (America/Chicago)
-Status: code, Firebase prerequisites, and preflight complete; EAS test builds not yet started
+Status: preflight complete; iOS build 38 failed before submission; corrected replacement build 39 pending
 
 ## Executive conclusion
 
@@ -69,13 +69,14 @@ The buddy code did not disappear in a Step Outside commit. It was never present 
 | iOS bundle ID | `com.cookarell.stepoutside` |
 | App Store Connect app ID | `6758236701` |
 | App version | `3.0.0` |
-| EAS remote iOS counter before next build | `37` |
-| Explicit next local build number | `38` |
-| Expected next EAS auto-incremented build | `38` |
+| EAS remote iOS counter before replacement build | `38` |
+| Failed native build | `3.0.0 (38)` — EAS build `da02bf5a-e498-4994-8314-1a45bd7b9657` |
+| Explicit replacement build number | `39` |
+| Expected next EAS auto-incremented build | `39` |
 | Production Firebase project | `stepoutside-32aae` |
 | Production profile | `production` / store / production environment |
 
-`3.0.0 (38)` is greater than the public App Store version (`2.1.0`), every Step Outside production EAS build found (highest store build `2.2.0 (36)`), the remote EAS counter (`37`), and the mistaken `1.0.0 (4)` artifact. The `appVersionSource` remains `remote`; keeping remote `37` with `autoIncrement: true` makes the next build `38`. The local `buildNumber: "38"` is an explicit audit guard and resolved-config indicator.
+The first controlled native attempt consumed build 38 but failed during Xcode compilation because `react-native-maps` was emitted as a framework while React headers were non-modular. It was never submitted to Apple. Expo's supported `forceStaticLinking` setting now keeps that pod as a static library while retaining the static-framework setup required by React Native Firebase. The remote counter is therefore 38 and the replacement is `3.0.0 (39)`. The local `buildNumber: "39"` is an explicit audit guard and resolved-config indicator.
 
 Configuration-file inspection:
 
@@ -91,7 +92,8 @@ Configuration-file inspection:
 Production configuration corrections:
 
 - Preserved the existing Step Outside Expo project and Apple bundle—no new Expo project, bundle, or App Store listing was created.
-- Added explicit next local build `38` and release identity checks.
+- Added explicit replacement local build `39` and release identity checks after failed build 38 consumed the remote counter.
+- Forced `react-native-maps` to remain a static library under the React Native Firebase static-framework configuration; local prebuild confirms the generated Podfile properties contain this setting.
 - Made production store distribution and production environment explicit in `eas.json`.
 - Restored platform-specific `GOOGLE_MAPS_IOS_API_KEY` / `GOOGLE_MAPS_ANDROID_API_KEY` handling, with the local public key as fallback.
 - Added the previously missing public Google iOS and web OAuth client IDs to the existing EAS production environment.
@@ -192,6 +194,7 @@ The authenticated rules suite passed again immediately before deployment. The re
 | Existing V3 unit tests (`npm test`) | Pass, 5/5 |
 | Local iOS Metro/Hermes export | Pass, 1,509 modules |
 | Local Android Metro/Hermes export | Pass, 1,507 modules |
+| iOS prebuild / CocoaPods resolution after build-38 fix | Pass; `react-native-maps` explicitly excluded from `USE_FRAMEWORKS` |
 | `git diff --check` | Pass |
 
 No EAS build, EAS submission, Google Play mutation, or Apple mutation had been performed at this checkpoint. Remote prerequisite work was limited to adding the missing public Google OAuth client IDs to the existing Step Outside EAS production environment, registering the exact Android package in the existing Firebase project, and deploying the reviewed Firestore rules/indexes.
@@ -210,13 +213,13 @@ npm run test:buddy
 npx firebase-tools@14.27.0 emulators:exec --only firestore --project stepoutside-32aae "npm run test:firestore-rules"
 ```
 
-The authorized TestFlight-only build command is:
+The authorized replacement TestFlight-only build command is:
 
 ```bash
 eas build --platform ios --profile production
 ```
 
-That build should be Step Outside `3.0.0 (38)`. Record the returned Step Outside EAS build ID, verify its project, bundle, version, and build number, then submit that exact ID rather than `--latest`:
+That replacement build should be Step Outside `3.0.0 (39)`. Record the returned Step Outside EAS build ID, verify its project, bundle, version, and build number, then submit that exact ID rather than `--latest`:
 
 ```bash
 eas submit --platform ios --profile production --id <STEP_OUTSIDE_EAS_BUILD_ID>
