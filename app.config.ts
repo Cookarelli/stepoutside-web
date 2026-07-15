@@ -22,7 +22,7 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: "com.cookarell.stepoutside",
-    buildNumber: "39",
+    buildNumber: "40",
     infoPlist: {
       NSLocationWhenInUseUsageDescription:
         "Step Outside uses your location while you track a walk and when you look for nearby reset routes or local sunrise and sunset timing.",
@@ -76,9 +76,9 @@ const config: ExpoConfig = {
       {
         ios: {
           useFrameworks: "static",
-          // RN Firebase requires static frameworks. Keep react-native-maps as a
-          // static library so its React headers are not treated as a framework module.
-          forceStaticLinking: ["react-native-maps"],
+          // Firebase's iOS SDK requires static frameworks. Keep native bridge pods
+          // with public React headers as static libraries under Xcode 26.
+          forceStaticLinking: ["react-native-maps", "RNFBApp", "RNFBAnalytics"],
         },
       },
     ],
