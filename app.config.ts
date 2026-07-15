@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs";
 import type { ExpoConfig } from "expo/config";
 
-const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
+const iosGoogleMapsApiKey =
+  process.env.GOOGLE_MAPS_IOS_API_KEY?.trim() ?? process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
+const androidGoogleMapsApiKey =
+  process.env.GOOGLE_MAPS_ANDROID_API_KEY?.trim() ?? process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
 const iosGoogleServicesFile = "./GoogleService-Info.plist";
 const androidGoogleServicesFile = "./google-services.json";
 const hasIosGoogleServicesFile = existsSync(iosGoogleServicesFile);
@@ -19,15 +22,16 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier: "com.cookarell.stepoutside",
+    buildNumber: "38",
     infoPlist: {
       NSLocationWhenInUseUsageDescription:
         "Step Outside uses your location while you track a walk and when you look for nearby reset routes or local sunrise and sunset timing.",
       ITSAppUsesNonExemptEncryption: false,
     },
-    ...(googleMapsApiKey
+    ...(iosGoogleMapsApiKey
       ? {
           config: {
-            googleMapsApiKey,
+            googleMapsApiKey: iosGoogleMapsApiKey,
           },
         }
       : {}),
@@ -35,7 +39,9 @@ const config: ExpoConfig = {
   },
   android: {
     package: "com.stevencook.stepoutside",
-    versionCode: 3,
+    // EAS remote versioning is authoritative. The current remote counter is 6;
+    // the first approved Android test build will auto-increment to 7.
+    versionCode: 7,
     permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
@@ -45,11 +51,11 @@ const config: ExpoConfig = {
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
-    ...(googleMapsApiKey
+    ...(androidGoogleMapsApiKey
       ? {
           config: {
             googleMaps: {
-              apiKey: googleMapsApiKey,
+              apiKey: androidGoogleMapsApiKey,
             },
           },
         }

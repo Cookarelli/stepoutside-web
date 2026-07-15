@@ -22,7 +22,12 @@ import {
   sendFriendChallengeInvitation,
   type FriendChallengeOption,
 } from "../src/lib/friendChallenges";
-import { getFriendsList, removeFriend, type FriendListItem } from "../src/lib/friendSystem";
+import {
+  formatFriendSystemError,
+  getFriendsList,
+  removeFriend,
+  type FriendListItem,
+} from "../src/lib/friendSystem";
 
 const BRAND = {
   forest: OutdoorTheme.colors.forest,
@@ -65,7 +70,7 @@ export default function FriendsScreen() {
       const nextFriends = await getFriendsList();
       setFriends(nextFriends);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Friends could not be loaded.");
+      setStatus(formatFriendSystemError(error, "Friends could not be loaded."));
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -87,7 +92,7 @@ export default function FriendsScreen() {
       setFriends((items) => items.filter((item) => item.friendship.id !== friend.friendship.id));
       setStatus(`${friend.profile.displayName || friend.profile.username} was removed from your friends.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Friend could not be removed.");
+      setStatus(formatFriendSystemError(error, "Friend could not be removed."));
     } finally {
       setRemovingFriendshipId(null);
     }
@@ -116,7 +121,7 @@ export default function FriendsScreen() {
       await sendFriendChallengeInvitation(friend.profile.uid, option);
       setStatus(`${option.title} challenge sent to ${friend.profile.displayName || friend.profile.username}.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Challenge invitation could not be sent.");
+      setStatus(formatFriendSystemError(error, "Challenge invitation could not be sent."));
     } finally {
       setChallengingFriendUid(null);
     }

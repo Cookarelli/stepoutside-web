@@ -12,6 +12,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -48,6 +49,17 @@ import {
 } from "../../src/lib/notifications";
 import { formatProMembershipLabel, restorePurchasesScaffold } from "../../src/lib/pro";
 import { EMPTY_SUMMARY, getSessions, getSummary, type SummaryStats } from "../../src/lib/store";
+import {
+  getIncomingFriendChallenges,
+  getSentFriendChallenges,
+  type FriendChallengeListItem,
+} from "../../src/lib/friendChallenges";
+import {
+  formatFriendSystemError,
+  getFriendsList,
+  getIncomingFriendRequests,
+  type FriendListItem,
+} from "../../src/lib/friendSystem";
 import { getCurrentUserProfile, type UserProfile } from "../../src/lib/userProfile";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -140,6 +152,16 @@ function formatMilesLabel(miles: number): string {
 function enabledReminderCount(prefs: NotificationPrefs | null): number {
   if (!prefs) return 0;
   return [prefs.sunriseQuotes, prefs.sunsetReminders, prefs.streakRiskReminders].filter(Boolean).length;
+}
+
+function recentActivityLabel(updatedAt: number): string {
+  if (!updatedAt) return "Activity will appear after their next outdoor session.";
+  const elapsedMinutes = Math.max(0, Math.round((Date.now() - updatedAt) / 60000));
+  if (elapsedMinutes < 60) return elapsedMinutes <= 1 ? "Active just now" : `Active ${elapsedMinutes} min ago`;
+  const elapsedHours = Math.round(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `Active ${elapsedHours} hr ago`;
+  const elapsedDays = Math.round(elapsedHours / 24);
+  return `Active ${elapsedDays} day${elapsedDays === 1 ? "" : "s"} ago`;
 }
 
 type GoogleSignInButtonProps = {
@@ -270,6 +292,11 @@ export default function ProfileTab() {
   const [authStatus, setAuthStatus] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [outdoorFriends, setOutdoorFriends] = useState<FriendListItem[]>([]);
+  const [pendingFriendRequests, setPendingFriendRequests] = useState(0);
+  const [friendChallenges, setFriendChallenges] = useState<FriendChallengeListItem[]>([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+  const [friendsStatus, setFriendsStatus] = useState("");
   const { isPremium, plan, membershipLabel, refreshPremiumStatus } = usePremiumAccess();
 
   const googleEnabled = isGoogleAuthConfigured();
@@ -298,6 +325,31 @@ export default function ProfileTab() {
       )
     : "Create an account or sign in first. After that, you can add a display name, username, and photo.";
   const founderActive = isPremium && (plan === "lifetime" || membershipLabel === "Founder Lifetime");
+  const activeFriendChallenges = useMemo(() => {
+    const now = Date.now();
+    const unique = new Map(friendChallenges.map((item) => [item.challenge.id, item]));
+    return [...unique.values()].filter(
+      (item) =>
+        item.challenge.status === "accepted" &&
+        item.challenge.startDate <= now &&
+        item.challenge.endDate >= now
+    );
+  }, [friendChallenges]);
+  const recentFriendActivity = useMemo(
+    () =>
+      outdoorFriends
+        .filter((friend) => Boolean(friend.activity?.updatedAt))
+        .sort((a, b) => (b.activity?.updatedAt ?? 0) - (a.activity?.updatedAt ?? 0))
+        .slice(0, 3),
+    [outdoorFriends]
+  );
+  const sharedStreakFriend = useMemo(
+    () =>
+      currentStreak > 0
+        ? outdoorFriends.find((friend) => (friend.activity?.currentStreak ?? 0) > 0) ?? null
+        : null,
+    [currentStreak, outdoorFriends]
+  );
 
   const loadSettings = useCallback(async () => {
     const [np, storedSummary, storedSessions, storedProfile] = await Promise.allSettled([
@@ -325,6 +377,40 @@ export default function ProfileTab() {
     );
     setProfile(storedProfile.status === "fulfilled" ? storedProfile.value : null);
   }, []);
+
+  const loadOutdoorFriends = useCallback(async () => {
+    if (!visibleUser) {
+      setOutdoorFriends([]);
+      setPendingFriendRequests(0);
+      setFriendChallenges([]);
+      setFriendsStatus("");
+      setFriendsLoading(false);
+      return;
+    }
+
+    setFriendsLoading(true);
+    setFriendsStatus("");
+    const results = await Promise.allSettled([
+      getFriendsList({ includeActivity: true }),
+      getIncomingFriendRequests(),
+      getIncomingFriendChallenges(),
+      getSentFriendChallenges(),
+    ] as const);
+
+    const [friendsResult, requestsResult, incomingChallengesResult, sentChallengesResult] = results;
+    setOutdoorFriends(friendsResult.status === "fulfilled" ? friendsResult.value : []);
+    setPendingFriendRequests(requestsResult.status === "fulfilled" ? requestsResult.value.length : 0);
+    setFriendChallenges([
+      ...(incomingChallengesResult.status === "fulfilled" ? incomingChallengesResult.value : []),
+      ...(sentChallengesResult.status === "fulfilled" ? sentChallengesResult.value : []),
+    ]);
+
+    const rejected = results.find((result) => result.status === "rejected");
+    if (rejected?.status === "rejected") {
+      setFriendsStatus(formatFriendSystemError(rejected.reason, "Outdoor Friends could not be loaded."));
+    }
+    setFriendsLoading(false);
+  }, [visibleUser]);
 
   useEffect(() => {
     let active = true;
@@ -362,8 +448,13 @@ export default function ProfileTab() {
   useFocusEffect(
     useCallback(() => {
       void loadSettings();
-    }, [loadSettings])
+      void loadOutdoorFriends();
+    }, [loadOutdoorFriends, loadSettings])
   );
+
+  useEffect(() => {
+    void loadOutdoorFriends();
+  }, [loadOutdoorFriends]);
 
   const onResetOnboarding = () => {
     Alert.alert("Replay welcome screens?", "This will show onboarding again on next app launch.", [
@@ -577,6 +668,16 @@ export default function ProfileTab() {
     router.push("/edit-profile" as never);
   };
 
+  const onInviteFriendOutside = async () => {
+    try {
+      await Share.share({
+        message: "Come outside with me on Step Outside. Let’s build a simple outdoor streak together.",
+      });
+    } catch (error) {
+      setFriendsStatus(error instanceof Error ? error.message : "The invite could not be opened.");
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <LayeredEnvironment />
@@ -730,62 +831,141 @@ export default function ProfileTab() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Friends</Text>
-        <View style={styles.actionGrid}>
-          <Pressable
-            onPress={() => openSignedInRoute("/friends")}
-            style={({ pressed }) => [styles.actionTile, pressed ? styles.pressed : null]}
-          >
-            <OutdoorIcon name="tree" size={23} color="#18442F" />
-            <Text style={styles.actionTitle}>Friends</Text>
-            <Text style={styles.actionHint}>Your circle</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => openSignedInRoute("/friends-search")}
-            style={({ pressed }) => [styles.actionTile, pressed ? styles.pressed : null]}
-          >
-            <OutdoorIcon name="binoculars" size={23} color="#18442F" />
-            <Text style={styles.actionTitle}>Find Friends</Text>
-            <Text style={styles.actionHint}>Search by username</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => openSignedInRoute("/friend-requests")}
-            style={({ pressed }) => [styles.actionTileWide, pressed ? styles.pressed : null]}
-          >
-            <OutdoorIcon name="map" size={23} color="#18442F" />
+        <BrandCard withPines style={styles.outdoorFriendsCard}>
+          <View style={styles.outdoorFriendsHeader}>
             <View style={styles.actionCopy}>
-              <Text style={styles.actionTitle}>Requests</Text>
-              <Text style={styles.actionHint}>Incoming and outgoing invites</Text>
+              <Text style={styles.sectionEyebrow}>Community</Text>
+              <Text style={styles.sectionTitle}>Outdoor Friends</Text>
+              <Text style={styles.outdoorFriendsIntro}>
+                Find your people, share momentum, and make the next trip outside easier to start.
+              </Text>
             </View>
+            {friendsLoading ? <ActivityIndicator color="#18442F" /> : <OutdoorIcon name="tree" size={30} color="#18442F" />}
+          </View>
+
+          <View style={styles.friendStatsRow}>
+            <Pressable onPress={() => openSignedInRoute("/friends")} style={styles.friendStat}>
+              <Text style={styles.friendStatValue}>{outdoorFriends.length}</Text>
+              <Text style={styles.friendStatLabel}>Friends</Text>
+            </Pressable>
+            <Pressable onPress={() => openSignedInRoute("/friend-requests")} style={styles.friendStat}>
+              <Text style={styles.friendStatValue}>{pendingFriendRequests}</Text>
+              <Text style={styles.friendStatLabel}>Pending</Text>
+            </Pressable>
+            <Pressable onPress={() => openSignedInRoute("/challenges")} style={styles.friendStat}>
+              <Text style={styles.friendStatValue}>{activeFriendChallenges.length}</Text>
+              <Text style={styles.friendStatLabel}>Challenges</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.friendButtonRow}>
+          <Pressable
+              onPress={() => openSignedInRoute("/friends-search")}
+              style={({ pressed }) => [styles.friendPrimaryButton, pressed ? styles.pressed : null]}
+          >
+              <Ionicons name="person-add-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.friendPrimaryButtonText}>Add or Find Friends</Text>
           </Pressable>
+          <Pressable
+              onPress={() => openSignedInRoute("/friends")}
+              style={({ pressed }) => [styles.friendSecondaryButton, pressed ? styles.pressed : null]}
+          >
+              <Text style={styles.friendSecondaryButtonText}>View All Friends</Text>
+          </Pressable>
+          </View>
+
+          {!visibleUser ? (
+            <View style={styles.friendEmptyState}>
+              <OutdoorIcon name="trail" size={30} color="#8A5D09" />
+              <Text style={styles.friendEmptyTitle}>Your outdoor circle starts with an account.</Text>
+              <Text style={styles.friendEmptyBody}>Sign in above to find friends, accept requests, and join shared challenges for free.</Text>
+            </View>
+          ) : outdoorFriends.length === 0 ? (
+            <View style={styles.friendEmptyState}>
+              <OutdoorIcon name="binoculars" size={30} color="#8A5D09" />
+              <Text style={styles.friendEmptyTitle}>Find your first outdoor buddy.</Text>
+              <Text style={styles.friendEmptyBody}>Search by username or email and invite someone who makes getting outside feel more possible.</Text>
+              <Pressable onPress={() => openSignedInRoute("/friends-search")} style={styles.emptyStateButton}>
+                <Text style={styles.emptyStateButtonText}>Find My First Friend</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.friendActivitySection}>
+              <Text style={styles.friendSubheading}>Recent outdoor activity</Text>
+              {recentFriendActivity.length > 0 ? recentFriendActivity.map((friend) => (
+                <View key={friend.friendship.id} style={styles.friendActivityRow}>
+                  <View style={styles.friendActivityAvatar}>
+                    <Text style={styles.friendActivityAvatarText}>
+                      {(friend.profile.displayName || friend.profile.username || "F").slice(0, 1).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.actionCopy}>
+                    <Text style={styles.friendActivityName}>{friend.profile.displayName || friend.profile.username}</Text>
+                    <Text style={styles.friendActivityMeta}>
+                      {recentActivityLabel(friend.activity?.updatedAt ?? 0)} · {friend.activity?.walkCount ?? 0} walks
+                    </Text>
+                  </View>
+                  {(friend.activity?.currentStreak ?? 0) > 0 ? (
+                    <Text style={styles.friendStreakBadge}>{friend.activity?.currentStreak}d</Text>
+                  ) : null}
+                </View>
+              )) : (
+                <Text style={styles.friendQuietText}>Your friends’ latest outdoor activity will appear here.</Text>
+              )}
+            </View>
+          )}
+
+          {sharedStreakFriend ? (
+            <View style={styles.sharedStreakCard}>
+              <Ionicons name="flame-outline" size={20} color="#8A5D09" />
+              <Text style={styles.sharedStreakText}>
+                Shared momentum: you and {sharedStreakFriend.profile.displayName || sharedStreakFriend.profile.username} both have active outdoor streaks.
+              </Text>
+            </View>
+          ) : null}
+
+          <Pressable
+            onPress={() => openSignedInRoute("/challenges")}
+            style={({ pressed }) => [styles.friendLinkRow, pressed ? styles.pressed : null]}
+          >
+            <OutdoorIcon name="trail" size={21} color="#18442F" />
+            <View style={styles.actionCopy}>
+              <Text style={styles.friendLinkTitle}>Active Buddy Challenges</Text>
+              <Text style={styles.friendLinkMeta}>
+                {activeFriendChallenges.length > 0
+                  ? `${activeFriendChallenges.length} shared challenge${activeFriendChallenges.length === 1 ? "" : "s"} in progress`
+                  : "Start or join a free weekly challenge"}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="rgba(30,42,36,0.42)" />
+          </Pressable>
+
+          <Pressable
+            onPress={() => void onInviteFriendOutside()}
+            style={({ pressed }) => [styles.friendLinkRow, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="share-outline" size={21} color="#18442F" />
+            <View style={styles.actionCopy}>
+              <Text style={styles.friendLinkTitle}>Invite a Friend Outside</Text>
+              <Text style={styles.friendLinkMeta}>Share a simple invitation from any app</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="rgba(30,42,36,0.42)" />
+          </Pressable>
+
           <Pressable
             onPress={() => openSignedInRoute("/leaderboard")}
-            style={({ pressed }) => [styles.actionTileWide, pressed ? styles.pressed : null]}
+            style={({ pressed }) => [styles.friendLinkRow, pressed ? styles.pressed : null]}
           >
-            <OutdoorIcon name="mountain" size={23} color="#18442F" />
+            <OutdoorIcon name="mountain" size={21} color="#18442F" />
             <View style={styles.actionCopy}>
-              <Text style={styles.actionTitle}>Leaderboard</Text>
-              <Text style={styles.actionHint}>Friends, global, weekly, monthly</Text>
+              <Text style={styles.friendLinkTitle}>Friends Leaderboard</Text>
+              <Text style={styles.friendLinkMeta}>Compare weekly, monthly, and all-time progress</Text>
             </View>
+            <Ionicons name="chevron-forward" size={18} color="rgba(30,42,36,0.42)" />
           </Pressable>
-        </View>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Challenges</Text>
-        <Pressable
-          onPress={() => openSignedInRoute("/challenges")}
-          style={({ pressed }) => [styles.challengeTile, pressed ? styles.pressed : null]}
-        >
-          <View style={styles.challengeIcon}>
-            <OutdoorIcon name="trail" size={23} color="#18442F" />
-          </View>
-          <View style={styles.actionCopy}>
-            <Text style={styles.actionTitle}>Friend Challenges</Text>
-            <Text style={styles.actionHint}>Incoming invites and weekly challenges you sent</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="rgba(30,42,36,0.42)" />
-        </Pressable>
+          {friendsStatus ? <Text style={styles.friendsStatus}>{friendsStatus}</Text> : null}
+        </BrandCard>
       </View>
 
       <View style={styles.premiumCard}>
@@ -1357,6 +1537,227 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     lineHeight: 17,
+  },
+  outdoorFriendsCard: {
+    padding: 18,
+    overflow: "hidden",
+  },
+  outdoorFriendsHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  outdoorFriendsIntro: {
+    marginTop: -4,
+    color: "rgba(30,42,36,0.62)",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
+  friendStatsRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 8,
+  },
+  friendStat: {
+    flex: 1,
+    minHeight: 74,
+    borderRadius: 16,
+    padding: 11,
+    justifyContent: "center",
+    backgroundColor: "rgba(24,68,47,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.1)",
+  },
+  friendStatValue: {
+    color: "#18442F",
+    fontSize: 23,
+    fontWeight: "900",
+  },
+  friendStatLabel: {
+    marginTop: 2,
+    color: "rgba(30,42,36,0.58)",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.45,
+    textTransform: "uppercase",
+  },
+  friendButtonRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 9,
+  },
+  friendPrimaryButton: {
+    flexGrow: 1,
+    minHeight: 48,
+    paddingHorizontal: 15,
+    borderRadius: 15,
+    backgroundColor: "#18442F",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  friendPrimaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendSecondaryButton: {
+    flexGrow: 1,
+    minHeight: 48,
+    paddingHorizontal: 15,
+    borderRadius: 15,
+    backgroundColor: "rgba(255,255,255,0.66)",
+    borderWidth: 1,
+    borderColor: "rgba(24,68,47,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  friendSecondaryButtonText: {
+    color: "#18442F",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendEmptyState: {
+    marginTop: 14,
+    padding: 18,
+    borderRadius: 18,
+    alignItems: "center",
+    backgroundColor: "rgba(198,155,66,0.11)",
+    borderWidth: 1,
+    borderColor: "rgba(138,93,9,0.16)",
+  },
+  friendEmptyTitle: {
+    marginTop: 8,
+    textAlign: "center",
+    color: "#1E2A24",
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "serif" }),
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: "700",
+  },
+  friendEmptyBody: {
+    marginTop: 6,
+    textAlign: "center",
+    color: "rgba(30,42,36,0.6)",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  emptyStateButton: {
+    marginTop: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(138,93,9,0.13)",
+  },
+  emptyStateButtonText: {
+    color: "#704A08",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  friendActivitySection: {
+    marginTop: 16,
+  },
+  friendSubheading: {
+    marginBottom: 7,
+    color: "#1E2A24",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendActivityRow: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(24,68,47,0.09)",
+  },
+  friendActivityAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(24,68,47,0.12)",
+  },
+  friendActivityAvatarText: {
+    color: "#18442F",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendActivityName: {
+    color: "#1E2A24",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendActivityMeta: {
+    marginTop: 2,
+    color: "rgba(30,42,36,0.52)",
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "700",
+  },
+  friendStreakBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    backgroundColor: "rgba(198,155,66,0.16)",
+    color: "#704A08",
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  friendQuietText: {
+    color: "rgba(30,42,36,0.54)",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  sharedStreakCard: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    backgroundColor: "rgba(198,155,66,0.12)",
+  },
+  sharedStreakText: {
+    flex: 1,
+    color: "#5C430F",
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "800",
+  },
+  friendLinkRow: {
+    minHeight: 62,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(24,68,47,0.1)",
+  },
+  friendLinkTitle: {
+    color: "#1E2A24",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  friendLinkMeta: {
+    marginTop: 2,
+    color: "rgba(30,42,36,0.52)",
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "700",
+  },
+  friendsStatus: {
+    marginTop: 10,
+    color: "#8A2E21",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "800",
   },
   premiumCard: {
     marginTop: 22,

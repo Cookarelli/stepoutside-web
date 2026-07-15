@@ -18,6 +18,7 @@ import { OutdoorIcon } from "../src/components/OutdoorIcons";
 import { LayeredEnvironment, PremiumHero } from "../src/components/OutdoorUI";
 import { logBuddyAdded, logBuddySearch } from "../src/lib/analytics";
 import {
+  formatFriendSystemError,
   searchUserForFriendDiscovery,
   sendFriendRequest,
   type FriendDiscoveryResult,
@@ -55,7 +56,7 @@ export default function FriendsSearchScreen() {
   const onSearch = async () => {
     const query = searchText.trim();
     if (!query) {
-      setStatus("Enter a username.");
+      setStatus("Enter a username or email address.");
       setResult(null);
       return;
     }
@@ -70,7 +71,7 @@ export default function FriendsSearchScreen() {
       setResult(nextResult);
       setStatus(nextResult ? "" : "No match found.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Search failed.");
+      setStatus(formatFriendSystemError(error, "Search failed."));
     } finally {
       setIsSearching(false);
     }
@@ -92,7 +93,7 @@ export default function FriendsSearchScreen() {
       void logBuddyAdded();
       setStatus("Friend request sent.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Friend request failed.");
+      setStatus(formatFriendSystemError(error, "Friend request failed."));
     } finally {
       setIsSending(false);
     }
@@ -116,7 +117,7 @@ export default function FriendsSearchScreen() {
           style={styles.searchCard}
           eyebrow="Your circle"
           title="Find Friends"
-          subtitle="Search by username to build a quieter, more motivating outdoor circle."
+          subtitle="Search by username or exact email to build a quieter, more motivating outdoor circle."
         >
           <View style={styles.searchRow}>
             <TextInput
@@ -126,7 +127,7 @@ export default function FriendsSearchScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="default"
-              placeholder="Username"
+              placeholder="Username or email"
               placeholderTextColor="rgba(30,42,36,0.42)"
               returnKeyType="search"
               style={styles.searchInput}

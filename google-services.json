@@ -1,0 +1,82 @@
+{
+  "project_info": {
+    "project_number": "766115955798",
+    "project_id": "stepoutside-32aae",
+    "storage_bucket": "stepoutside-32aae.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:766115955798:android:3abaa65431fe440f7f27f7",
+        "android_client_info": {
+          "package_name": "com.optimizelocal.stepoutside"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "766115955798-qu7fq5cf4gkm327bdm7dsjcuc2721cn9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGxPPj6eNQm4YU0vtbFd5xxjw_X8VLQMo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "766115955798-qu7fq5cf4gkm327bdm7dsjcuc2721cn9.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "766115955798-jjl84dcc4k9qdlbt3o5agst6f82nua0v.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.cookarell.stepoutside"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:766115955798:android:f09fc732ce73bff27f27f7",
+        "android_client_info": {
+          "package_name": "com.stevencook.stepoutside"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "766115955798-qu7fq5cf4gkm327bdm7dsjcuc2721cn9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGxPPj6eNQm4YU0vtbFd5xxjw_X8VLQMo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "766115955798-qu7fq5cf4gkm327bdm7dsjcuc2721cn9.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "766115955798-jjl84dcc4k9qdlbt3o5agst6f82nua0v.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.cookarell.stepoutside"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -18,6 +18,7 @@ import { EmptyStateCard, LayeredEnvironment, PremiumHero } from "../src/componen
 import {
   acceptFriendRequest,
   declineFriendRequest,
+  formatFriendSystemError,
   getIncomingFriendRequests,
   getOutgoingFriendRequests,
   type FriendRequestListItem,
@@ -78,7 +79,7 @@ export default function FriendRequestsScreen() {
       setIncoming(nextIncoming);
       setOutgoing(nextOutgoing);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Friend requests could not be loaded.");
+      setStatus(formatFriendSystemError(error, "Friend requests could not be loaded."));
     } finally {
       setIsLoading(false);
     }
@@ -99,7 +100,7 @@ export default function FriendRequestsScreen() {
       setIncoming((items) => items.filter((item) => item.request.id !== requestId));
       setStatus("Friend request accepted.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Friend request could not be accepted.");
+      setStatus(formatFriendSystemError(error, "Friend request could not be accepted."));
     } finally {
       setActionRequest(null);
     }
@@ -114,7 +115,7 @@ export default function FriendRequestsScreen() {
       setIncoming((items) => items.filter((item) => item.request.id !== requestId));
       setStatus("Friend request declined.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Friend request could not be declined.");
+      setStatus(formatFriendSystemError(error, "Friend request could not be declined."));
     } finally {
       setActionRequest(null);
     }

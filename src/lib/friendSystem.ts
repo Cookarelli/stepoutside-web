@@ -4,7 +4,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  limit,
   orderBy,
   query,
   runTransaction,
@@ -18,6 +17,7 @@ import { auth, db } from "./firebase";
 export const FRIEND_SYSTEM_COLLECTIONS = {
   users: "users",
   userDiscovery: "userDiscovery",
+  emailDirectory: "emailDirectory",
   usernames: "usernames",
   friendRequests: "friendRequests",
   friendships: "friendships",
@@ -41,7 +41,6 @@ export interface FriendDiscoveryProfile {
   uid: string;
   username: string;
   usernameLower: string;
-  emailLower: string;
   displayName: string;
   photoURL: string;
   createdAt: number;
@@ -78,6 +77,13 @@ export type FriendDiscoveryDocument = FriendDiscoveryProfile;
 export type FriendRequestDocument = FriendRequest;
 export type FriendshipDocument = Friendship;
 export type FriendActivityDocument = FriendActivitySummary;
+
+type FriendEmailDirectoryEntry = {
+  uid: string;
+  emailLower: string;
+  createdAt: number;
+  updatedAt: number;
+};
 
 export type FriendRelationshipStatus = "none" | "friends" | "pending_sent" | "pending_received";
 
@@ -204,7 +210,6 @@ export function normalizeFriendDiscoveryProfile(
     uid,
     username,
     usernameLower: username,
-    emailLower: normalizeEmail(input.emailLower ?? input.email),
     displayName: cleanText(input.displayName) || username,
     photoURL: cleanText(input.photoURL),
     createdAt: cleanTimestamp(input.createdAt),
@@ -364,6 +369,23 @@ export async function upsertCurrentUserDiscoveryProfile(): Promise<FriendDiscove
 
   if (!profile) return null;
   await setDoc(discoveryRef, profile, { merge: false });
+
+  const emailLower = normalizeEmail(currentUser.email);
+  if (emailLower && isSearchableEmail(emailLower)) {
+    const directoryRef = doc(db, FRIEND_SYSTEM_COLLECTIONS.emailDirectory, emailLower);
+    const directorySnapshot = await getDoc(directoryRef);
+    const directoryEntry: FriendEmailDirectoryEntry = {
+      uid: currentUser.uid,
+      emailLower,
+      createdAt:
+        typeof directorySnapshot.data()?.createdAt === "number"
+          ? directorySnapshot.data()?.createdAt
+          : now,
+      updatedAt: now,
+    };
+    await setDoc(directoryRef, directoryEntry, { merge: false });
+  }
+
   return profile;
 }
 
@@ -501,16 +523,13 @@ export async function searchUserByEmail(emailInput: string): Promise<FriendDisco
   const emailLower = normalizeEmail(emailInput);
   if (!emailLower || !isSearchableEmail(emailLower)) return null;
 
-  const snapshot = await getDocs(
-    query(
-      collection(db, FRIEND_SYSTEM_COLLECTIONS.userDiscovery),
-      where("emailLower", "==", emailLower),
-      limit(5)
-    )
+  const directorySnapshot = await getDoc(
+    doc(db, FRIEND_SYSTEM_COLLECTIONS.emailDirectory, emailLower)
   );
-  const profile = snapshot.docs
-    .map((entry) => normalizeFriendDiscoveryProfile(entry.data() as Partial<FriendDiscoveryProfile>, entry.id))
-    .find((entry): entry is FriendDiscoveryProfile => entry !== null && entry.uid !== currentUid);
+  const uid = cleanText(directorySnapshot.data()?.uid);
+  if (!directorySnapshot.exists() || !uid || uid === currentUid) return null;
+
+  const profile = await readDiscoveryProfile(uid);
 
   if (!profile) return null;
   const relationship = await getRelationshipStatus(profile.uid);
@@ -579,6 +598,23 @@ export async function sendFriendRequest(recipientUid: string): Promise<FriendReq
     transaction.set(requestRef, request);
     return request;
   });
+}
+
+export function formatFriendSystemError(error: unknown, fallback: string): string {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+  const message = error instanceof Error ? error.message : "";
+  const permissionDenied =
+    code.includes("permission-denied") || message.toLowerCase().includes("missing or insufficient permissions");
+
+  if (permissionDenied) {
+    console.error("[friend-system] Firestore permission denied", { code, message });
+    return "Outdoor Friends is unavailable because Firebase permissions rejected this request. Please try again, then contact support if it continues.";
+  }
+
+  return message || fallback;
 }
 
 export async function getIncomingFriendRequests(): Promise<FriendRequestListItem[]> {

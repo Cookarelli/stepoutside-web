@@ -1,5 +1,11 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
-import { getAuth, initializeAuth, type Auth } from "firebase/auth";
+import {
+  getAuth,
+  getReactNativePersistence,
+  initializeAuth,
+  type Auth,
+} from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 
@@ -43,11 +49,11 @@ export const app: FirebaseApp = getApps().length ? getApp() : initializeApp(fire
  */
 export const auth: Auth = (() => {
   try {
-    // This Firebase build currently initializes Auth without an RN-specific persistence adapter.
-    // Profile UI caches a lightweight user snapshot locally, but native auth session persistence
-    // still needs validation or a package upgrade before we call it "fully synced."
-    return initializeAuth(app);
+    return initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
   } catch {
+    // Fast refresh can attempt to initialize an existing Auth instance again.
     return getAuth(app);
   }
 })();

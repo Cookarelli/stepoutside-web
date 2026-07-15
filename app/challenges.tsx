@@ -27,6 +27,7 @@ import {
   type FriendChallengeListItem,
   type FriendChallengeStatus,
 } from "../src/lib/friendChallenges";
+import { formatFriendSystemError } from "../src/lib/friendSystem";
 
 const BRAND = {
   forest: OutdoorTheme.colors.forest,
@@ -184,7 +185,7 @@ export default function ChallengesScreen() {
         void logChallengeViewed(item.challenge.id);
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Challenges could not be loaded.");
+      setStatus(formatFriendSystemError(error, "Challenges could not be loaded."));
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -223,7 +224,7 @@ export default function ChallengesScreen() {
       );
       setStatus(response === "accept" ? "Challenge accepted." : "Challenge declined.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Challenge response could not be saved.");
+      setStatus(formatFriendSystemError(error, "Challenge response could not be saved."));
     } finally {
       setActionId(null);
     }
