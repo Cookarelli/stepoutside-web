@@ -13,7 +13,7 @@
     "build": "node scripts/validate-site.mjs",
     "app:lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/utils/homeV3.test.ts",
+    "test": "node --import tsx --test src/utils/homeV3.test.ts src/lib/walkSaveReliability.test.ts",
     "verify:navigation": "node scripts/verify-release.mjs navigation",
     "validate:production": "node scripts/verify-release.mjs production",
     "test:buddy": "node scripts/verify-release.mjs buddy",

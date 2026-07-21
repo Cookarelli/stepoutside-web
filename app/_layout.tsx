@@ -1,10 +1,12 @@
 import { useEffect } from "react";
 import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { AppState } from "react-native";
 
 import { AppErrorBoundary } from "../src/components/AppErrorBoundary";
 import { initializeAnalytics, logAppOpen, logScreenViewForPath } from "../src/lib/analytics";
 import { initRevenueCat } from "../src/lib/pro";
+import { syncPendingCompletedWalks } from "../src/lib/store";
 
 export default function RootLayout() {
   const pathname = usePathname();
@@ -13,6 +15,15 @@ export default function RootLayout() {
     void initRevenueCat();
     void initializeAnalytics();
     void logAppOpen();
+    void syncPendingCompletedWalks("startup");
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (__DEV__) console.info("[walk-save] connectivity/app-state-check", { state: nextState });
+        void syncPendingCompletedWalks("resume");
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {

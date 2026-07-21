@@ -941,7 +941,6 @@ export default function Walk() {
       clearScheduledPersist();
       stopTimer("stop");
       stopGps("stop");
-      await clearActiveWalkSnapshotSafe("stop");
 
       const startedAt = startedAtRef.current ?? Date.now();
       const endedAt = Date.now();
@@ -986,10 +985,14 @@ export default function Walk() {
 
       const savedDraft = await setCompletedWalkDraftSafe(completedDraft, "stop");
       if (!savedDraft) {
-        await resetWalkState("stop draft failed");
+        // Keep the active snapshot intact: it is the recovery source if the
+        // completed-walk handoff could not be persisted.
+        transitionTo("idle", "stop draft failed");
         Alert.alert("Couldn’t save walk", "Please try again.");
         return;
       }
+
+      await clearActiveWalkSnapshotSafe("stop completed draft persisted");
 
       transitionTo("completed", "stop");
       router.replace({

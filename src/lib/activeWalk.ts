@@ -217,7 +217,7 @@ export async function hasActiveWalkSnapshot(): Promise<boolean> {
 
 export async function getCompletedWalkDraft(): Promise<CompletedWalkDraft | null> {
   const uid = currentUid();
-  if (!uid) return null;
+  if (!uid) return parseCompletedWalkDraft(await AsyncStorage.getItem(LEGACY_KEY_COMPLETED_WALK_DRAFT));
 
   const scopedKey = completedWalkDraftKeyForUid(uid);
   const draft = parseCompletedWalkDraft(await AsyncStorage.getItem(scopedKey));
@@ -240,7 +240,12 @@ async function removeLegacyCompletedWalkDraft(): Promise<void> {
 
 export async function setCompletedWalkDraft(draft: CompletedWalkDraft): Promise<void> {
   const uid = currentUid();
-  if (!uid) return;
+  if (!uid) {
+    // Auth can briefly be null during startup. Keep a recovery handoff instead
+    // of acknowledging a draft that was never persisted.
+    await AsyncStorage.setItem(LEGACY_KEY_COMPLETED_WALK_DRAFT, JSON.stringify(draft));
+    return;
+  }
 
   await AsyncStorage.setItem(completedWalkDraftKeyForUid(uid), JSON.stringify(draft));
   await removeLegacyCompletedWalkDraft();

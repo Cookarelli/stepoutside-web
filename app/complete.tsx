@@ -9,10 +9,10 @@ import { BrandHeaderMark } from "../src/components/BrandBadge";
 import { LayeredEnvironment } from "../src/components/OutdoorUI";
 import { RoutePreview } from "../src/components/RoutePreview";
 import { logWalkCompleted } from "../src/lib/analytics";
-import { clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
-import { getPremiumStatus } from "../src/lib/pro";
+import { clearActiveWalkSnapshot, clearCompletedWalkDraft, getCompletedWalkDraft } from "../src/lib/activeWalk";
+import { getProState } from "../src/lib/pro";
 import { evaluateSolarBonus } from "../src/lib/solarBonus";
-import { addCompletedSession, type OutsideSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
+import { addCompletedSession, updateCompletedSessionBonus, type OutsideSession, type RoutePoint, type SessionSource, type SummaryStats } from "../src/lib/store";
 import {
   formatDistanceMiles,
   formatDurationClock,
@@ -168,17 +168,6 @@ export default function CompleteScreen() {
         }
         lastSaveKeyRef.current = saveKey;
 
-        const premiumStatus = await getPremiumStatus();
-        const solarBonus = await evaluateSolarBonus({
-          startedAt,
-          startPoint: draftRoutePoints[0] ?? null,
-          isPremium: premiumStatus.isPremium,
-        });
-
-        setSunriseBonus(solarBonus.isSunriseBonus);
-        setSunsetBonus(solarBonus.isSunsetBonus);
-        setLockedBonusTeaser(Boolean(solarBonus.bonusType) && !premiumStatus.isPremium);
-
         const result = await addCompletedSession({
           id: walkId,
           startedAt,
@@ -192,16 +181,23 @@ export default function CompleteScreen() {
           activityType: "walk",
           distanceM: Number.isFinite(distanceM) ? Math.max(0, Math.round(distanceM)) : 0,
           routePoints: draftRoutePoints,
-          isSunriseBonus: solarBonus.isSunriseBonus,
-          isSunsetBonus: solarBonus.isSunsetBonus,
-          bonusType: solarBonus.bonusType,
-          bonusLabel: solarBonus.bonusLabel,
-          bonusPoints: solarBonus.bonusPoints,
-          sunriseBonus: solarBonus.isSunriseBonus,
-          sunsetBonus: solarBonus.isSunsetBonus,
+          isSunriseBonus: false,
+          isSunsetBonus: false,
+          bonusType: null,
+          bonusLabel: null,
+          bonusPoints: null,
+          sunriseBonus: false,
+          sunsetBonus: false,
         });
 
-        await clearCompletedWalkDraft();
+        try {
+          await clearCompletedWalkDraft();
+          await clearActiveWalkSnapshot();
+        } catch (error) {
+          // The local session is already durable. Leaving a handoff copy is
+          // safer than turning a successful save into a perceived failure.
+          if (__DEV__) console.warn("[complete] completed-walk cleanup deferred", error);
+        }
 
         setSummary(result.summary);
         setSavedSession(result.session);
@@ -220,6 +216,33 @@ export default function CompleteScreen() {
           didHapticRef.current = true;
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
+
+        void (async () => {
+          try {
+            // Both entitlement lookup and solar lookup are deliberately outside
+            // the critical local-save path.
+            const premiumStatus = await getProState();
+            const solarBonus = await evaluateSolarBonus({
+              startedAt,
+              startPoint: draftRoutePoints[0] ?? null,
+              isPremium: premiumStatus.isPro,
+            });
+            await updateCompletedSessionBonus(walkId, {
+              isSunriseBonus: solarBonus.isSunriseBonus,
+              isSunsetBonus: solarBonus.isSunsetBonus,
+              bonusType: solarBonus.bonusType,
+              bonusLabel: solarBonus.bonusLabel,
+              bonusPoints: solarBonus.bonusPoints,
+              sunriseBonus: solarBonus.isSunriseBonus,
+              sunsetBonus: solarBonus.isSunsetBonus,
+            });
+            setSunriseBonus(solarBonus.isSunriseBonus);
+            setSunsetBonus(solarBonus.isSunsetBonus);
+            setLockedBonusTeaser(Boolean(solarBonus.bonusType) && !premiumStatus.isPro);
+          } catch (error) {
+            if (__DEV__) console.warn("[complete] bonus metadata update failed", error);
+          }
+        })();
       } catch (error) {
         console.error("[complete] failed to save walk", error);
         lastSaveKeyRef.current = null;

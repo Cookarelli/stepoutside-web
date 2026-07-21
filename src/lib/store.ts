@@ -6,8 +6,9 @@ import { calculateMovingTimeSeconds, calculatePaceMinutesPerMile } from "../util
 import { auth, db } from "./firebase";
 import { upsertCurrentUserFriendActivitySummary } from "./friendSystem";
 import { refreshCurrentUserLeaderboardEntry } from "./leaderboard";
-import { getPremiumStatus } from "./pro";
+import { getProState } from "./pro";
 import type { SolarBonusType } from "./solarBonus";
+import { retryAt, shouldAttemptSync, timeoutAfter, upsertByWalkId } from "./walkSaveReliability";
 
 export type SessionSource = "timer" | "gps";
 export type ActivityType = "walk" | "hike";
@@ -50,6 +51,8 @@ export type OutsideSession = {
   sunriseBonus?: boolean;
   sunsetBonus?: boolean;
   paceSecPerMile?: number;
+  /** Local-only delivery state. It is never sent to Firestore. */
+  syncState?: "pending" | "syncing" | "synced" | "failed";
 };
 
 export type SavedActivity = OutsideSession;
@@ -88,6 +91,19 @@ const USER_DATA_PREFIX = "stepoutside:v2:user";
 const SUMMARY_VERSION = 3;
 const DEFAULT_WEEKLY_GOAL = 4;
 const DEFAULT_MONTHLY_GOAL = 16;
+const REMOTE_WRITE_TIMEOUT_MS = 12_000;
+const SYNC_RETRY_DELAY_MS = 30_000;
+
+type PendingCompletedWalk = {
+  session: OutsideSession;
+  includeRoutePoints: boolean;
+  ownerUid: string;
+  syncState: "pending" | "syncing" | "failed";
+  retryCount: number;
+  lastError?: string;
+  nextRetryAt?: number;
+  updatedAt: number;
+};
 
 export const EMPTY_SUMMARY: SummaryStats = {
   totalMinutes: 0,
@@ -122,6 +138,24 @@ function sessionsKeyForUid(uid: string): string {
 
 function summaryKeyForUid(uid: string): string {
   return `${USER_DATA_PREFIX}:${uid}:summary`;
+}
+
+function completedWalkQueueKeyForUid(uid: string): string {
+  return `${USER_DATA_PREFIX}:${uid}:completed-walk-sync-queue:v1`;
+}
+
+function logWalkSave(event: string, details: Record<string, unknown>) {
+  if (__DEV__) console.info(`[walk-save] ${event}`, details);
+}
+
+function errorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") return error.code;
+  if (error instanceof Error) return error.message;
+  return "unknown";
+}
+
+export async function withWalkSaveTimeout<T>(operation: Promise<T>, timeoutMs = REMOTE_WRITE_TIMEOUT_MS): Promise<T> {
+  return timeoutAfter(operation, timeoutMs);
 }
 
 async function cleanupLegacyUnscopedWalkStorage(): Promise<void> {
@@ -368,15 +402,19 @@ function buildSessionForStorage(session: OutsideSession, includeRoutePoints: boo
       : computePaceSecPerMile(movingTimeSec, distanceM)
         ? { paceSecPerMile: computePaceSecPerMile(movingTimeSec, distanceM) }
         : {}),
+    ...(session.syncState === "pending" || session.syncState === "syncing" || session.syncState === "synced" || session.syncState === "failed"
+      ? { syncState: session.syncState }
+      : {}),
     ...(routePoints ? { routePoints } : {}),
   };
 }
 
 function buildRemoteSessionPayload(session: OutsideSession, includeRoutePoints: boolean) {
   const normalized = buildSessionForStorage(session, includeRoutePoints);
+  const { syncState: _syncState, ...remoteSession } = normalized;
   return {
-    ...normalized,
-    endedDayKey: dayKeyLocal(new Date(normalized.endedAt)),
+    ...remoteSession,
+    endedDayKey: dayKeyLocal(new Date(remoteSession.endedAt)),
     routePointCount: session.routePoints?.length ?? 0,
     hasRoutePoints: includeRoutePoints && (session.routePoints?.length ?? 0) > 1,
     updatedAt: Date.now(),
@@ -392,7 +430,9 @@ async function syncSessionToFirestore(session: OutsideSession, includeRoutePoint
     ownerUid: currentUser.uid,
     userId: currentUser.uid,
   };
-  await setDoc(doc(db, "users", currentUser.uid, "sessions", session.id), payload, { merge: true });
+  await withWalkSaveTimeout(
+    setDoc(doc(db, "users", currentUser.uid, "sessions", session.id), payload, { merge: true })
+  );
 }
 
 export function hasSunriseBonus(session: Pick<OutsideSession, "isSunriseBonus" | "sunriseBonus">): boolean {
@@ -621,6 +661,119 @@ async function writeSessions(sessions: OutsideSession[]) {
   await AsyncStorage.setItem(scope.sessionsKey, JSON.stringify(sessions));
 }
 
+async function readCompletedWalkQueue(uid: string): Promise<PendingCompletedWalk[]> {
+  try {
+    const raw = await AsyncStorage.getItem(completedWalkQueueKeyForUid(uid));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is PendingCompletedWalk =>
+        Boolean(item && typeof item === "object" && typeof (item as PendingCompletedWalk).ownerUid === "string" &&
+          typeof (item as PendingCompletedWalk).session?.id === "string")
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function writeCompletedWalkQueue(uid: string, queue: PendingCompletedWalk[]): Promise<void> {
+  await AsyncStorage.setItem(completedWalkQueueKeyForUid(uid), JSON.stringify(queue));
+}
+
+async function setLocalSessionSyncState(id: string, syncState: OutsideSession["syncState"]): Promise<void> {
+  const sessions = await readSessions();
+  const next = sessions.map((session) => (session.id === id ? { ...session, syncState } : session));
+  await writeSessions(next);
+}
+
+/**
+ * Attempts durable cloud delivery without ever delaying the completion UI. Pending
+ * entries survive process death and always use their original document ID.
+ */
+export async function syncPendingCompletedWalks(reason: "save" | "startup" | "resume" | "manual" = "manual"): Promise<void> {
+  const uid = getCurrentDataUid();
+  if (!uid) return;
+  const queue = await readCompletedWalkQueue(uid);
+  logWalkSave("pending-queue-processing", { reason, count: queue.length });
+  const now = Date.now();
+  const remaining: PendingCompletedWalk[] = [];
+
+  for (const item of queue) {
+    if (item.ownerUid !== uid) {
+      remaining.push(item);
+      continue;
+    }
+    if (!shouldAttemptSync(item.nextRetryAt, now)) {
+      remaining.push(item);
+      continue;
+    }
+
+    try {
+      logWalkSave("remote-sync-started", { id: item.session.id, retryCount: item.retryCount, reason });
+      await setLocalSessionSyncState(item.session.id, "syncing");
+      await syncSessionToFirestore(item.session, item.includeRoutePoints);
+      await setLocalSessionSyncState(item.session.id, "synced");
+      logWalkSave("remote-sync-succeeded", { id: item.session.id, retryCount: item.retryCount });
+    } catch (error) {
+      const nextRetryCount = item.retryCount + 1;
+      const code = errorCode(error);
+      const failed: PendingCompletedWalk = {
+        ...item,
+        syncState: "failed",
+        retryCount: nextRetryCount,
+        lastError: code,
+        nextRetryAt: retryAt(Date.now(), nextRetryCount, SYNC_RETRY_DELAY_MS),
+        updatedAt: Date.now(),
+      };
+      await setLocalSessionSyncState(item.session.id, "failed");
+      remaining.push(failed);
+      logWalkSave("remote-sync-failed", { id: item.session.id, retryCount: nextRetryCount, code });
+    }
+  }
+
+  await writeCompletedWalkQueue(uid, remaining);
+}
+
+export async function updateCompletedSessionBonus(
+  id: string,
+  bonus: Pick<OutsideSession, "isSunriseBonus" | "isSunsetBonus" | "bonusType" | "bonusLabel" | "bonusPoints" | "sunriseBonus" | "sunsetBonus">
+): Promise<void> {
+  const sessions = await readSessions();
+  const session = sessions.find((candidate) => candidate.id === id);
+  if (!session) return;
+  const updated = { ...session, ...bonus, syncState: "pending" as const };
+  await writeSessions(sessions.map((candidate) => (candidate.id === id ? updated : candidate)));
+  const uid = getCurrentDataUid();
+  if (!uid) return;
+  const queue = await readCompletedWalkQueue(uid);
+  const index = queue.findIndex((item) => item.session.id === id);
+  if (index >= 0) {
+    queue[index] = { ...queue[index], session: updated, syncState: "pending", nextRetryAt: undefined, updatedAt: Date.now() };
+    await writeCompletedWalkQueue(uid, queue);
+    void syncPendingCompletedWalks("save");
+  }
+}
+
+function scheduleSecondaryWalkUpdates(sessions: OutsideSession[], summary: SummaryStats) {
+  void Promise.allSettled([
+    withWalkSaveTimeout(refreshCurrentUserLeaderboardEntry(sessions)),
+    withWalkSaveTimeout(
+      upsertCurrentUserFriendActivitySummary({
+        walkCount: summary.totalSessions,
+        totalDistanceM: sumDistanceMeters(sessions),
+        currentStreak: summary.currentStreak,
+      })
+    ),
+  ]).then((results) => {
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        logWalkSave("secondary-operation-failed", { operation: index === 0 ? "leaderboard" : "friend-activity", code: errorCode(result.reason) });
+      }
+    });
+  });
+}
+
 function mergeSessionLists(localSessions: OutsideSession[], remoteSessions: OutsideSession[]): OutsideSession[] {
   const merged = new Map<string, OutsideSession>();
 
@@ -708,7 +861,9 @@ async function readRemoteSessions(): Promise<OutsideSession[]> {
   if (!currentUser?.uid) return [];
 
   try {
-    const snapshot = await getDocs(collection(db, "users", currentUser.uid, "sessions"));
+    const snapshot = await withWalkSaveTimeout(
+      getDocs(collection(db, "users", currentUser.uid, "sessions"))
+    );
     return snapshot.docs
       .map((entry) => {
         const remote = entry.data() as Partial<OutsideSession>;
@@ -1084,13 +1239,17 @@ export async function addCompletedSession(
   session: OutsideSession
 ): Promise<{ summary: SummaryStats; session: OutsideSession }> {
   if (!getCurrentDataUid()) {
-    const normalized = buildSessionForStorage(session, true);
-    return { summary: EMPTY_SUMMARY, session: normalized };
+    // Do not clear the completed-walk draft during an auth restoration race.
+    // The handoff remains available for a retry once the persisted user is back.
+    logWalkSave("local-save-failed", { id: session.id, code: "auth-unavailable" });
+    throw new Error("walk-save-auth-unavailable");
   }
 
-  const premiumStatus = await getPremiumStatus();
-  const includeRoutePoints = premiumStatus.isPremium;
-  const normalized = buildSessionForStorage(session, includeRoutePoints);
+  // This is intentionally cache-only. A RevenueCat/network transition must never
+  // delay preserving a completed walk.
+  const premiumStatus = await getProState();
+  const includeRoutePoints = premiumStatus.isPro;
+  const normalized = buildSessionForStorage({ ...session, syncState: "pending" }, includeRoutePoints);
   const sessions = await readSessions();
   const existingIndex = sessions.findIndex((s) => s.id === normalized.id);
   if (existingIndex >= 0) {
@@ -1103,24 +1262,22 @@ export async function addCompletedSession(
   const nextSummary = summarizeSessions(sessions);
 
   await writeSummary(nextSummary);
-  try {
-    await refreshCurrentUserLeaderboardEntry(sessions);
-  } catch {
-    // Leaderboard sync should never block saving a completed walk.
+  const uid = getCurrentDataUid();
+  if (uid) {
+    const queue = await readCompletedWalkQueue(uid);
+    const queued: PendingCompletedWalk = {
+      session: normalized,
+      includeRoutePoints,
+      ownerUid: uid,
+      syncState: "pending",
+      retryCount: 0,
+      updatedAt: Date.now(),
+    };
+    await writeCompletedWalkQueue(uid, upsertByWalkId(queue, queued));
   }
-  try {
-    await upsertCurrentUserFriendActivitySummary({
-      walkCount: nextSummary.totalSessions,
-      totalDistanceM: sumDistanceMeters(sessions),
-      currentStreak: nextSummary.currentStreak,
-    });
-  } catch {
-    // Friend activity summaries should never block saving a completed walk.
-  }
-  try {
-    await syncSessionToFirestore(normalized, includeRoutePoints);
-  } catch {
-    // Session summaries remain available locally if Firestore sync is unavailable.
-  }
+
+  logWalkSave("local-save-succeeded", { id: normalized.id, routePointCount: normalized.routePoints?.length ?? 0 });
+  scheduleSecondaryWalkUpdates(sessions, nextSummary);
+  void syncPendingCompletedWalks("save");
   return { summary: nextSummary, session: normalized };
 }
